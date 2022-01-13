@@ -8,12 +8,20 @@ edition = "2021"
 [dependencies]
 bitcoin = "0.27.1"
 bitcoin-bech32 = "0.12"
-lightning = { version = "0.0.103", features = ["_test_utils"] }
-lightning-block-sync = { version = "0.0.103", features = [ "rpc-client" ] }
-lightning-invoice = { version = "0.11.0" }
-lightning-net-tokio = { version = "0.0.103" }
-lightning-persister = { version = "0.0.103" }
-lightning-background-processor = { version = "0.0.103" }
+
+#lightning = { version = "0.0.103", features = ["_test_utils"] }
+#lightning-block-sync = { version = "0.0.103", features = [ "rpc-client" ] }
+#lightning-invoice = { version = "0.11.0" }
+#lightning-net-tokio = { version = "0.0.103" }
+#lightning-persister = { version = "0.0.103" }
+#lightning-background-processor = { version = "0.0.103" }
+
+lightning = { path = "/Users/arik/Developer/rust-lightning/lightning", features = ["_test_utils"] }
+lightning-block-sync = { path = "/Users/arik/Developer/rust-lightning/lightning-block-sync", features = [ "rpc-client" ] }
+lightning-invoice = { path = "/Users/arik/Developer/rust-lightning/lightning-invoice" }
+lightning-net-tokio = { path = "/Users/arik/Developer/rust-lightning/lightning-net-tokio" }
+lightning-persister = { path = "/Users/arik/Developer/rust-lightning/lightning-persister" }
+lightning-background-processor = { path = "/Users/arik/Developer/rust-lightning/lightning-background-processor" }
 
 base64 = "0.13.0"
 bech32 = "0.8"
@@ -25,4 +33,4 @@ rand = "0.4"
 serde_json = { version = "1.0" }
 tokio = { version = "1", features = ["full"] }
 tokio-postgres = "0.7.5"
-warp = "0.3"
+warp = { version = "0.3.2", features = ["compression-gzip", "async-compression"] }

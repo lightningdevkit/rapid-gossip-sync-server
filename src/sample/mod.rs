@@ -2,7 +2,7 @@ pub mod bitcoind_client;
 mod cli;
 mod convert;
 mod disk;
-mod hex_utils;
+pub (crate) mod hex_utils;
 
 use bitcoind_client::BitcoindClient;
 use disk::FilesystemLogger;
@@ -25,7 +25,7 @@ use lightning::ln::channelmanager::{
 use lightning::ln::peer_handler::{IgnoringMessageHandler, MessageHandler, SimpleArcPeerManager};
 use lightning::ln::{PaymentHash, PaymentPreimage, PaymentSecret};
 use lightning::routing::network_graph::{NetGraphMsgHandler, NetworkGraph};
-use lightning::routing::scorer::Scorer;
+use lightning::routing::scoring::Scorer;
 use lightning::util::config::UserConfig;
 use lightning::util::events::{Event, PaymentPurpose};
 use lightning::util::ser::ReadableArgs;
@@ -297,6 +297,7 @@ async fn handle_ldk_events(
             // A "real" node should probably "lock" the UTXOs spent in funding transactions until
             // the funding transaction either confirms, or this event is generated.
         }
+        _ => {}
     }
 }
 

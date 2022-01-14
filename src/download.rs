@@ -1,40 +1,23 @@
-use std::convert::Infallible;
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
-use std::ops::Deref;
+use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::Network;
-use bitcoin::secp256k1::{PublicKey, SecretKey};
+use bitcoin::secp256k1::SecretKey;
 use lightning;
-use lightning::chain;
-use lightning::chain::Access;
-use lightning::ln::msgs::{
-	ChannelAnnouncement, ChannelUpdate, Init, LightningError, NodeAnnouncement, OptionalField,
-	QueryChannelRange, QueryShortChannelIds, ReplyChannelRange, ReplyShortChannelIdsEnd,
-	RoutingMessageHandler,
-};
+use lightning::ln::msgs::OptionalField;
 use lightning::ln::peer_handler::{
 	ErroringMessageHandler, IgnoringMessageHandler, MessageHandler, PeerManager,
-	SimpleArcPeerManager,
 };
-use lightning::ln::wire::Type;
 use lightning::routing::network_graph::{NetGraphMsgHandler, NetworkGraph};
-use lightning::util::events::{MessageSendEvent, MessageSendEventsProvider};
 use lightning::util::logger::Level;
 use lightning::util::ser::Writeable;
 use lightning::util::test_utils::TestLogger;
-use lightning_net_tokio::SocketDescriptor;
-// use rand::{RngCore, thread_rng};
 use rand::{Rng, thread_rng};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
-use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use tokio_postgres::{Error, NoTls};
-use warp::Filter;
-use warp::http::{HeaderMap, HeaderValue};
-use warp::reply::Response;
+use tokio_postgres::NoTls;
+use crate::config;
 
 use crate::router::{GossipCounter, GossipRouter};
 use crate::sample::hex_utils;
@@ -122,7 +105,7 @@ pub(crate) async fn download_gossip() {
 	// let peer_handler: GossipPeerManager = lightning::ln::peer_handler::PeerManager::new_routing_only(arc_message_handler, our_node_secret, &random_data, arc_logger.clone());
 
 	let (client, connection) =
-		tokio_postgres::connect("host=localhost user=arik dbname=ln_graph_sync", NoTls)
+		tokio_postgres::connect(config::db_connection_string().as_str(), NoTls)
 			.await
 			.unwrap();
 
@@ -131,6 +114,19 @@ pub(crate) async fn download_gossip() {
 			eprintln!("connection error: {}", e);
 		}
 	});
+
+	{
+		// initialize the database
+		let initialization = client.execute(config::db_channel_table_creation_query().as_str(), &[]).await;
+		if let Err(initialization_error) = initialization {
+			eprintln!("db init error: {}", initialization_error);
+		}
+
+		let initialization = client.execute(config::db_channel_update_table_creation_query().as_str(), &[]).await;
+		if let Err(initialization_error) = initialization {
+			eprintln!("db init error: {}", initialization_error);
+		}
+	}
 
 	let mut i = 0u32;
 	while let Some(gossip_message) = receiver.recv().await {
@@ -157,8 +153,8 @@ pub(crate) async fn download_gossip() {
 				// type_id.write(&mut announcement_signed);
 				// type_id.write(&mut announcement_unsigned);
 
-				announcement.write(&mut announcement_signed);
-				announcement.contents.write(&mut announcement_unsigned);
+				announcement.write(&mut announcement_signed).unwrap();
+				announcement.contents.write(&mut announcement_unsigned).unwrap();
 				let announcement_hex = hex_utils::hex_str(&announcement_signed);
 				let announcement_hex_unsigned = hex_utils::hex_str(&announcement_unsigned);
 
@@ -170,7 +166,7 @@ pub(crate) async fn download_gossip() {
                     chain_hash, \
                     announcement_signed, \
                     announcement_unsigned\
-                ) VALUES ($1, $2, $3, $4, $5)",
+                ) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (short_channel_id) DO NOTHING",
 						&[
 							&scid_hex,
 							&block_height,
@@ -197,7 +193,7 @@ pub(crate) async fn download_gossip() {
 
 				let channel_flags = update.contents.flags as i32;
 				let direction = channel_flags & 1;
-				let disable = ((channel_flags & 2) > 0);
+				let disable = (channel_flags & 2) > 0;
 
 				let composite_index = format!("{}:{}:{}", scid_hex, timestamp, direction);
 
@@ -206,7 +202,7 @@ pub(crate) async fn download_gossip() {
 				let fee_base_msat = update.contents.fee_base_msat as i32;
 				let fee_proportional_millionths =
 					update.contents.fee_proportional_millionths as i32;
-				let mut htlc_maximum_msat = match update.contents.htlc_maximum_msat {
+				let htlc_maximum_msat = match update.contents.htlc_maximum_msat {
 					OptionalField::Present(maximum) => Some(maximum as i64),
 					OptionalField::Absent => None,
 				};
@@ -214,8 +210,8 @@ pub(crate) async fn download_gossip() {
 				// start with the type prefix, which is already known a priori
 				let mut update_signed = vec![1, 2];
 				let mut update_unsigned = vec![1, 2];
-				update.write(&mut update_signed);
-				update.contents.write(&mut update_unsigned);
+				update.write(&mut update_signed).unwrap();
+				update.contents.write(&mut update_unsigned).unwrap();
 				let update_hex = hex_utils::hex_str(&update_signed);
 				let update_hex_unsigned = hex_utils::hex_str(&update_unsigned);
 
@@ -236,7 +232,7 @@ pub(crate) async fn download_gossip() {
                         htlc_maximum_msat, \
                         blob_signed, \
                         blob_unsigned\
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)  ON CONFLICT (composite_index) DO NOTHING",
 						&[
 							&composite_index,
 							&chain_hash_hex,

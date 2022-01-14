@@ -1,44 +1,12 @@
 use std::convert::Infallible;
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
-use std::ops::Deref;
-use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use bitcoin::blockdata::constants::genesis_block;
-use bitcoin::Network;
-use bitcoin::secp256k1::{PublicKey, SecretKey};
-use lightning;
-use lightning::chain;
-use lightning::chain::Access;
-use lightning::ln::msgs::{
-	ChannelAnnouncement, ChannelUpdate, Init, LightningError, NodeAnnouncement, OptionalField,
-	QueryChannelRange, QueryShortChannelIds, ReplyChannelRange, ReplyShortChannelIdsEnd,
-	RoutingMessageHandler,
-};
-use lightning::ln::peer_handler::{
-	ErroringMessageHandler, IgnoringMessageHandler, MessageHandler, PeerManager,
-	SimpleArcPeerManager,
-};
-use lightning::ln::wire::Type;
-use lightning::routing::network_graph::{NetGraphMsgHandler, NetworkGraph};
-use lightning::util::events::{MessageSendEvent, MessageSendEventsProvider};
-use lightning::util::logger::Level;
-use lightning::util::ser::Writeable;
-use lightning::util::test_utils::TestLogger;
-use lightning_net_tokio::SocketDescriptor;
-// use rand::{RngCore, thread_rng};
-use rand::{Rng, thread_rng};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
-use tokio_postgres::{Error, NoTls};
+use tokio_postgres::NoTls;
 use warp::Filter;
-use warp::http::{HeaderMap, HeaderValue};
-use warp::reply::Response;
+use warp::http::HeaderValue;
 
-use crate::router::{GossipCounter, GossipRouter};
+use crate::config;
 use crate::sample::hex_utils;
-use crate::types::{GossipChainAccess, GossipMessage};
 
 pub(crate) async fn serve_gossip() {
 	let hello = warp::path!("hello" / String).map(|name| format!("Hello, {}!", name));
@@ -68,7 +36,7 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 	let start = Instant::now();
 
 	let (client, connection) =
-		tokio_postgres::connect("host=localhost user=arik dbname=ln_graph_sync", NoTls).await.unwrap();
+		tokio_postgres::connect(config::db_connection_string().as_str(), NoTls).await.unwrap();
 
 	tokio::spawn(async move {
 		if let Err(e) = connection.await {
@@ -112,7 +80,7 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 	let response = warp::http::Response::builder()
 		.header("X-LDK-Gossip-Message-Count", HeaderValue::from(gossip_message_count))
 		.header("X-LDK-Raw-Output-Length", HeaderValue::from(response_length))
-		.header("X-LDK-Elapsed-Time", HeaderValue::from_str(&*elapsed_time).unwrap())
+		.header("X-LDK-Elapsed-Time", HeaderValue::from_str(elapsed_time.as_str()).unwrap())
 		.body(vector);
 
 	// let response = format!("block: {}<br/>\ntimestamp: {}<br/>\nlength: {}<br/>\nelapsed: {:?}", block, timestamp, response_length, duration);

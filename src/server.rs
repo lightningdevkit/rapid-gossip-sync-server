@@ -1,4 +1,6 @@
 use std::convert::Infallible;
+use std::io::prelude::*;
+use std::io::Write;
 use std::time::Instant;
 
 use tokio_postgres::NoTls;
@@ -25,7 +27,9 @@ pub(crate) async fn serve_gossip() {
 	// );
 
 	// let routes = warp::get().and_then(composite);
-	let routes = warp::path!("composite" / "block" / u32 / "timestamp" / u64).and_then(serve_composite).with(warp::filters::compression::gzip());
+	let routes = warp::path!("composite" / "block" / u32 / "timestamp" / u64)
+		.and_then(serve_composite);
+	// .with(warp::filters::compression::gzip());
 
 	warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 }
@@ -60,7 +64,10 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 
 	{
 		println!("fetching updates…");
-		let rows = client.query("SELECT * FROM channel_updates", &[]).await.unwrap();
+		// let timestamp_minimum = timestamp as i64;
+		let timestamp_minimum = 0i64;
+		// let rows = client.query("SELECT * FROM channel_updates", &[]).await.unwrap();
+		let rows = client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE timestamp >= $1 ORDER BY short_channel_id ASC, direction ASC, timestamp DESC", &[&timestamp_minimum]).await.unwrap();
 		gossip_message_count += rows.len() as u32;
 		for current_row in rows {
 			let blob: String = current_row.get("blob_unsigned");
@@ -71,17 +78,31 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 
 	let response_length = vector.len();
 
+	println!("packaging response!");
+
+	let mut compressor = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+	compressor.write_all(&vector);
+	let compressed_response = compressor.finish().unwrap();
+
+	let compressed_length = compressed_response.len();
+	let compression_efficacy = 1.0 - (compressed_length as f64) / (response_length as f64);
+
 	// let end = Instant::now();
 	let duration = start.elapsed();
 	// let seconds = duration.as_millis();
 
 	let elapsed_time = format!("{:?}", duration);
+	let efficacy_header = format!("{}%", (compression_efficacy * 1000.0).round()/10.0);
 
 	let response = warp::http::Response::builder()
 		.header("X-LDK-Gossip-Message-Count", HeaderValue::from(gossip_message_count))
 		.header("X-LDK-Raw-Output-Length", HeaderValue::from(response_length))
+		.header("X-LDK-Compressed-Output-Length", HeaderValue::from(compressed_length))
+		.header("X-LDK-Compression-Efficacy", HeaderValue::from_str(efficacy_header.as_str()).unwrap())
 		.header("X-LDK-Elapsed-Time", HeaderValue::from_str(elapsed_time.as_str()).unwrap())
-		.body(vector);
+		.header("Content-Encoding", HeaderValue::from_static("gzip"))
+		.header("Content-Length", HeaderValue::from(compressed_length))
+		.body(compressed_response);
 
 	// let response = format!("block: {}<br/>\ntimestamp: {}<br/>\nlength: {}<br/>\nelapsed: {:?}", block, timestamp, response_length, duration);
 	Ok(response)

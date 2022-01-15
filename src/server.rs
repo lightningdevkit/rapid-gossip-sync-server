@@ -24,10 +24,11 @@ pub(crate) struct GossipServer {
 impl GossipServer {
 	pub(crate) fn new() -> Self {
 		let (gossip_refresh_sender, gossip_refresh_receiver) = mpsc::channel::<()>(2);
+		let service_unavailable_response = warp::http::Response::builder().status(503).body(vec![]).into_response();
 		Self {
 			gossip_refresh_sender,
 			gossip_refresh_receiver: Some(gossip_refresh_receiver),
-			full_history_gossip: Arc::new(RwLock::new(warp::reply::Response::default()))
+			full_history_gossip: Arc::new(RwLock::new(service_unavailable_response))
 		}
 	}
 

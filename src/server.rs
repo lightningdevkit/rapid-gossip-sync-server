@@ -18,40 +18,41 @@ use crate::sample::hex_utils;
 pub(crate) struct GossipServer {
 	pub(crate) gossip_refresh_sender: mpsc::Sender<()>,
 	gossip_refresh_receiver: Option<mpsc::Receiver<()>>,
-	full_history_gossip: Arc<RwLock<warp::reply::Response>>
+	// full_history_gossip: Arc<RwLock<warp::reply::Response>>
+	full_history_gossip: Arc<RwLock<Vec<u8>>>
 }
 
 impl GossipServer {
 	pub(crate) fn new() -> Self {
 		let (gossip_refresh_sender, gossip_refresh_receiver) = mpsc::channel::<()>(2);
-		let service_unavailable_response = warp::http::Response::builder().status(503).body(vec![]).into_response();
+		// let service_unavailable_response = warp::http::Response::builder().status(503).body(vec![]).into_response();
 		Self {
 			gossip_refresh_sender,
 			gossip_refresh_receiver: Some(gossip_refresh_receiver),
-			full_history_gossip: Arc::new(RwLock::new(service_unavailable_response))
+			// full_history_gossip: Arc::new(RwLock::new(service_unavailable_response))
+			full_history_gossip: Arc::new(RwLock::new(Vec::new()))
 		}
 	}
 
-	pub(crate) async fn serve_gossip(&mut self) {
-		let hello = warp::path!("hello" / String).map(|name| format!("Hello, {}!", name));
+	pub(crate) async fn start_gossip_server(&mut self) {
+		let full_gossip_data = self.full_history_gossip.clone();
+		let full_gossip_route = warp::path("full").map(move || {
+			let arc_gossip_data = Arc::clone(&full_gossip_data);
+			let gossip_data = arc_gossip_data.read().unwrap();
 
-		let bye = warp::path!("bye" / String).map(|name| format!("Bye, {}!", name));
+			let compressed_length = gossip_data.len();
+			if compressed_length < 1 {
+				let service_unavailable_response = warp::http::Response::builder().status(503).body(vec![]);
+				return service_unavailable_response;
+			}
 
-		// let composite = warp::path!("composite" / "block" / u32 / "timestamp" / u64).and_then()
+			warp::http::Response::builder()
+				.header("Content-Encoding", HeaderValue::from_static("gzip"))
+				.header("Content-Length", HeaderValue::from(compressed_length))
+				.body(gossip_data.clone())
+		});
 
-		// let composite = warp::path!("composite" / "block" / u32 / "timestamp" / u64).and_then(serve_composite);
-
-		// let routes = warp::get().and(hello.or(bye));
-		// let routes = warp::get().and(
-		//     composite
-		//         .or(hello)
-		//         .or(bye)
-		// );
-
-		// let routes = warp::get().and_then(composite);
-		let routes = warp::path!("composite" / "block" / u32 / "timestamp" / u64)
-			.and_then(serve_composite);
-		// .with(warp::filters::compression::gzip());
+		let dynamic_gossip_route = warp::path!("composite" / "block" / u32 / "timestamp" / u64).and_then(serve_composite);
 
 		if let Some(mut gossip_refresh_receiver) = self.gossip_refresh_receiver.take() {
 			println!("background gossip refresher active!");
@@ -62,20 +63,23 @@ impl GossipServer {
 					let warp_reply = serve_composite(0, 0).await.unwrap();
 					let warp_response = warp_reply.into_response();
 
+					let hyper_body = warp_response.into_body();
+					let retrieved_output: Vec<u8> = warp::hyper::body::to_bytes(hyper_body).await.unwrap().to_vec();
+
 					let mut response_writer = gossip_cache.write().unwrap();
-					*response_writer = warp_response;
+					// *response_writer = warp_response;
+					*response_writer = retrieved_output;
 					println!("refreshed background gossip!");
 				}
 			});
 		}
 
+		let routes = warp::get().and(full_gossip_route.or(dynamic_gossip_route));
 		warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 	}
 }
 
 async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply, Infallible> {
-	// let response = format!("block, timestamp: {}, {}", block, timestamp);
-
 	let start = Instant::now();
 	let current_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
@@ -220,6 +224,7 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 	println!("message count: {}\nannouncement count: {}\nupdate count: {}\nraw output length: {}", gossip_message_count, gossip_message_announcement_count, gossip_message_update_count, response_length);
 
 	if should_compress {
+		println!("compressing gossip data");
 		let mut compressor = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
 		compressor.write_all(&output);
 		let compressed_response = compressor.finish().unwrap();

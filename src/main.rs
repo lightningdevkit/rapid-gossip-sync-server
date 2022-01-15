@@ -20,5 +20,5 @@ async fn main() {
 		download_future.await;
 	});
 
-	server.serve_gossip().await;
+	server.start_gossip_server().await;
 }

@@ -17,14 +17,14 @@ use lightning::util::test_utils::TestLogger;
 use rand::{Rng, thread_rng};
 use tokio::sync::mpsc;
 use tokio_postgres::NoTls;
-use crate::config;
 
+use crate::config;
 use crate::router::{GossipCounter, GossipRouter};
 use crate::sample::hex_utils;
 use crate::types::{GossipChainAccess, GossipMessage};
 
-pub(crate) async fn download_gossip() {
-	let (sender, mut receiver) = mpsc::channel(1024);
+pub(crate) async fn download_gossip(gossip_sender: Option<mpsc::Sender<()>>) {
+	let (sender, mut receiver) = mpsc::channel(10000);
 
 	let mut key = [0; 32];
 	let mut random_data = [0; 32];
@@ -86,6 +86,11 @@ pub(crate) async fn download_gossip() {
 		)
 			.await;
 		println!("background outbound connected");
+
+		let mut previous_announcement_count = 0u64;
+		let mut previous_update_count = 0u64;
+		let mut has_caught_up_with_gossip = false;
+
 		let mut i = 0u32;
 		loop {
 			i += 1;
@@ -94,11 +99,41 @@ pub(crate) async fn download_gossip() {
 			sleep.await;
 
 			let router_clone = Arc::clone(&arc_wrapped_router);
-			let counter = router_clone.counter.read().unwrap();
-			println!(
-				"gossip count: \n\tannouncements: {}\n\tupdates: {}\n",
-				counter.channel_announcements, counter.channel_updates
-			);
+			let mut needs_to_notify_gossip = false;
+
+			{
+				let counter = router_clone.counter.read().unwrap();
+
+				if counter.channel_announcements == previous_announcement_count && counter.channel_updates == previous_update_count && previous_announcement_count > 0 && previous_update_count > 0 {
+					if !has_caught_up_with_gossip {
+						// upon the first catch-up, we need to refresh the gossip
+						needs_to_notify_gossip = true;
+						println!("caught up with gossip!");
+					}
+					has_caught_up_with_gossip = true;
+				} else if has_caught_up_with_gossip {
+					// some change is afoot, meaning we're no longer caught up
+					has_caught_up_with_gossip = false;
+					println!("no longer caught up with gossip!");
+				}
+
+				if !has_caught_up_with_gossip || needs_to_notify_gossip {
+					println!(
+						"gossip count: \n\tannouncements: {}\n\tupdates: {}\n",
+						counter.channel_announcements, counter.channel_updates
+					);
+				}
+
+				previous_announcement_count = counter.channel_announcements;
+				previous_update_count = counter.channel_updates;
+			}
+
+			if needs_to_notify_gossip {
+				needs_to_notify_gossip = false;
+				if let Some(gossip_notifer) = gossip_sender.clone() {
+					gossip_notifer.send(()).await;
+				}
+			}
 		}
 	});
 

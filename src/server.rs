@@ -1,40 +1,77 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::io::{Cursor, Write};
-use std::io::prelude::*;
+use std::sync::{Arc, RwLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use lightning::ln::msgs::{OptionalField, UnsignedChannelUpdate};
 use lightning::util::ser::{BigSize, Readable, Writeable};
+use tokio::sync::mpsc;
 use tokio_postgres::NoTls;
 use warp::Filter;
-use warp::http::HeaderValue;
+use warp::http::{HeaderValue, Response};
+use warp::Reply;
 
 use crate::config;
 use crate::sample::hex_utils;
 
-pub(crate) async fn serve_gossip() {
-	let hello = warp::path!("hello" / String).map(|name| format!("Hello, {}!", name));
+pub(crate) struct GossipServer {
+	pub(crate) gossip_refresh_sender: mpsc::Sender<()>,
+	gossip_refresh_receiver: Option<mpsc::Receiver<()>>,
+	full_history_gossip: Arc<RwLock<Vec<u8>>>
+}
 
-	let bye = warp::path!("bye" / String).map(|name| format!("Bye, {}!", name));
+impl GossipServer {
+	pub(crate) fn new() -> Self {
+		let (gossip_refresh_sender, gossip_refresh_receiver) = mpsc::channel::<()>(2);
+		Self {
+			gossip_refresh_sender,
+			gossip_refresh_receiver: Some(gossip_refresh_receiver),
+			full_history_gossip: Arc::new(RwLock::new(Vec::new()))
+		}
+	}
 
-	// let composite = warp::path!("composite" / "block" / u32 / "timestamp" / u64).and_then()
+	pub(crate) async fn serve_gossip(&mut self) {
+		let hello = warp::path!("hello" / String).map(|name| format!("Hello, {}!", name));
 
-	// let composite = warp::path!("composite" / "block" / u32 / "timestamp" / u64).and_then(serve_composite);
+		let bye = warp::path!("bye" / String).map(|name| format!("Bye, {}!", name));
 
-	// let routes = warp::get().and(hello.or(bye));
-	// let routes = warp::get().and(
-	//     composite
-	//         .or(hello)
-	//         .or(bye)
-	// );
+		// let composite = warp::path!("composite" / "block" / u32 / "timestamp" / u64).and_then()
 
-	// let routes = warp::get().and_then(composite);
-	let routes = warp::path!("composite" / "block" / u32 / "timestamp" / u64)
-		.and_then(serve_composite);
-	// .with(warp::filters::compression::gzip());
+		// let composite = warp::path!("composite" / "block" / u32 / "timestamp" / u64).and_then(serve_composite);
 
-	warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
+		// let routes = warp::get().and(hello.or(bye));
+		// let routes = warp::get().and(
+		//     composite
+		//         .or(hello)
+		//         .or(bye)
+		// );
+
+		// let routes = warp::get().and_then(composite);
+		let routes = warp::path!("composite" / "block" / u32 / "timestamp" / u64)
+			.and_then(serve_composite);
+		// .with(warp::filters::compression::gzip());
+
+		if let Some(mut gossip_refresh_receiver) = self.gossip_refresh_receiver.take() {
+			println!("background gossip refresher active!");
+			let gossip_cache = self.full_history_gossip.clone();
+			tokio::spawn(async move {
+				while let Some(gossip_update) = gossip_refresh_receiver.recv().await {
+					println!("refreshing background gossip");
+					let warp_reply = serve_composite(0, 0).await.unwrap();
+					let warp_response = warp_reply.into_response();
+					let hyper_body = warp_response.into_body();
+					let retrieved_output: Vec<u8> = warp::hyper::body::to_bytes(hyper_body).await.unwrap().to_vec();
+
+					let mut response_writer = gossip_cache.write().unwrap();
+					*response_writer = retrieved_output;
+					println!("refreshed background gossip!");
+				}
+			});
+		}
+
+		warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
+	}
 }
 
 async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply, Infallible> {
@@ -181,6 +218,8 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 		.header("X-LDK-Gossip-Modified-Update-Count", HeaderValue::from(modified_updates))
 		.header("X-LDK-Raw-Output-Length", HeaderValue::from(response_length));
 
+	println!("message count: {}\nannouncement count: {}\nupdate count: {}\nraw output length: {}", gossip_message_count, gossip_message_announcement_count, gossip_message_update_count, response_length);
+
 	if should_compress {
 		let mut compressor = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
 		compressor.write_all(&output);
@@ -197,6 +236,9 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 			.header("X-LDK-Compression-Efficacy", HeaderValue::from_str(efficacy_header.as_str()).unwrap())
 			.header("Content-Encoding", HeaderValue::from_static("gzip"))
 			.header("Content-Length", HeaderValue::from(compressed_length));
+
+		println!("compressed output length: {}\ncompression efficacy: {}", compressed_length, efficacy_header);
+
 	}
 
 	let duration = start.elapsed();
@@ -206,9 +248,12 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 		.header("X-LDK-Elapsed-Time", HeaderValue::from_str(elapsed_time.as_str()).unwrap())
 		.body(output);
 
+	println!("elapsed time: {}", elapsed_time);
+
 	// let response = format!("block: {}<br/>\ntimestamp: {}<br/>\nlength: {}<br/>\nelapsed: {:?}", block, timestamp, response_length, duration);
 	Ok(response)
 }
+
 
 struct UpdateChangeSet {
 	affected_field_count: u8,
@@ -262,6 +307,6 @@ fn compare_update_with_reference(latest_update: &UnsignedChannelUpdate, referenc
 
 	UpdateChangeSet {
 		affected_field_count: updated_field_count,
-		affected_fields: modified_field_keys
+		affected_fields: modified_field_keys,
 	}
 }

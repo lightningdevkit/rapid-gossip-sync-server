@@ -1,3 +1,4 @@
+use crate::server::GossipServer;
 use crate::types::GossipChainAccess;
 
 mod compression;
@@ -10,6 +11,14 @@ mod config;
 
 #[tokio::main]
 async fn main() {
-	// download::download_gossip().await;
-	server::serve_gossip().await;
+	let mut server = GossipServer::new();
+
+	let refresh_sender = server.gossip_refresh_sender.clone();
+	let download_future = download::download_gossip(Some(refresh_sender));
+	tokio::spawn(async move {
+		// initiate the whole download stuff in the background
+		download_future.await;
+	});
+
+	server.serve_gossip().await;
 }

@@ -18,7 +18,7 @@ use crate::sample::hex_utils;
 pub(crate) struct GossipServer {
 	pub(crate) gossip_refresh_sender: mpsc::Sender<()>,
 	gossip_refresh_receiver: Option<mpsc::Receiver<()>>,
-	full_history_gossip: Arc<RwLock<Vec<u8>>>
+	full_history_gossip: Arc<RwLock<warp::reply::Response>>
 }
 
 impl GossipServer {
@@ -27,7 +27,7 @@ impl GossipServer {
 		Self {
 			gossip_refresh_sender,
 			gossip_refresh_receiver: Some(gossip_refresh_receiver),
-			full_history_gossip: Arc::new(RwLock::new(Vec::new()))
+			full_history_gossip: Arc::new(RwLock::new(warp::reply::Response::default()))
 		}
 	}
 
@@ -60,11 +60,9 @@ impl GossipServer {
 					println!("refreshing background gossip");
 					let warp_reply = serve_composite(0, 0).await.unwrap();
 					let warp_response = warp_reply.into_response();
-					let hyper_body = warp_response.into_body();
-					let retrieved_output: Vec<u8> = warp::hyper::body::to_bytes(hyper_body).await.unwrap().to_vec();
 
 					let mut response_writer = gossip_cache.write().unwrap();
-					*response_writer = retrieved_output;
+					*response_writer = warp_response;
 					println!("refreshed background gossip!");
 				}
 			});

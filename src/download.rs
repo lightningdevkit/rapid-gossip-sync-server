@@ -181,8 +181,8 @@ pub(crate) async fn download_gossip(gossip_sender: Option<mpsc::Sender<()>>) {
 				let chain_hash_hex = hex_utils::hex_str(chain_hash);
 
 				// start with the type prefix, which is already known a priori
-				let mut announcement_signed = vec![1, 0];
-				let mut announcement_unsigned = vec![1, 0];
+				let mut announcement_signed = Vec::new(); // vec![1, 0];
+				let mut announcement_unsigned = Vec::new(); // vec![1, 0];
 
 				// let type_id = announcement.type_id();
 				// type_id.write(&mut announcement_signed);
@@ -243,8 +243,8 @@ pub(crate) async fn download_gossip(gossip_sender: Option<mpsc::Sender<()>>) {
 				};
 
 				// start with the type prefix, which is already known a priori
-				let mut update_signed = vec![1, 2];
-				let mut update_unsigned = vec![1, 2];
+				let mut update_signed = Vec::new(); // vec![1, 2];
+				let mut update_unsigned = Vec::new(); // vec![1, 2];
 				update.write(&mut update_signed).unwrap();
 				update.contents.write(&mut update_unsigned).unwrap();
 				let update_hex = hex_utils::hex_str(&update_signed);
@@ -292,22 +292,4 @@ pub(crate) async fn download_gossip(gossip_sender: Option<mpsc::Sender<()>>) {
 			}
 		}
 	}
-
-	/*// build_graph_response().await;
-	// sample::start_ldk().await;
-
-	let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
-	let mut i = 0u32;
-	loop {
-		// The second item contains the IP and port of the new connection.
-		i += 1;
-		println!("waiting some seconds #{}!", i);
-
-		let sleep = tokio::time::sleep(Duration::from_secs(5));
-		sleep.await;
-
-		let router_clone = Arc::clone(&arc_wrapped_router);
-		let counter = router_clone.counter.read().unwrap();
-		println!("gossip count: \n\tannouncements: {}\n\tupdates: {}\n", counter.channel_announcements, counter.channel_updates);
-	}*/
 }

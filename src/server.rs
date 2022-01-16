@@ -106,6 +106,10 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 		let rows = client.query("SELECT * FROM channels WHERE block_height >= $1", &[&block_height_minimum]).await.unwrap();
 		gossip_message_announcement_count = rows.len() as u32;
 
+		// include the announcement count in lieu of per-announcement type markers
+		let count = BigSize(gossip_message_announcement_count as u64);
+		count.write(&mut output);
+
 		for current_row in rows {
 			let blob: String = current_row.get("announcement_unsigned");
 			let mut data = hex_utils::to_vec(&blob).unwrap();
@@ -126,6 +130,7 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 		let timestamp_minimum = timestamp as i64;
 		// let timestamp_minimum = 0i64;
 		// let rows = client.query("SELECT * FROM channel_updates", &[]).await.unwrap();
+		let mut update_data = Vec::new();
 
 		let mut reference: HashMap<String, UnsignedChannelUpdate> = HashMap::new();
 		if enable_update_reference_comparisons {
@@ -137,7 +142,7 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 				let blob: String = current_reference.get("blob_unsigned");
 				let data = hex_utils::to_vec(&blob).unwrap();
 				let mut readable = Cursor::new(data);
-				readable.set_position(2); // the first two bytes are the type, which in this case we already know
+				// readable.set_position(2); // the first two bytes are the type, which in this case we already know
 				let unsigned_channel_update = UnsignedChannelUpdate::read(&mut readable).unwrap();
 				reference.insert(reference_key, unsigned_channel_update);
 			}
@@ -163,7 +168,7 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 				let reference_channel_update = reference.get(&reference_key);
 
 				let mut readable = Cursor::new(&data);
-				readable.set_position(2); // the first two bytes are the type, which in this case we already know
+				// readable.set_position(2); // the first two bytes are the type, which in this case we already know
 				let mut unsigned_channel_update = UnsignedChannelUpdate::read(&mut readable).unwrap();
 
 				if let Some(reference_update) = reference_channel_update {
@@ -192,14 +197,18 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 				unsigned_channel_update.write(&mut zero_timestamp_serialization).unwrap();
 
 				let length = BigSize(zero_timestamp_serialization.len() as u64);
-				length.write(&mut output);
-				output.append(&mut zero_timestamp_serialization);
+				length.write(&mut update_data);
+				update_data.append(&mut zero_timestamp_serialization);
 			} else {
 				let length = BigSize(data.len() as u64);
-				length.write(&mut output);
-				output.append(&mut data);
+				length.write(&mut update_data);
+				update_data.append(&mut data);
 			}
 		}
+
+		let count = BigSize(gossip_message_update_count as u64);
+		count.write(&mut output);
+		output.append(&mut update_data);
 
 		println!("modification tally by count: {:#?}", modification_tally_by_field_count);
 		println!("modification tally by combination: {:#?}", modification_tally_by_affected_field_combination);

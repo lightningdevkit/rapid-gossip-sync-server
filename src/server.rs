@@ -191,9 +191,9 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 				}
 
 				gossip_message_update_count += 1;
-				// unsigned_channel_update.timestamp = 0;
-				unsigned_channel_update.timestamp = current_timestamp as u32;
-				let mut zero_timestamp_serialization = vec![1, 2];
+				unsigned_channel_update.timestamp = 0;
+				// unsigned_channel_update.timestamp = current_timestamp as u32;
+				let mut zero_timestamp_serialization = Vec::new(); // vec![1, 2];
 				unsigned_channel_update.write(&mut zero_timestamp_serialization).unwrap();
 
 				let length = BigSize(zero_timestamp_serialization.len() as u64);

@@ -96,7 +96,7 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 	let mut output: Vec<u8> = vec![76, 68, 75, 2];
 	if timestamp > 0 {
 		is_incremental = true;
-		output = vec![76, 68, 75, 3]; // indicate an incremental update type
+		output = vec![76, 68, 75, 2]; // indicate an incremental update type
 	}
 
 	let mut gossip_message_announcement_count = 0u32;
@@ -191,8 +191,7 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 						{
 							// comment this block to force full updates to always get sent
 							gossip_message_update_count += 1;
-							let length = BigSize(0u64); // if the length is 0, the following update is incremental
-							length.write(&mut update_data);
+							// length encoding is not necessary due to explicit delta field sizes
 							update_data.append(&mut delta.serialization.clone());
 							continue;
 						}
@@ -205,17 +204,29 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 					updates_without_prior_reference += 1;
 				}
 
+				gossip_message_update_count += 1;
+
 			}
 
-			gossip_message_update_count += 1;
 			unsigned_channel_update.timestamp = 0;
 			// unsigned_channel_update.timestamp = current_timestamp as u32;
-			let mut zero_timestamp_serialization = Vec::new(); // vec![1, 2];
-			unsigned_channel_update.write(&mut zero_timestamp_serialization).unwrap();
 
-			let length = BigSize(zero_timestamp_serialization.len() as u64);
-			length.write(&mut update_data);
-			update_data.append(&mut zero_timestamp_serialization);
+			// let initial_offset = 32 + 8 + 4 + 1 + 1; // chain_hash + short_channel_id + timestamp + message flags + channel flags
+			let message_flags = data[44];
+			let channel_flags = data[45];
+			let serialization_suffix = &data[46..]; // variable length
+
+			unsigned_channel_update.short_channel_id.write(&mut update_data);
+			unsigned_channel_update.flags.write(&mut update_data);
+
+			let suffix_length = BigSize(serialization_suffix.len() as u64 + 1);
+			suffix_length.write(&mut update_data);
+			message_flags.write(&mut update_data);
+			update_data.extend_from_slice(serialization_suffix);
+
+			// let length = BigSize(zero_timestamp_serialization.len() as u64);
+			// length.write(&mut update_data);
+			// update_data.append(&mut zero_timestamp_serialization);
 		}
 
 		let count = BigSize(gossip_message_update_count as u64);
@@ -290,20 +301,19 @@ fn compare_update_with_reference(latest_update: &UnsignedChannelUpdate, referenc
 	let mut updated_field_count = 0;
 	let mut modified_field_keys = vec![];
 
+	let mut serialized_flags = latest_update.flags;
 	let mut delta_serialization = Vec::new();
-	let mut are_flags_changed = false;
 
 	if latest_update.flags != reference_update.flags {
 		updated_field_count += 1;
 		modified_field_keys.push("flags".to_string());
-		are_flags_changed = true;
 	}
 
 	if latest_update.cltv_expiry_delta != reference_update.cltv_expiry_delta {
 		updated_field_count += 1;
 		modified_field_keys.push("cltv_expiry_delta".to_string());
 
-		1u8.write(&mut delta_serialization);
+		serialized_flags |= 0b_0100_0000;
 		latest_update.cltv_expiry_delta.write(&mut delta_serialization);
 	}
 
@@ -311,7 +321,7 @@ fn compare_update_with_reference(latest_update: &UnsignedChannelUpdate, referenc
 		updated_field_count += 1;
 		modified_field_keys.push("htlc_minimum_msat".to_string());
 
-		2u8.write(&mut delta_serialization);
+		serialized_flags |= 0b_0010_0000;
 		latest_update.htlc_minimum_msat.write(&mut delta_serialization);
 	}
 
@@ -319,7 +329,7 @@ fn compare_update_with_reference(latest_update: &UnsignedChannelUpdate, referenc
 		updated_field_count += 1;
 		modified_field_keys.push("fee_base_msat".to_string());
 
-		3u8.write(&mut delta_serialization);
+		serialized_flags |= 0b_0001_0000;
 		latest_update.fee_base_msat.write(&mut delta_serialization);
 	}
 
@@ -327,7 +337,7 @@ fn compare_update_with_reference(latest_update: &UnsignedChannelUpdate, referenc
 		updated_field_count += 1;
 		modified_field_keys.push("fee_proportional_millionths".to_string());
 
-		4u8.write(&mut delta_serialization);
+		serialized_flags |= 0b_0000_1000;
 		latest_update.fee_proportional_millionths.write(&mut delta_serialization);
 	}
 
@@ -345,8 +355,8 @@ fn compare_update_with_reference(latest_update: &UnsignedChannelUpdate, referenc
 	if !is_htlc_maximum_identical {
 		updated_field_count += 1;
 		modified_field_keys.push("htlc_maximum_msat".to_string());
+		serialized_flags |= 0b_0000_0100;
 
-		5u8.write(&mut delta_serialization);
 		if let OptionalField::Present(new_htlc_maximum) = latest_update.htlc_maximum_msat {
 			1u8.write(&mut delta_serialization);
 			new_htlc_maximum.write(&mut delta_serialization);
@@ -358,14 +368,15 @@ fn compare_update_with_reference(latest_update: &UnsignedChannelUpdate, referenc
 	let mut prefixed_serialization = Vec::new();
 	if updated_field_count > 0 {
 		// if no field was changed, there is no point serializing anything at all
-		latest_update.flags.write(&mut prefixed_serialization);
 
-		let mut serialized_change_count = updated_field_count;
-		if are_flags_changed {
-			// the flags are always included to identify the node, so we don't want to count them
-			serialized_change_count -= 1;
-		}
-		serialized_change_count.write(&mut prefixed_serialization);
+		// standard inclusions
+		latest_update.short_channel_id.write(&mut prefixed_serialization);
+		serialized_flags |= 0b_1000_0000; // signify with the most significant bit that this update is incremental
+		serialized_flags.write(&mut prefixed_serialization);
+
+		// debugging purposes only
+		// let serialization_delta_string = format!("{:b}", serialized_flags);
+
 		prefixed_serialization.append(&mut delta_serialization);
 	}
 

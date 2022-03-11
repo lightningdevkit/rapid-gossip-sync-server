@@ -20,7 +20,7 @@ use tokio_postgres::NoTls;
 
 use crate::config;
 use crate::router::{GossipCounter, GossipRouter};
-use crate::sample::hex_utils;
+use crate::hex_utils;
 use crate::types::{GossipChainAccess, GossipMessage};
 
 pub(crate) async fn download_gossip(gossip_sender: Option<mpsc::Sender<()>>) {

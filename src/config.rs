@@ -10,6 +10,7 @@ pub(crate) fn db_channel_table_creation_query() -> String {
 		chain_hash character varying(255),
 		announcement_signed text,
 		announcement_unsigned text,
+		received bigint NOT NULL,
 		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 	)".to_string()
 }
@@ -31,6 +32,7 @@ pub(crate) fn db_channel_update_table_creation_query() -> String {
 		htlc_maximum_msat bigint,
 		blob_signed text,
 		blob_unsigned text,
+		received bigint NOT NULL,
 		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 		channel_id integer
 	)".to_string()

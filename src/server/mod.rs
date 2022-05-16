@@ -60,6 +60,7 @@ impl GossipServer {
 		});
 
 		let dynamic_gossip_route = warp::path!("composite" / "block" / u32 / "timestamp" / u64).and_then(serve_composite);
+		let snapshotted_gossip_route = warp::path!("snapshot" / u64).and_then(serve_snapshot);
 
 		if let Some(mut gossip_refresh_receiver) = self.gossip_refresh_receiver.take() {
 			println!("background gossip refresher active!");
@@ -81,9 +82,13 @@ impl GossipServer {
 			});
 		}
 
-		let routes = warp::get().and(full_gossip_route.or(dynamic_gossip_route));
+		let routes = warp::get().and(full_gossip_route.or(dynamic_gossip_route).or(snapshotted_gossip_route));
 		warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 	}
+}
+
+async fn serve_snapshot(last_sync_timestamp: u64) -> Result<impl warp::Reply, Infallible> {
+	Ok("everything is awesome!")
 }
 
 /// Server route for returning compressed gossip data
@@ -125,6 +130,11 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 	let mut chain_hash: Option<BlockHash> = None;
 
 
+	enum ExperimentalFailureMode {
+		TooManyNodeIDs(bool),
+		TooManyAnnouncements(bool),
+		TooManyUpdates(bool)
+	}
 	enum ExperimentalUpdateMode {
 		Default,
 		OldestDataFull,
@@ -136,15 +146,17 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 		IncrementalOnlyDirection1,
 		AnnouncementsOnly,
 	}
-	let experimental_update_mode = Some(ExperimentalUpdateMode::OldestDataFull);
-	// let experimental_update_mode = None;
+	// let experimental_failure_mode = Some(ExperimentalFailureMode::TooManyUpdates(false));
+	let experimental_failure_mode = None;
+	// let experimental_update_mode = Some(ExperimentalUpdateMode::OldestDataFull);
+	let experimental_update_mode = None;
 
 	let mut scid_deltas = vec![]; // all deltas, across both announcements and updates
 	let mut node_id_set: HashSet<[u8; 33]> = HashSet::new();
 	let mut node_id_indices: HashMap<[u8; 33], usize> = HashMap::new();
 	let mut node_ids: Vec<PublicKey> = Vec::new();
 	let mut duplicate_node_ids = 0;
-	let mut previous_announcement_scid = None;
+	let mut previous_announcement_scid = 0;
 	let mut latest_seen_timestamp = None;
 
 	let mut get_node_id_index = |node_id: PublicKey| {
@@ -171,7 +183,8 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 		let announcement_rows = if let Some(experimental_update_mode) = &experimental_update_mode {
 			match experimental_update_mode {
 				ExperimentalUpdateMode::Default | ExperimentalUpdateMode::OldestDataFull | ExperimentalUpdateMode::OldestDataDirection0 | ExperimentalUpdateMode::OldestDataDirection1 | ExperimentalUpdateMode::AnnouncementsOnly | ExperimentalUpdateMode::IncrementalOnlyBidirectionalWithAnnouncements  => {
-					client.query("SELECT * FROM channels WHERE block_height >= $1 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC", &[&block_height_minimum]).await.unwrap()
+					client.query("SELECT * FROM channels WHERE block_height >= $1 ORDER BY short_channel_id ASC", &[&block_height_minimum]).await.unwrap()
+					// client.query("SELECT * FROM channels WHERE block_height >= $1 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC", &[&block_height_minimum]).await.unwrap()
 				}
 				_ => {
 					vec![]
@@ -183,7 +196,12 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 
 		// let announcement_rows = client.query("SELECT * FROM channels WHERE block_height >= $1 ORDER BY short_channel_id ASC", &[&block_height_minimum]).await.unwrap();
 		gossip_message_announcement_count = announcement_rows.len() as u32;
-		gossip_message_announcement_count.write(&mut output);
+		if let Some(ExperimentalFailureMode::TooManyAnnouncements(exceed_limit)) = experimental_failure_mode {
+			let count = 150_000u32 + if exceed_limit { 1 } else { 0 };
+			count.write(&mut output);
+		} else {
+			gossip_message_announcement_count.write(&mut output);
+		}
 
 		for current_announcement_row in announcement_rows {
 			let blob: String = current_announcement_row.get("announcement_unsigned");
@@ -208,11 +226,9 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 			let mut stripped_announcement = serialization::serialize_stripped_channel_announcement(&unsigned_announcement, id_index_1, id_index_2, previous_announcement_scid);
 			output.append(&mut stripped_announcement);
 
-			if let Some(previous_scid) = previous_announcement_scid {
-				let scid_delta = unsigned_announcement.short_channel_id - previous_scid;
-				scid_deltas.push(scid_delta);
-			}
-			previous_announcement_scid.replace(unsigned_announcement.short_channel_id);
+			let scid_delta = unsigned_announcement.short_channel_id - previous_announcement_scid;
+			scid_deltas.push(scid_delta);
+			previous_announcement_scid = unsigned_announcement.short_channel_id;
 		}
 	}
 
@@ -290,7 +306,8 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 					client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE timestamp >= $1 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, timestamp DESC", &[&timestamp_minimum]).await.unwrap()
 				}
 				ExperimentalUpdateMode::OldestDataFull => {
-					client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, timestamp ASC", &[]).await.unwrap()
+					client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates ORDER BY short_channel_id ASC, direction ASC, timestamp ASC", &[]).await.unwrap()
+					// client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, timestamp ASC", &[]).await.unwrap()
 				}
 				ExperimentalUpdateMode::OldestDataDirection0 => {
 					client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE direction = 0 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, timestamp ASC", &[]).await.unwrap()
@@ -348,6 +365,7 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 				*fee_proportional_millionths_histogram.entry(unsigned_channel_update.fee_proportional_millionths).or_insert(0) += 1;
 				let htlc_maximum_msat_key = serialization::optional_htlc_maximum_to_u64(&unsigned_channel_update.htlc_maximum_msat);
 				*htlc_maximum_msat_histogram.entry(htlc_maximum_msat_key).or_insert(0) += 1;
+				updates_without_prior_reference += 1;
 			}
 
 			let seen_timestamp: DateTime<Utc> = current_update_row.get("createdAt");
@@ -362,7 +380,7 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 		}
 
 		// evaluate the histograms
-		let default_update_values = if updates_with_reference_keys.len() > 0 {
+		let default_update_values = if updates_without_prior_reference > 0 {
 			DefaultUpdateValues {
 				cltv_expiry_delta: serialization::find_most_common_histogram_entry(cltv_expiry_delta_histogram),
 				htlc_minimum_msat: serialization::find_most_common_histogram_entry(htlc_minimum_msat_histogram),
@@ -381,7 +399,7 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 			}
 		};
 
-		let mut previous_update_scid = None;
+		let mut previous_update_scid = 0;
 		for (unsigned_channel_update, reference_key) in updates_with_reference_keys {
 
 			let mut reference_update = if enable_update_reference_comparisons {
@@ -416,26 +434,33 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 			// unsigned_channel_update.timestamp = current_timestamp as u32;
 			update_data.extend_from_slice(&delta.serialization);
 
-			if let Some(previous_scid) = previous_update_scid {
-				let scid_delta = unsigned_channel_update.short_channel_id - previous_scid;
-				scid_deltas.push(scid_delta);
-			}
-			previous_update_scid.replace(unsigned_channel_update.short_channel_id);
+
+			let scid_delta = unsigned_channel_update.short_channel_id - previous_update_scid;
+			scid_deltas.push(scid_delta);
+			previous_update_scid = unsigned_channel_update.short_channel_id;
 		}
 
-		gossip_message_update_count.write(&mut output);
+		if let Some(ExperimentalFailureMode::TooManyUpdates(exceed_limit)) = experimental_failure_mode {
+			let count = 250_000u32 + if exceed_limit { 1 } else { 0 };
+			count.write(&mut output);
+		}else {
+			gossip_message_update_count.write(&mut output);
+		}
+
 		if gossip_message_update_count > 0 {
-			// we don't care about the defaults if we have 0 updates
 			default_update_values.cltv_expiry_delta.write(&mut output);
 			default_update_values.htlc_minimum_msat.write(&mut output);
 			default_update_values.fee_base_msat.write(&mut output);
 			default_update_values.fee_proportional_millionths.write(&mut output);
 			default_update_values.htlc_maximum_msat.write(&mut output);
-			println!("default cltv_expiry_delta: {}", default_update_values.cltv_expiry_delta);
-			println!("default htlc_minimum_msat: {}", default_update_values.htlc_minimum_msat);
-			println!("default fee_base_msat: {}", default_update_values.fee_base_msat);
-			println!("default fee_proportional_millionths: {}", default_update_values.fee_proportional_millionths);
-			println!("default htlc_maximum_msat: {}", default_update_values.htlc_maximum_msat);
+
+			if updates_without_prior_reference > 0 {
+				println!("default cltv_expiry_delta: {}", default_update_values.cltv_expiry_delta);
+				println!("default htlc_minimum_msat: {}", default_update_values.htlc_minimum_msat);
+				println!("default fee_base_msat: {}", default_update_values.fee_base_msat);
+				println!("default fee_proportional_millionths: {}", default_update_values.fee_proportional_millionths);
+				println!("default htlc_maximum_msat: {}", default_update_values.htlc_maximum_msat);
+			}
 		}
 		output.append(&mut update_data);
 
@@ -452,7 +477,12 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 	(latest_seen_timestamp.unwrap().timestamp() as u32).write(&mut prefixed_output);
 
 	let node_id_count = node_ids.len() as u32;
-	node_id_count.write(&mut prefixed_output);
+	if let Some(ExperimentalFailureMode::TooManyNodeIDs(exceed_limit)) = experimental_failure_mode {
+		let count = 50_000u32 + if exceed_limit { 1 } else { 0 };
+		count.write(&mut prefixed_output);
+	}else{
+		node_id_count.write(&mut prefixed_output);
+	}
 	for current_node_id in node_ids {
 		current_node_id.write(&mut prefixed_output);
 	}

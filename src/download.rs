@@ -137,8 +137,6 @@ pub(crate) async fn download_gossip(gossip_sender: Option<mpsc::Sender<()>>) {
 		}
 	});
 
-	// let peer_handler: GossipPeerManager = lightning::ln::peer_handler::PeerManager::new_routing_only(arc_message_handler, our_node_secret, &random_data, arc_logger.clone());
-
 	let (client, connection) =
 		tokio_postgres::connect(config::db_connection_string().as_str(), NoTls)
 			.await

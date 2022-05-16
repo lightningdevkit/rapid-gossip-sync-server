@@ -16,18 +16,16 @@ pub(super) struct UpdateChangeSet {
 	pub(super) serialization: Vec<u8>,
 }
 
-pub fn serialize_stripped_channel_announcement(announcement: &UnsignedChannelAnnouncement, node_id_a_index: usize, node_id_b_index: usize, previous_scid: Option<u64>) -> Vec<u8> {
+pub fn serialize_stripped_channel_announcement(announcement: &UnsignedChannelAnnouncement, node_id_a_index: usize, node_id_b_index: usize, previous_scid: u64) -> Vec<u8> {
 	let mut stripped_announcement = vec![];
 	announcement.features.write(&mut stripped_announcement);
-	if let Some(previous_scid) = previous_scid {
-		if previous_scid > announcement.short_channel_id {
-			panic!("unsorted scids!");
-		}
-		let scid_delta = BigSize(announcement.short_channel_id - previous_scid);
-		scid_delta.write(&mut stripped_announcement);
-	} else {
-		announcement.short_channel_id.write(&mut stripped_announcement);
+
+	if previous_scid > announcement.short_channel_id {
+		panic!("unsorted scids!");
 	}
+	let scid_delta = BigSize(announcement.short_channel_id - previous_scid);
+	scid_delta.write(&mut stripped_announcement);
+
 	// announcement.node_id_1.write(&mut stripped_announcement);
 	// announcement.node_id_2.write(&mut stripped_announcement);
 
@@ -39,15 +37,16 @@ pub fn serialize_stripped_channel_announcement(announcement: &UnsignedChannelAnn
 	stripped_announcement
 }
 
-fn serialize_stripped_channel_update_old(update: &UnsignedChannelUpdate, previous_scid: Option<u64>) -> Vec<u8> {
+fn serialize_stripped_channel_update_old(update: &UnsignedChannelUpdate, previous_scid: u64) -> Vec<u8> {
 	let mut stripped_update = vec![];
 	// standard inclusions
-	if let Some(previous_scid) = previous_scid {
-		let scid_delta = BigSize(update.short_channel_id - previous_scid);
-		scid_delta.write(&mut stripped_update);
-	} else {
-		update.short_channel_id.write(&mut stripped_update);
+
+	if previous_scid > update.short_channel_id {
+		panic!("unsorted scids!");
 	}
+	let scid_delta = BigSize(update.short_channel_id - previous_scid);
+	scid_delta.write(&mut stripped_update);
+
 	println!("full update scid/flags: {}/{}", update.short_channel_id, update.flags);
 	update.flags.write(&mut stripped_update);
 	// skip and ignore CLTV expiry delta?
@@ -60,16 +59,18 @@ fn serialize_stripped_channel_update_old(update: &UnsignedChannelUpdate, previou
 	stripped_update
 }
 
-pub(super) fn serialize_stripped_channel_update(latest_update: &UnsignedChannelUpdate, default_values: &DefaultUpdateValues, previous_scid: Option<u64>) -> Vec<u8> {
+pub(super) fn serialize_stripped_channel_update(latest_update: &UnsignedChannelUpdate, default_values: &DefaultUpdateValues, previous_scid: u64) -> Vec<u8> {
 	let mut aberrant_field_keys = vec![];
 
 	let mut prefixed_serialization = Vec::new();
-	if let Some(previous_scid) = previous_scid {
-		let scid_delta = BigSize(latest_update.short_channel_id - previous_scid);
-		scid_delta.write(&mut prefixed_serialization);
-	} else {
-		latest_update.short_channel_id.write(&mut prefixed_serialization);
+
+
+	if previous_scid > latest_update.short_channel_id {
+		panic!("unsorted scids!");
 	}
+	let scid_delta = BigSize(latest_update.short_channel_id - previous_scid);
+	scid_delta.write(&mut prefixed_serialization);
+
 
 	let mut serialized_flags = latest_update.flags;
 	let mut delta_serialization = Vec::new();
@@ -117,7 +118,7 @@ pub(super) fn serialize_stripped_channel_update(latest_update: &UnsignedChannelU
 	prefixed_serialization
 }
 
-pub(super) fn compare_update_with_reference(latest_update: &UnsignedChannelUpdate, default_values: &DefaultUpdateValues, reference_update: Option<&UnsignedChannelUpdate>, previous_scid: Option<u64>) -> UpdateChangeSet {
+pub(super) fn compare_update_with_reference(latest_update: &UnsignedChannelUpdate, default_values: &DefaultUpdateValues, reference_update: Option<&UnsignedChannelUpdate>, previous_scid: u64) -> UpdateChangeSet {
 	let mut updated_field_count = 0;
 	let mut modified_field_keys = vec![];
 
@@ -189,12 +190,13 @@ pub(super) fn compare_update_with_reference(latest_update: &UnsignedChannelUpdat
 			// if no field was changed, there is no point serializing anything at all
 
 			// standard inclusions
-			if let Some(previous_scid) = previous_scid {
-				let scid_delta = BigSize(latest_update.short_channel_id - previous_scid);
-				scid_delta.write(&mut prefixed_serialization);
-			} else {
-				latest_update.short_channel_id.write(&mut prefixed_serialization);
+			if previous_scid > latest_update.short_channel_id {
+				panic!("unsorted scids!");
 			}
+			let scid_delta = BigSize(latest_update.short_channel_id - previous_scid);
+			scid_delta.write(&mut prefixed_serialization);
+
+
 			serialized_flags |= 0b_1000_0000; // signify with the most significant bit that this update is incremental
 			serialized_flags.write(&mut prefixed_serialization);
 

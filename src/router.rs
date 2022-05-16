@@ -77,11 +77,11 @@ impl RoutingMessageHandler for GossipRouter {
         self.native_router.get_next_node_announcements(starting_point, batch_amount)
     }
 
-    fn sync_routing_table(&self, their_node_id: &PublicKey, init: &Init) {
-        self.native_router.sync_routing_table(their_node_id, init)
-    }
+	fn peer_connected(&self, their_node_id: &PublicKey, init: &Init) {
+		self.native_router.peer_connected(their_node_id, init)
+	}
 
-    fn handle_reply_channel_range(&self, their_node_id: &PublicKey, msg: ReplyChannelRange) -> Result<(), LightningError> {
+	fn handle_reply_channel_range(&self, their_node_id: &PublicKey, msg: ReplyChannelRange) -> Result<(), LightningError> {
         self.native_router.handle_reply_channel_range(their_node_id, msg)
     }
 

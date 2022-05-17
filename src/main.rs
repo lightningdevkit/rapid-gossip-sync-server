@@ -7,30 +7,37 @@
 // #![deny(unused_variables)]
 #![deny(unused_imports)]
 
+use crate::persistence::GossipPersister;
 use crate::server::GossipServer;
 use crate::types::GossipChainAccess;
 
 mod compression;
 mod router;
-// mod sample;
 mod types;
 mod download;
+mod persistence;
 mod server;
 mod config;
 mod hex_utils;
 
 #[tokio::main]
 async fn main() {
-	let mut server = GossipServer::new();
+	let mut persister = GossipPersister::new();
 
 	{
-		let refresh_sender = server.gossip_refresh_sender.clone();
-		let download_future = download::download_gossip(Some(refresh_sender));
+		let persistence_sender = persister.gossip_persistence_sender.clone();
+		let download_future = download::download_gossip(persistence_sender);
 		tokio::spawn(async move {
 			// initiate the whole download stuff in the background
 			download_future.await;
 		});
+		tokio::spawn(async move {
+			// initiate persistence of the gossip data
+			let persistence_future = persister.persist_gossip();
+			persistence_future.await;
+		});
 	}
 
+	let mut server = GossipServer::new();
 	server.start_gossip_server().await;
 }

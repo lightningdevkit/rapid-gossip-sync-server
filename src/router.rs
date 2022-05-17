@@ -1,4 +1,5 @@
 use std::sync::{Arc, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use bitcoin::secp256k1::PublicKey;
 use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, Init, LightningError, NodeAnnouncement, QueryChannelRange, QueryShortChannelIds, ReplyChannelRange, ReplyShortChannelIdsEnd, RoutingMessageHandler};
@@ -8,7 +9,7 @@ use lightning::util::test_utils::TestLogger;
 use tokio::sync::mpsc;
 
 use crate::GossipChainAccess;
-use crate::types::GossipMessage;
+use crate::types::{DetectedGossipMessage, GossipMessage};
 
 pub(crate) struct GossipCounter {
     pub(crate) channel_announcements: u64,
@@ -27,7 +28,7 @@ impl GossipCounter {
 pub(crate) struct GossipRouter {
     pub(crate) native_router: Arc<NetGraphMsgHandler<Arc<NetworkGraph>, GossipChainAccess, Arc<TestLogger>>>,
     pub(crate) counter: RwLock<GossipCounter>,
-    pub(crate) sender: mpsc::Sender<GossipMessage>
+    pub(crate) sender: mpsc::Sender<DetectedGossipMessage>
 }
 
 impl MessageSendEventsProvider for GossipRouter {
@@ -42,28 +43,38 @@ impl RoutingMessageHandler for GossipRouter {
     }
 
     fn handle_channel_announcement(&self, msg: &ChannelAnnouncement) -> Result<bool, LightningError> {
+		let timestamp_seen = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         let result = self.native_router.handle_channel_announcement(msg);
         if result.is_ok() {
             let mut counter = self.counter.write().unwrap();
             counter.channel_announcements += 1;
             let gossip_message = GossipMessage::ChannelAnnouncement(msg.clone());
+			let detected_gossip_message = DetectedGossipMessage {
+				message: gossip_message,
+				timestamp_seen: timestamp_seen as u32
+			};
             let sender = self.sender.clone();
             tokio::spawn(async move {
-                sender.send(gossip_message).await;
+                sender.send(detected_gossip_message).await;
             });
         }
         result
     }
 
     fn handle_channel_update(&self, msg: &ChannelUpdate) -> Result<bool, LightningError> {
+		let timestamp_seen = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         let result = self.native_router.handle_channel_update(msg);
         if result.is_ok() {
             let mut counter = self.counter.write().unwrap();
             counter.channel_updates += 1;
             let gossip_message = GossipMessage::ChannelUpdate(msg.clone());
+			let detected_gossip_message = DetectedGossipMessage {
+				message: gossip_message,
+				timestamp_seen: timestamp_seen as u32
+			};
             let sender = self.sender.clone();
             tokio::spawn(async move {
-                sender.send(gossip_message).await;
+                sender.send(detected_gossip_message).await;
             });
         }
         result

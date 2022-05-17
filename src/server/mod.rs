@@ -1,20 +1,17 @@
+use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::io::{Cursor, Write};
-use std::sync::{Arc, RwLock};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 use bitcoin::BlockHash;
 use bitcoin::secp256k1::PublicKey;
-use chrono::{DateTime, Utc};
 use lightning::ln::msgs::{UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::util::ser::{Readable, Writeable};
 use tokio::sync::mpsc;
 use tokio_postgres::NoTls;
 use warp::Filter;
 use warp::http::HeaderValue;
-// use warp::http::{HeaderValue, Response};
-use warp::Reply;
 
 use crate::config;
 use crate::hex_utils;
@@ -25,8 +22,6 @@ mod serialization;
 pub(crate) struct GossipServer {
 	pub(crate) gossip_refresh_sender: mpsc::Sender<()>,
 	gossip_refresh_receiver: Option<mpsc::Receiver<()>>,
-	// full_history_gossip: Arc<RwLock<warp::reply::Response>>
-	full_history_gossip: Arc<RwLock<Vec<u8>>>
 }
 
 impl GossipServer {
@@ -36,58 +31,19 @@ impl GossipServer {
 		Self {
 			gossip_refresh_sender,
 			gossip_refresh_receiver: Some(gossip_refresh_receiver),
-			// full_history_gossip: Arc::new(RwLock::new(service_unavailable_response))
-			full_history_gossip: Arc::new(RwLock::new(Vec::new()))
 		}
 	}
 
 	pub(crate) async fn start_gossip_server(&mut self) {
-		let full_gossip_data = self.full_history_gossip.clone();
-		let full_gossip_route = warp::path("full").map(move || {
-			let arc_gossip_data = Arc::clone(&full_gossip_data);
-			let gossip_data = arc_gossip_data.read().unwrap();
+		let dynamic_gossip_route = warp::path!("dynamic" / u32).and_then(serve_dynamic);
+		let snapshotted_gossip_route = warp::path!("snapshot" / u32).and_then(serve_snapshot);
 
-			let compressed_length = gossip_data.len();
-			if compressed_length < 1 {
-				let service_unavailable_response = warp::http::Response::builder().status(503).body(vec![]);
-				return service_unavailable_response;
-			}
-
-			warp::http::Response::builder()
-				.header("Content-Encoding", HeaderValue::from_static("gzip"))
-				.header("Content-Length", HeaderValue::from(compressed_length))
-				.body(gossip_data.clone())
-		});
-
-		let dynamic_gossip_route = warp::path!("composite" / "block" / u32 / "timestamp" / u64).and_then(serve_composite);
-		let snapshotted_gossip_route = warp::path!("snapshot" / u64).and_then(serve_snapshot);
-
-		if let Some(mut gossip_refresh_receiver) = self.gossip_refresh_receiver.take() {
-			println!("background gossip refresher active!");
-			let gossip_cache = self.full_history_gossip.clone();
-			tokio::spawn(async move {
-				while let Some(gossip_update) = gossip_refresh_receiver.recv().await {
-					println!("refreshing background gossip");
-					let warp_reply = serve_composite(0, 0).await.unwrap();
-					let warp_response = warp_reply.into_response();
-
-					let hyper_body = warp_response.into_body();
-					let retrieved_output: Vec<u8> = warp::hyper::body::to_bytes(hyper_body).await.unwrap().to_vec();
-
-					let mut response_writer = gossip_cache.write().unwrap();
-					// *response_writer = warp_response;
-					*response_writer = retrieved_output;
-					println!("refreshed background gossip!");
-				}
-			});
-		}
-
-		let routes = warp::get().and(full_gossip_route.or(dynamic_gossip_route).or(snapshotted_gossip_route));
+		let routes = warp::get().and(snapshotted_gossip_route.or(dynamic_gossip_route));
 		warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 	}
 }
 
-async fn serve_snapshot(last_sync_timestamp: u64) -> Result<impl warp::Reply, Infallible> {
+async fn serve_snapshot(last_sync_timestamp: u32) -> Result<impl warp::Reply, Infallible> {
 	Ok("everything is awesome!")
 }
 
@@ -101,9 +57,8 @@ async fn serve_snapshot(last_sync_timestamp: u64) -> Result<impl warp::Reply, In
 /// Otherwise, the server compares the latest update prior to a given timestamp with the latest
 /// overall update and, in the event of a difference, returns a partial update of only the affected
 /// fields.
-async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply, Infallible> {
+async fn serve_dynamic(last_sync_timestamp: u32) -> Result<impl warp::Reply, Infallible> {
 	let start = Instant::now();
-	let current_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
 	let (client, connection) =
 		tokio_postgres::connect(config::db_connection_string().as_str(), NoTls).await.unwrap();
@@ -117,7 +72,7 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 	let mut is_incremental = false;
 	let mut output: Vec<u8> = vec![];
 
-	if timestamp > 0 {
+	if last_sync_timestamp > 0 {
 		is_incremental = true;
 	}
 
@@ -133,7 +88,7 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 	enum ExperimentalFailureMode {
 		TooManyNodeIDs(bool),
 		TooManyAnnouncements(bool),
-		TooManyUpdates(bool)
+		TooManyUpdates(bool),
 	}
 	enum ExperimentalUpdateMode {
 		Default,
@@ -157,7 +112,7 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 	let mut node_ids: Vec<PublicKey> = Vec::new();
 	let mut duplicate_node_ids = 0;
 	let mut previous_announcement_scid = 0;
-	let mut latest_seen_timestamp = None;
+	let mut latest_seen_timestamp = 0u32;
 
 	let mut get_node_id_index = |node_id: PublicKey| {
 		let serialized_node_id = node_id.serialize();
@@ -174,16 +129,13 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 	{
 		println!("fetching channels…");
 
-		let block_height_minimum = block as i32;
-		// let block_height_minimum = 0i32;
-
 		// the following commented line is purely for experiments where we want to return a limited
 		// number of initial channel updates to test incremental updates against
 		// TODO: remove
 		let announcement_rows = if let Some(experimental_update_mode) = &experimental_update_mode {
 			match experimental_update_mode {
-				ExperimentalUpdateMode::Default | ExperimentalUpdateMode::OldestDataFull | ExperimentalUpdateMode::OldestDataDirection0 | ExperimentalUpdateMode::OldestDataDirection1 | ExperimentalUpdateMode::AnnouncementsOnly | ExperimentalUpdateMode::IncrementalOnlyBidirectionalWithAnnouncements  => {
-					client.query("SELECT * FROM channels WHERE block_height >= $1 ORDER BY short_channel_id ASC", &[&block_height_minimum]).await.unwrap()
+				ExperimentalUpdateMode::Default | ExperimentalUpdateMode::OldestDataFull | ExperimentalUpdateMode::OldestDataDirection0 | ExperimentalUpdateMode::OldestDataDirection1 | ExperimentalUpdateMode::AnnouncementsOnly | ExperimentalUpdateMode::IncrementalOnlyBidirectionalWithAnnouncements => {
+					client.query("SELECT * FROM channels WHERE seen >= $1 ORDER BY short_channel_id ASC", &[&last_sync_timestamp]).await.unwrap()
 					// client.query("SELECT * FROM channels WHERE block_height >= $1 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC", &[&block_height_minimum]).await.unwrap()
 				}
 				_ => {
@@ -191,7 +143,7 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 				}
 			}
 		} else {
-			client.query("SELECT * FROM channels WHERE block_height >= $1 ORDER BY short_channel_id ASC", &[&block_height_minimum]).await.unwrap()
+			client.query("SELECT * FROM channels WHERE seen >= $1 ORDER BY short_channel_id ASC", &[&last_sync_timestamp]).await.unwrap()
 		};
 
 		// let announcement_rows = client.query("SELECT * FROM channels WHERE block_height >= $1 ORDER BY short_channel_id ASC", &[&block_height_minimum]).await.unwrap();
@@ -213,12 +165,8 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 				chain_hash = Some(unsigned_announcement.chain_hash);
 			}
 
-			let seen_timestamp: DateTime<Utc> = current_announcement_row.get("createdAt");
-			latest_seen_timestamp = if let Some(latest_seen_timestamp) = latest_seen_timestamp {
-				Some(DateTime::max(seen_timestamp, latest_seen_timestamp))
-			} else {
-				Some(seen_timestamp)
-			};
+			let current_seen_timestamp: u32 = current_announcement_row.get("seen");
+			latest_seen_timestamp = max(current_seen_timestamp, latest_seen_timestamp);
 
 			let id_index_1 = get_node_id_index(unsigned_announcement.node_id_1);
 			let id_index_2 = get_node_id_index(unsigned_announcement.node_id_2);
@@ -246,7 +194,6 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 	let mut modified_updates = 0;
 
 
-
 	{
 		println!("fetching updates…");
 
@@ -258,8 +205,6 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 
 		let mut updates_with_reference_keys: Vec<(UnsignedChannelUpdate, String)> = Vec::new();
 
-		let timestamp_minimum = timestamp as i64;
-		// let timestamp_minimum = 0i64;
 		// let rows = client.query("SELECT * FROM channel_updates", &[]).await.unwrap();
 		let mut update_data = Vec::new();
 
@@ -274,14 +219,14 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 						vec![]
 					}
 					_ => {
-						client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE timestamp < $1 AND short_channel_id IN (SELECT short_channel_id FROM channel_updates WHERE timestamp >= $1 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') GROUP BY short_channel_id) ORDER BY short_channel_id ASC, direction ASC, timestamp DESC", &[&timestamp_minimum]).await.unwrap()
+						client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE seen < $1 AND short_channel_id IN (SELECT short_channel_id FROM channel_updates WHERE seen >= $1 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') GROUP BY short_channel_id) ORDER BY short_channel_id ASC, direction ASC, seen DESC", &[&last_sync_timestamp]).await.unwrap()
 					}
 				}
 			} else {
-				client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE timestamp < $1 AND short_channel_id IN (SELECT short_channel_id FROM channel_updates WHERE timestamp >= $1 GROUP BY short_channel_id) ORDER BY short_channel_id ASC, direction ASC, timestamp DESC", &[&timestamp_minimum]).await.unwrap()
+				client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE seen < $1 AND short_channel_id IN (SELECT short_channel_id FROM channel_updates WHERE seen >= $1 GROUP BY short_channel_id) ORDER BY short_channel_id ASC, direction ASC, seen DESC", &[&last_sync_timestamp]).await.unwrap()
 			};
 
-			// let reference_rows = client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE timestamp < $1 AND short_channel_id IN (SELECT short_channel_id FROM channel_updates WHERE timestamp >= $1 GROUP BY short_channel_id) ORDER BY short_channel_id ASC, direction ASC, timestamp DESC", &[&timestamp_minimum]).await.unwrap();
+			// let reference_rows = client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE seen < $1 AND short_channel_id IN (SELECT short_channel_id FROM channel_updates WHERE seen >= $1 GROUP BY short_channel_id) ORDER BY short_channel_id ASC, direction ASC, seen DESC", &[&last_sync_timestamp]).await.unwrap();
 			for current_reference in reference_rows {
 				let scid_hex: String = current_reference.get("short_channel_id");
 				let direction: i32 = current_reference.get("direction");
@@ -299,40 +244,38 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 		// number of initial channel updates to test incremental updates against
 		// TODO: remove
 		// oldest
-		let update_rows = client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE timestamp >= $1 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, timestamp ASC", &[&timestamp_minimum]).await.unwrap();
+		let update_rows = client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE seen >= $1 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, seen ASC", &[&last_sync_timestamp]).await.unwrap();
 		let update_rows = if let Some(experimental_update_mode) = experimental_update_mode {
 			match experimental_update_mode {
 				ExperimentalUpdateMode::Default => {
-					client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE timestamp >= $1 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, timestamp DESC", &[&timestamp_minimum]).await.unwrap()
+					client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE seen >= $1 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, seen DESC", &[&last_sync_timestamp]).await.unwrap()
 				}
 				ExperimentalUpdateMode::OldestDataFull => {
-					client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates ORDER BY short_channel_id ASC, direction ASC, timestamp ASC", &[]).await.unwrap()
-					// client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, timestamp ASC", &[]).await.unwrap()
+					client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates ORDER BY short_channel_id ASC, direction ASC, seen ASC", &[]).await.unwrap()
+					// client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, seen ASC", &[]).await.unwrap()
 				}
 				ExperimentalUpdateMode::OldestDataDirection0 => {
-					client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE direction = 0 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, timestamp ASC", &[]).await.unwrap()
+					client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE direction = 0 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, seen ASC", &[]).await.unwrap()
 				}
 				ExperimentalUpdateMode::OldestDataDirection1 => {
-					client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE direction = 1 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, timestamp ASC", &[]).await.unwrap()
+					client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE direction = 1 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, seen ASC", &[]).await.unwrap()
 				}
 				ExperimentalUpdateMode::IncrementalOnlyBidirectional | ExperimentalUpdateMode::IncrementalOnlyBidirectionalWithAnnouncements => {
-					client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE timestamp >= $1 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, timestamp DESC", &[&timestamp_minimum]).await.unwrap()
+					client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE seen >= $1 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, seen DESC", &[&last_sync_timestamp]).await.unwrap()
 				}
 				ExperimentalUpdateMode::IncrementalOnlyDirection0 => {
-					client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE timestamp >= $1 AND direction = 0 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, timestamp DESC", &[&timestamp_minimum]).await.unwrap()
+					client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE seen >= $1 AND direction = 0 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, seen DESC", &[&last_sync_timestamp]).await.unwrap()
 				}
 				ExperimentalUpdateMode::IncrementalOnlyDirection1 => {
-					client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE timestamp >= $1 AND direction = 1 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, timestamp DESC", &[&timestamp_minimum]).await.unwrap()
+					client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE seen >= $1 AND direction = 1 AND short_channel_id IN ('0899c000021b0000', '0adea20008260001') ORDER BY short_channel_id ASC, direction ASC, seen DESC", &[&last_sync_timestamp]).await.unwrap()
 				}
 				ExperimentalUpdateMode::AnnouncementsOnly => {
 					vec![]
 				}
 			}
 		} else {
-			client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE timestamp >= $1 ORDER BY short_channel_id ASC, direction ASC, timestamp DESC", &[&timestamp_minimum]).await.unwrap()
+			client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE seen >= $1 ORDER BY short_channel_id ASC, direction ASC, seen DESC", &[&last_sync_timestamp]).await.unwrap()
 		};
-
-		// let update_rows = client.query("SELECT DISTINCT ON (short_channel_id, direction) * FROM channel_updates WHERE timestamp >= $1 ORDER BY short_channel_id ASC, direction ASC, timestamp DESC", &[&timestamp_minimum]).await.unwrap();
 
 		let mut modification_tally_by_field_count: HashMap<u8, u32> = HashMap::new();
 		let mut modification_tally_by_affected_field_combination: HashMap<String, u32> = HashMap::new();
@@ -368,15 +311,10 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 				updates_without_prior_reference += 1;
 			}
 
-			let seen_timestamp: DateTime<Utc> = current_update_row.get("createdAt");
-			latest_seen_timestamp = if let Some(latest_seen_timestamp) = latest_seen_timestamp {
-				Some(DateTime::max(seen_timestamp, latest_seen_timestamp))
-			} else {
-				Some(seen_timestamp)
-			};
+			let current_seen_timestamp: u32 = current_update_row.get("seen");
+			latest_seen_timestamp = max(current_seen_timestamp, latest_seen_timestamp);
 
 			updates_with_reference_keys.push((unsigned_channel_update, reference_key));
-
 		}
 
 		// evaluate the histograms
@@ -386,7 +324,7 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 				htlc_minimum_msat: serialization::find_most_common_histogram_entry(htlc_minimum_msat_histogram),
 				fee_base_msat: serialization::find_most_common_histogram_entry(fee_base_msat_histogram),
 				fee_proportional_millionths: serialization::find_most_common_histogram_entry(fee_proportional_millionths_histogram),
-				htlc_maximum_msat: serialization::find_most_common_histogram_entry(htlc_maximum_msat_histogram)
+				htlc_maximum_msat: serialization::find_most_common_histogram_entry(htlc_maximum_msat_histogram),
 			}
 		} else {
 			// we can't calculate the defaults if we have 0 entries
@@ -401,7 +339,6 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 
 		let mut previous_update_scid = 0;
 		for (unsigned_channel_update, reference_key) in updates_with_reference_keys {
-
 			let mut reference_update = if enable_update_reference_comparisons {
 				let reference_channel_update = reference.get(&reference_key);
 				if let Some(reference_update) = reference_channel_update {
@@ -443,7 +380,7 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 		if let Some(ExperimentalFailureMode::TooManyUpdates(exceed_limit)) = experimental_failure_mode {
 			let count = 250_000u32 + if exceed_limit { 1 } else { 0 };
 			count.write(&mut output);
-		}else {
+		} else {
 			gossip_message_update_count.write(&mut output);
 		}
 
@@ -474,13 +411,13 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 	// always write the chain hash
 	chain_hash.unwrap().write(&mut prefixed_output);
 	// always write the latest seen timestamp
-	(latest_seen_timestamp.unwrap().timestamp() as u32).write(&mut prefixed_output);
+	latest_seen_timestamp.write(&mut prefixed_output);
 
 	let node_id_count = node_ids.len() as u32;
 	if let Some(ExperimentalFailureMode::TooManyNodeIDs(exceed_limit)) = experimental_failure_mode {
 		let count = 50_000u32 + if exceed_limit { 1 } else { 0 };
 		count.write(&mut prefixed_output);
-	}else{
+	} else {
 		node_id_count.write(&mut prefixed_output);
 	}
 	for current_node_id in node_ids {
@@ -526,7 +463,6 @@ async fn serve_composite(block: u32, timestamp: u64) -> Result<impl warp::Reply,
 			.header("Content-Length", HeaderValue::from(compressed_length));
 
 		println!("compressed output length: {}\ncompression efficacy: {}", compressed_length, efficacy_header);
-
 	}
 
 	let duration = start.elapsed();

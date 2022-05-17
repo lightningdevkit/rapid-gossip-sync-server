@@ -14,3 +14,8 @@ pub(crate) enum GossipMessage {
     ChannelAnnouncement(ChannelAnnouncement),
     ChannelUpdate(ChannelUpdate)
 }
+
+pub(crate) struct DetectedGossipMessage {
+	pub(crate) timestamp_seen: u32,
+	pub(crate) message: GossipMessage
+}

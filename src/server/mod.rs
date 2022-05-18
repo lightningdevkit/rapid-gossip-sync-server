@@ -88,27 +88,6 @@ async fn serve_dynamic(network_graph: Arc<NetworkGraph>, last_sync_timestamp: u3
 
 	let delta_set = DeltaSet::new();
 
-	enum ExperimentalFailureMode {
-		TooManyNodeIDs(bool),
-		TooManyAnnouncements(bool),
-		TooManyUpdates(bool),
-	}
-	enum ExperimentalUpdateMode {
-		Default,
-		OldestDataFull,
-		OldestDataDirection0,
-		OldestDataDirection1,
-		IncrementalOnlyBidirectional,
-		IncrementalOnlyBidirectionalWithAnnouncements,
-		IncrementalOnlyDirection0,
-		IncrementalOnlyDirection1,
-		AnnouncementsOnly,
-	}
-	let experimental_failure_mode = Some(ExperimentalFailureMode::TooManyUpdates(false));
-	// let experimental_failure_mode = None;
-	let experimental_update_mode = Some(ExperimentalUpdateMode::OldestDataFull);
-	// let experimental_update_mode = None;
-
 	let mut scid_deltas = vec![]; // all deltas, across both announcements and updates
 	let mut node_id_set: HashSet<[u8; 33]> = HashSet::new();
 	let mut node_id_indices: HashMap<[u8; 33], usize> = HashMap::new();

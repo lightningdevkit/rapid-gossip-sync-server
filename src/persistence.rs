@@ -55,6 +55,8 @@ impl GossipPersister {
 			}
 		}
 
+		// print log statement every 10,000 messages
+		let mut persistence_log_threshold = 10000;
 		let mut i = 0u32;
 		// TODO: it would be nice to have some sort of timeout here so after 10 seconds of
 		// inactivity, some sort of message could be broadcast signaling the activation of request
@@ -62,7 +64,7 @@ impl GossipPersister {
 		while let Some(detected_gossip_message) = &self.gossip_persistence_receiver.recv().await {
 			i += 1; // count the persisted gossip messages
 
-			if i == 1 || i % 10000 == 0 {
+			if i == 1 || i % persistence_log_threshold == 0 {
 				println!("Persisting gossip message #{}", i);
 			}
 
@@ -74,6 +76,8 @@ impl GossipPersister {
 					// we take this detour through the persister to ensure that all previous
 					// messages have already been persisted to the database
 					println!("Persister caught up with gossip!");
+					i -= 1; // this wasn't an actual gossip message that needed persisting
+					persistence_log_threshold = 50;
 					self.server_sync_completion_sender.send(()).await;
 				}
 				GossipMessage::ChannelAnnouncement(announcement) => {

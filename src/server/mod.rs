@@ -2,11 +2,13 @@ use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::io::{Cursor, Write};
+use std::sync::Arc;
 use std::time::Instant;
 
 use bitcoin::BlockHash;
 use bitcoin::secp256k1::PublicKey;
 use lightning::ln::msgs::{UnsignedChannelAnnouncement, UnsignedChannelUpdate};
+use lightning::routing::network_graph::NetworkGraph;
 use lightning::util::ser::{Readable, Writeable};
 use tokio::sync::mpsc;
 use tokio_postgres::NoTls;
@@ -15,35 +17,48 @@ use warp::http::HeaderValue;
 
 use crate::config;
 use crate::hex_utils;
+use crate::server::lookup::DeltaSet;
 use crate::server::serialization::DefaultUpdateValues;
 
+mod lookup;
 mod serialization;
 
 pub(crate) struct GossipServer {
 	pub(crate) gossip_refresh_sender: mpsc::Sender<()>,
 	gossip_refresh_receiver: Option<mpsc::Receiver<()>>,
+	network_graph: Arc<NetworkGraph>,
 }
 
 impl GossipServer {
-	pub(crate) fn new() -> Self {
+	pub(crate) fn new(network_graph: Arc<NetworkGraph>) -> Self {
 		let (gossip_refresh_sender, gossip_refresh_receiver) = mpsc::channel::<()>(2);
 		// let service_unavailable_response = warp::http::Response::builder().status(503).body(vec![]).into_response();
 		Self {
 			gossip_refresh_sender,
 			gossip_refresh_receiver: Some(gossip_refresh_receiver),
+			network_graph,
 		}
 	}
 
 	pub(crate) async fn start_gossip_server(&mut self) {
-		let dynamic_gossip_route = warp::path!("dynamic" / u32).and_then(serve_dynamic);
-		let snapshotted_gossip_route = warp::path!("snapshot" / u32).and_then(serve_snapshot);
+		let network_graph_clone = self.network_graph.clone();
+		let dynamic_gossip_route = warp::path!("dynamic" / u32).and_then(move |timestamp| {
+			let network_graph = Arc::clone(&network_graph_clone);
+			serve_dynamic(network_graph, timestamp)
+		});
+
+		let network_graph_clone = self.network_graph.clone();
+		let snapshotted_gossip_route = warp::path!("snapshot" / u32).and_then(move |timestamp| {
+			let network_graph = Arc::clone(&network_graph_clone);
+			serve_snapshot(network_graph, timestamp)
+		});
 
 		let routes = warp::get().and(snapshotted_gossip_route.or(dynamic_gossip_route));
 		warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 	}
 }
 
-async fn serve_snapshot(last_sync_timestamp: u32) -> Result<impl warp::Reply, Infallible> {
+async fn serve_snapshot(network_graph: Arc<NetworkGraph>, last_sync_timestamp: u32) -> Result<impl warp::Reply, Infallible> {
 	Ok("everything is awesome!")
 }
 
@@ -57,7 +72,7 @@ async fn serve_snapshot(last_sync_timestamp: u32) -> Result<impl warp::Reply, In
 /// Otherwise, the server compares the latest update prior to a given timestamp with the latest
 /// overall update and, in the event of a difference, returns a partial update of only the affected
 /// fields.
-async fn serve_dynamic(last_sync_timestamp: u32) -> Result<impl warp::Reply, Infallible> {
+async fn serve_dynamic(network_graph: Arc<NetworkGraph>, last_sync_timestamp: u32) -> Result<impl warp::Reply, Infallible> {
 	let start = Instant::now();
 
 	let (client, connection) =
@@ -84,6 +99,7 @@ async fn serve_dynamic(last_sync_timestamp: u32) -> Result<impl warp::Reply, Inf
 	// for announcement-free incremental-only updates, chain hash can be skipped
 	let mut chain_hash: Option<BlockHash> = None;
 
+	let delta_set = DeltaSet::new();
 
 	enum ExperimentalFailureMode {
 		TooManyNodeIDs(bool),
@@ -125,6 +141,13 @@ async fn serve_dynamic(last_sync_timestamp: u32) -> Result<impl warp::Reply, Inf
 		duplicate_node_ids += 1;
 		node_id_indices[&serialized_node_id]
 	};
+
+	let delta_set = lookup::fetch_channel_announcements(delta_set, network_graph, &client, last_sync_timestamp).await;
+	let delta_set = lookup::fetch_channel_updates(delta_set, &client, last_sync_timestamp).await;
+	let delta_set = lookup::filter_delta_set(delta_set);
+	let serialization_details = serialization::serialize_delta_set(delta_set, last_sync_timestamp, true);
+
+	println!("here we are");
 
 	{
 		println!("fetching channels…");
@@ -320,11 +343,11 @@ async fn serve_dynamic(last_sync_timestamp: u32) -> Result<impl warp::Reply, Inf
 		// evaluate the histograms
 		let default_update_values = if updates_without_prior_reference > 0 {
 			DefaultUpdateValues {
-				cltv_expiry_delta: serialization::find_most_common_histogram_entry(cltv_expiry_delta_histogram),
-				htlc_minimum_msat: serialization::find_most_common_histogram_entry(htlc_minimum_msat_histogram),
-				fee_base_msat: serialization::find_most_common_histogram_entry(fee_base_msat_histogram),
-				fee_proportional_millionths: serialization::find_most_common_histogram_entry(fee_proportional_millionths_histogram),
-				htlc_maximum_msat: serialization::find_most_common_histogram_entry(htlc_maximum_msat_histogram),
+				cltv_expiry_delta: serialization::find_most_common_histogram_entry_with_default(cltv_expiry_delta_histogram, 0),
+				htlc_minimum_msat: serialization::find_most_common_histogram_entry_with_default(htlc_minimum_msat_histogram, 0),
+				fee_base_msat: serialization::find_most_common_histogram_entry_with_default(fee_base_msat_histogram, 0),
+				fee_proportional_millionths: serialization::find_most_common_histogram_entry_with_default(fee_proportional_millionths_histogram, 0),
+				htlc_maximum_msat: serialization::find_most_common_histogram_entry_with_default(htlc_maximum_msat_histogram, 0),
 			}
 		} else {
 			// we can't calculate the defaults if we have 0 entries

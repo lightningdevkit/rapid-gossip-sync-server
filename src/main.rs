@@ -7,6 +7,10 @@
 // #![deny(unused_variables)]
 #![deny(unused_imports)]
 
+use std::sync::Arc;
+use bitcoin::blockdata::constants::genesis_block;
+use bitcoin::Network;
+use lightning::routing::network_graph::NetworkGraph;
 use crate::persistence::GossipPersister;
 use crate::server::GossipServer;
 use crate::types::GossipChainAccess;
@@ -24,9 +28,12 @@ mod hex_utils;
 async fn main() {
 	let mut persister = GossipPersister::new();
 
+	let network_graph = NetworkGraph::new(genesis_block(Network::Bitcoin).header.block_hash());
+	let arc_network_graph = Arc::new(network_graph);
+
 	{
 		let persistence_sender = persister.gossip_persistence_sender.clone();
-		let download_future = download::download_gossip(persistence_sender);
+		let download_future = download::download_gossip(persistence_sender, arc_network_graph.clone());
 		tokio::spawn(async move {
 			// initiate the whole download stuff in the background
 			download_future.await;
@@ -38,6 +45,6 @@ async fn main() {
 		});
 	}
 
-	let mut server = GossipServer::new();
+	let mut server = GossipServer::new(arc_network_graph);
 	server.start_gossip_server().await;
 }

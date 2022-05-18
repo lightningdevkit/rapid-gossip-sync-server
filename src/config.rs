@@ -1,3 +1,7 @@
+use std::net::SocketAddr;
+use bitcoin::secp256k1::PublicKey;
+use crate::hex_utils;
+
 pub(crate) fn db_connection_string() -> String {
 	"host=localhost user=arik dbname=ln_graph_sync".to_string()
 }
@@ -36,4 +40,14 @@ pub(crate) fn db_channel_update_table_creation_query() -> String {
 		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 		channel_id integer
 	)".to_string()
+}
+
+pub(crate) fn ln_peers() -> Vec<(PublicKey, SocketAddr)> {
+	vec![
+		// Alex Bosworth
+		(hex_utils::to_compressed_pubkey("033d8656219478701227199cbd6f670335c8d408a92ae88b962c49d4dc0e83e025").unwrap(), "34.65.85.39:9735".parse().unwrap()),
+
+		// Matt Corallo
+		(hex_utils::to_compressed_pubkey("03db10aa09ff04d3568b0621750794063df401e6853c79a21a83e1a3f3b5bfb0c8").unwrap(), "69.59.18.80:9735".parse().unwrap())
+	]
 }

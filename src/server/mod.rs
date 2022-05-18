@@ -169,12 +169,8 @@ async fn serve_dynamic(network_graph: Arc<NetworkGraph>, last_sync_timestamp: u3
 	serialization_details.latest_seen.write(&mut prefixed_output);
 
 	let node_id_count = node_ids.len() as u32;
-	if let Some(ExperimentalFailureMode::TooManyNodeIDs(exceed_limit)) = experimental_failure_mode {
-		let count = 50_000u32 + if exceed_limit { 1 } else { 0 };
-		count.write(&mut prefixed_output);
-	} else {
-		node_id_count.write(&mut prefixed_output);
-	}
+	node_id_count.write(&mut prefixed_output);
+
 	for current_node_id in node_ids {
 		current_node_id.write(&mut prefixed_output);
 	}

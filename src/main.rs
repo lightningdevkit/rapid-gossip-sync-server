@@ -15,7 +15,6 @@ use crate::persistence::GossipPersister;
 use crate::server::GossipServer;
 use crate::types::GossipChainAccess;
 
-mod compression;
 mod router;
 mod types;
 mod download;

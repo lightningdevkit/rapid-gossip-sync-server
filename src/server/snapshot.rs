@@ -15,6 +15,7 @@ impl Snapshotter {
 
 	pub(crate) async fn snapshot_gossip(&self) {
 		println!("Initiating snapshotting service");
+
 		// this is gonna be a never-ending background job
 		loop {
 			// 1. get the current timestamp

@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::io::Write;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use bitcoin::secp256k1::PublicKey;
@@ -31,32 +32,30 @@ struct SerializedResponse {
 }
 
 pub(crate) struct GossipServer {
-	pub(crate) gossip_refresh_sender: mpsc::Sender<()>,
-	gossip_refresh_receiver: Option<mpsc::Receiver<()>>,
+	pub(crate) sync_completion_sender: mpsc::Sender<()>,
+	sync_completion_receiver: mpsc::Receiver<()>,
 	network_graph: Arc<NetworkGraph>,
+	initial_sync_complete: Arc<AtomicBool>
 }
 
 impl GossipServer {
 	pub(crate) fn new(network_graph: Arc<NetworkGraph>) -> Self {
-		let (gossip_refresh_sender, gossip_refresh_receiver) = mpsc::channel::<()>(2);
+		let (sync_completion_sender, sync_completion_receiver) = mpsc::channel::<()>(1);
 		// let service_unavailable_response = warp::http::Response::builder().status(503).body(vec![]).into_response();
 		Self {
-			gossip_refresh_sender,
-			gossip_refresh_receiver: Some(gossip_refresh_receiver),
+			sync_completion_sender,
+			sync_completion_receiver,
 			network_graph,
+			initial_sync_complete: Arc::new(AtomicBool::new(false))
 		}
 	}
 
 	pub(crate) async fn start_gossip_server(&mut self) {
-		let snapshotter = self::snapshot::Snapshotter::new(self.network_graph.clone());
-		tokio::spawn(async move {
-			snapshotter.snapshot_gossip().await;
-		});
-
 		let network_graph_clone = self.network_graph.clone();
+		let initial_sync_complete_clone = self.initial_sync_complete.clone();
 		let dynamic_gossip_route = warp::path!("dynamic" / u32).and_then(move |timestamp| {
 			let network_graph = Arc::clone(&network_graph_clone);
-			serve_dynamic(network_graph, timestamp)
+			serve_dynamic(network_graph, Arc::clone(&initial_sync_complete_clone), timestamp)
 		});
 
 		let network_graph_clone = self.network_graph.clone();
@@ -65,8 +64,17 @@ impl GossipServer {
 			serve_snapshot(network_graph, timestamp)
 		});
 
-		let routes = warp::get().and(snapshotted_gossip_route.or(dynamic_gossip_route));
-		warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
+		tokio::spawn(async move {
+			let routes = warp::get().and(snapshotted_gossip_route.or(dynamic_gossip_route));
+			warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
+		});
+
+		let snapshotter = self::snapshot::Snapshotter::new(self.network_graph.clone());
+		if let Some(_) = self.sync_completion_receiver.recv().await {
+			self.initial_sync_complete.store(true, Ordering::Release);
+			println!("Initial sync complete!");
+		}
+		snapshotter.snapshot_gossip().await;
 	}
 }
 
@@ -84,7 +92,16 @@ async fn serve_snapshot(network_graph: Arc<NetworkGraph>, last_sync_timestamp: u
 /// Otherwise, the server compares the latest update prior to a given timestamp with the latest
 /// overall update and, in the event of a difference, returns a partial update of only the affected
 /// fields.
-async fn serve_dynamic(network_graph: Arc<NetworkGraph>, last_sync_timestamp: u32) -> Result<impl warp::Reply, Infallible> {
+async fn serve_dynamic(network_graph: Arc<NetworkGraph>, initial_sync_complete: Arc<AtomicBool>, last_sync_timestamp: u32) -> Result<impl warp::Reply, Infallible> {
+	let is_initial_sync_complete = initial_sync_complete.load(Ordering::Acquire);
+	if !is_initial_sync_complete {
+		let response = warp::http::Response::builder()
+			.status(503)
+			.header("X-LDK-Error", HeaderValue::from_static("Initial sync incomplete"))
+			.body(vec![]);
+		return Ok(response)
+	}
+
 	let start = Instant::now();
 
 	let response = serialize_delta(network_graph, last_sync_timestamp, false, false).await;

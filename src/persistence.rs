@@ -9,15 +9,17 @@ use crate::types::{DetectedGossipMessage, GossipMessage};
 pub(crate) struct GossipPersister {
 	pub(crate) gossip_persistence_sender: mpsc::Sender<DetectedGossipMessage>,
 	gossip_persistence_receiver: mpsc::Receiver<DetectedGossipMessage>,
+	server_sync_completion_sender: mpsc::Sender<()>
 }
 
 impl GossipPersister {
-	pub fn new() -> Self {
+	pub fn new(server_sync_completion_sender: mpsc::Sender<()>) -> Self {
 		let (gossip_persistence_sender, gossip_persistence_receiver) =
 			mpsc::channel::<DetectedGossipMessage>(10000);
 		GossipPersister {
 			gossip_persistence_sender,
 			gossip_persistence_receiver,
+			server_sync_completion_sender
 		}
 	}
 
@@ -58,14 +60,22 @@ impl GossipPersister {
 		// inactivity, some sort of message could be broadcast signaling the activation of request
 		// processing
 		while let Some(detected_gossip_message) = &self.gossip_persistence_receiver.recv().await {
-			i += 1;
+			i += 1; // count the persisted gossip messages
 
-			if i == 1 || i % 1000 == 0 {
+			if i == 1 || i % 10000 == 0 {
 				println!("Persisting gossip message #{}", i);
 			}
 
 			let timestamp_seen = detected_gossip_message.timestamp_seen;
 			match &detected_gossip_message.message {
+				GossipMessage::InitialSyncComplete => {
+					// signal to the server that it may now serve dynamic responses and calculate
+					// snapshots
+					// we take this detour through the persister to ensure that all previous
+					// messages have already been persisted to the database
+					println!("Persister caught up with gossip!");
+					self.server_sync_completion_sender.send(()).await;
+				}
 				GossipMessage::ChannelAnnouncement(announcement) => {
 					// println!("got message #{}: announcement", i);
 

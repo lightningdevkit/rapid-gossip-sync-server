@@ -12,7 +12,8 @@ pub(crate) type GossipPeerManager = lightning::ln::peer_handler::PeerManager<Soc
 
 pub(crate) enum GossipMessage {
     ChannelAnnouncement(ChannelAnnouncement),
-    ChannelUpdate(ChannelUpdate)
+    ChannelUpdate(ChannelUpdate),
+	InitialSyncComplete
 }
 
 pub(crate) struct DetectedGossipMessage {

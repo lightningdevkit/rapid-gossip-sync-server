@@ -25,10 +25,11 @@ mod hex_utils;
 
 #[tokio::main]
 async fn main() {
-	let mut persister = GossipPersister::new();
-
 	let network_graph = NetworkGraph::new(genesis_block(Network::Bitcoin).header.block_hash());
 	let arc_network_graph = Arc::new(network_graph);
+
+	let mut server = GossipServer::new(arc_network_graph.clone());
+	let mut persister = GossipPersister::new(server.sync_completion_sender.clone());
 
 	{
 		let persistence_sender = persister.gossip_persistence_sender.clone();
@@ -44,6 +45,6 @@ async fn main() {
 		});
 	}
 
-	let mut server = GossipServer::new(arc_network_graph);
+
 	server.start_gossip_server().await;
 }

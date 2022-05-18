@@ -1,4 +1,5 @@
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bitcoin::secp256k1::SecretKey;
 use lightning;
@@ -13,7 +14,7 @@ use tokio::sync::mpsc;
 
 use crate::config;
 use crate::router::{GossipCounter, GossipRouter};
-use crate::types::{DetectedGossipMessage, GossipChainAccess};
+use crate::types::{DetectedGossipMessage, GossipChainAccess, GossipMessage};
 
 pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGossipMessage>, network_graph: Arc<NetworkGraph>) {
 	let mut key = [0; 32];
@@ -43,7 +44,7 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 	let wrapped_router = GossipRouter {
 		native_router: arc_router,
 		counter: RwLock::new(GossipCounter::new()),
-		sender: persistence_sender,
+		sender: persistence_sender.clone(),
 	};
 	let arc_wrapped_router = Arc::new(wrapped_router);
 
@@ -69,4 +70,59 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 			current_peer.1,
 		).await;
 	}
+
+	tokio::spawn(async move {
+		let mut previous_announcement_count = 0u64;
+		let mut previous_update_count = 0u64;
+		let mut is_caught_up_with_gossip = false;
+
+		let mut i = 0u32;
+		loop {
+			i += 1; // count the background activity
+			let sleep = tokio::time::sleep(Duration::from_secs(5));
+			sleep.await;
+
+			let current_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+			let router_clone = Arc::clone(&arc_wrapped_router);
+			let mut needs_to_notify_persister = false;
+
+			{
+				let counter = router_clone.counter.read().unwrap();
+				let total_message_count = counter.channel_announcements + counter.channel_updates;
+				let new_message_count = total_message_count - previous_announcement_count - previous_update_count;
+
+				let was_previously_caught_up_with_gossip = is_caught_up_with_gossip;
+				// TODO: when connected to multiple peers, the message count never seems to stabilize
+				is_caught_up_with_gossip = counter.channel_announcements == previous_announcement_count && counter.channel_updates == previous_update_count && previous_announcement_count > 0 && previous_update_count > 0;
+				// is_caught_up_with_gossip = total_message_count > 0 && new_message_count < 100;
+				// is_caught_up_with_gossip = total_message_count > 10000;
+
+				// if we either aren't caught up, or just stopped/started being caught up
+				if !is_caught_up_with_gossip || (is_caught_up_with_gossip != was_previously_caught_up_with_gossip) {
+					println!(
+						"gossip count (iteration {}): {} (delta: {}):\n\tannouncements: {}\n\tupdates: {}\n",
+						i, total_message_count, new_message_count, counter.channel_announcements, counter.channel_updates
+					);
+				}
+
+				if is_caught_up_with_gossip && !was_previously_caught_up_with_gossip {
+					println!("caught up with gossip!");
+					needs_to_notify_persister = true;
+				} else if !is_caught_up_with_gossip && was_previously_caught_up_with_gossip {
+					println!("no longer caught up with gossip!");
+				}
+
+				previous_announcement_count = counter.channel_announcements;
+				previous_update_count = counter.channel_updates;
+			}
+
+			if needs_to_notify_persister {
+				needs_to_notify_persister = false;
+				persistence_sender.send(DetectedGossipMessage{
+					timestamp_seen: current_timestamp as u32,
+					message: GossipMessage::InitialSyncComplete
+				}).await;
+			}
+		}
+	});
 }

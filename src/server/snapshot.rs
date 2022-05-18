@@ -79,9 +79,9 @@ impl Snapshotter {
 							continue;
 						}
 						let file_name = file_name_result.unwrap();
-						let substring = format!("-days_{}", days);
+						let substring = format!("-days_{}-", days);
 						if file_name.starts_with("snapshot-after") && file_name.contains(&substring) && file_name != snapshot_filename {
-							println!("Removing expired {}-day snapshot: {}", days, snapshot_filename);
+							println!("Removing expired {}-day snapshot: {}", days, file_name);
 							fs::remove_file(entry.path()).unwrap();
 						}
 					}

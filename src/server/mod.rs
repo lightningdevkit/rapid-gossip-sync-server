@@ -14,10 +14,11 @@ use warp::http::HeaderValue;
 
 use crate::config;
 use crate::server::lookup::DeltaSet;
-use crate::server::serialization::{UpdateSerializationMechanism};
+use crate::server::serialization::UpdateSerializationMechanism;
 
 mod lookup;
 mod serialization;
+mod snapshot;
 
 pub(crate) struct GossipServer {
 	pub(crate) gossip_refresh_sender: mpsc::Sender<()>,
@@ -179,7 +180,8 @@ async fn serve_dynamic(network_graph: Arc<NetworkGraph>, last_sync_timestamp: u3
 
 	let response_length = prefixed_output.len();
 
-	println!("packaging raw response: {:?}", prefixed_output);
+	// useful to print the raw, uncompressed response
+	// println!("packaging raw response: {:?}", prefixed_output);
 	let should_compress = true;
 
 	let mut response_builder = warp::http::Response::builder()

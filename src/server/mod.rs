@@ -48,6 +48,11 @@ impl GossipServer {
 	}
 
 	pub(crate) async fn start_gossip_server(&mut self) {
+		let snapshotter = self::snapshot::Snapshotter::new(self.network_graph.clone());
+		tokio::spawn(async move {
+			snapshotter.snapshot_gossip().await;
+		});
+
 		let network_graph_clone = self.network_graph.clone();
 		let dynamic_gossip_route = warp::path!("dynamic" / u32).and_then(move |timestamp| {
 			let network_graph = Arc::clone(&network_graph_clone);

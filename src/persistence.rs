@@ -60,7 +60,7 @@ impl GossipPersister {
 		while let Some(detected_gossip_message) = &self.gossip_persistence_receiver.recv().await {
 			i += 1;
 
-			if i % 100 == 1 {
+			if i == 1 || i % 1000 == 0 {
 				println!("Persisting gossip message #{}", i);
 			}
 

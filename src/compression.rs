@@ -1,3 +1,0 @@
-fn compress_bytes() {
-
-}

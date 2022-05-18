@@ -1,7 +1,7 @@
 use std::cmp::max;
 use std::collections::HashMap;
-use bitcoin::BlockHash;
 
+use bitcoin::BlockHash;
 use lightning::ln::msgs::{OptionalField, UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::util::ser::{BigSize, Writeable};
 
@@ -12,7 +12,7 @@ pub(super) struct SerializationSet {
 	pub(super) updates: Vec<UpdateSerialization>,
 	pub(super) full_update_defaults: DefaultUpdateValues,
 	pub(super) latest_seen: u32,
-	pub(super) chain_hash: BlockHash
+	pub(super) chain_hash: BlockHash,
 }
 
 pub(super) struct DefaultUpdateValues {
@@ -30,7 +30,7 @@ impl Default for DefaultUpdateValues {
 			htlc_minimum_msat: 0,
 			fee_base_msat: 0,
 			fee_proportional_millionths: 0,
-			htlc_maximum_msat: 0
+			htlc_maximum_msat: 0,
 		}
 	}
 }
@@ -42,6 +42,7 @@ pub(super) struct UpdateChangeSet {
 }
 
 pub(super) struct MutatedProperties {
+	flags: bool,
 	cltv_expiry_delta: bool,
 	htlc_minimum_msat: bool,
 	fee_base_msat: bool,
@@ -52,6 +53,7 @@ pub(super) struct MutatedProperties {
 impl Default for MutatedProperties {
 	fn default() -> Self {
 		Self {
+			flags: false,
 			cltv_expiry_delta: false,
 			htlc_minimum_msat: false,
 			fee_base_msat: false,
@@ -63,10 +65,11 @@ impl Default for MutatedProperties {
 
 pub(super) struct UpdateSerialization {
 	pub(super) update: UnsignedChannelUpdate,
-	pub(super) mechanism: UpdateSerializationMechanism
+	pub(super) mechanism: UpdateSerializationMechanism,
 }
 
 impl MutatedProperties {
+	/// Does not include flags because the flag byte is always sent in full
 	fn len(&self) -> u8 {
 		let mut mutations = 0;
 		if self.cltv_expiry_delta { mutations += 1; };
@@ -97,7 +100,7 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32,
 		updates: vec![],
 		full_update_defaults: Default::default(),
 		chain_hash: Default::default(),
-		latest_seen: 0
+		latest_seen: 0,
 	};
 
 	let mut chain_hash_set = false;
@@ -107,7 +110,7 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32,
 		htlc_minimum_msat: Default::default(),
 		fee_base_msat: Default::default(),
 		fee_proportional_millionths: Default::default(),
-		htlc_maximum_msat: Default::default()
+		htlc_maximum_msat: Default::default(),
 	};
 
 	let mut record_full_update_in_histograms = |full_update: &UnsignedChannelUpdate| {
@@ -119,6 +122,7 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32,
 		*full_update_histograms.htlc_maximum_msat.entry(htlc_maximum_msat_key).or_insert(0) += 1;
 	};
 
+	// delta_set.into_iter().is_sorted_by_key()
 	for (scid, channel_delta) in delta_set.into_iter() {
 
 		// any announcement chain hash is gonna be the same value. Just set it from the first one.
@@ -169,6 +173,9 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32,
 						for i in 1..compared_updates.len() {
 							let previous_update = &compared_updates[i - 1];
 							let current_update = &compared_updates[i];
+							if current_update.flags != previous_update.flags {
+								mutated_properties.flags = true;
+							}
 							if current_update.cltv_expiry_delta != previous_update.cltv_expiry_delta {
 								mutated_properties.cltv_expiry_delta = true;
 							}
@@ -188,23 +195,25 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32,
 						if mutated_properties.len() == 5 {
 							// all five values have changed, it makes more sense to just
 							// serialize the update as a full update instead of as a change
+							// this way, the default values can be computed more efficiently
 							record_full_update_in_histograms(&latest_update);
-							serialization_set.updates.push(UpdateSerialization{
+							serialization_set.updates.push(UpdateSerialization {
 								update: latest_update,
-								mechanism: UpdateSerializationMechanism::Full
+								mechanism: UpdateSerializationMechanism::Full,
 							});
-						} else if mutated_properties.len() > 0 {
-							serialization_set.updates.push(UpdateSerialization{
+						} else if mutated_properties.len() > 0 || mutated_properties.flags {
+							// we don't count flags as mutated properties
+							serialization_set.updates.push(UpdateSerialization {
 								update: latest_update,
-								mechanism: UpdateSerializationMechanism::Incremental(mutated_properties)
+								mechanism: UpdateSerializationMechanism::Incremental(mutated_properties),
 							});
 						}
 					} else {
 						// serialize the full update
 						record_full_update_in_histograms(&latest_update);
-						serialization_set.updates.push(UpdateSerialization{
+						serialization_set.updates.push(UpdateSerialization {
 							update: latest_update,
-							mechanism: UpdateSerializationMechanism::Full
+							mechanism: UpdateSerializationMechanism::Full,
 						});
 					}
 				}
@@ -248,29 +257,7 @@ pub fn serialize_stripped_channel_announcement(announcement: &UnsignedChannelAnn
 	stripped_announcement
 }
 
-fn serialize_stripped_channel_update_old(update: &UnsignedChannelUpdate, previous_scid: u64) -> Vec<u8> {
-	let mut stripped_update = vec![];
-	// standard inclusions
-
-	if previous_scid > update.short_channel_id {
-		panic!("unsorted scids!");
-	}
-	let scid_delta = BigSize(update.short_channel_id - previous_scid);
-	scid_delta.write(&mut stripped_update);
-
-	println!("full update scid/flags: {}/{}", update.short_channel_id, update.flags);
-	update.flags.write(&mut stripped_update);
-	// skip and ignore CLTV expiry delta?
-	update.cltv_expiry_delta.write(&mut stripped_update);
-	update.htlc_minimum_msat.write(&mut stripped_update);
-	update.fee_base_msat.write(&mut stripped_update);
-	update.fee_proportional_millionths.write(&mut stripped_update);
-	let htlc_maximum_msat = optional_htlc_maximum_to_u64(&update.htlc_maximum_msat);
-	htlc_maximum_msat.write(&mut stripped_update);
-	stripped_update
-}
-
-pub(super) fn serialize_stripped_channel_update(latest_update: &UnsignedChannelUpdate, default_values: &DefaultUpdateValues, previous_scid: u64) -> Vec<u8> {
+pub(super) fn serialize_stripped_channel_update_old(latest_update: &UnsignedChannelUpdate, default_values: &DefaultUpdateValues, previous_scid: u64) -> Vec<u8> {
 	let mut aberrant_field_keys = vec![];
 
 	let mut prefixed_serialization = Vec::new();
@@ -323,6 +310,87 @@ pub(super) fn serialize_stripped_channel_update(latest_update: &UnsignedChannelU
 	}
 
 	// standard inclusions
+	serialized_flags.write(&mut prefixed_serialization);
+	prefixed_serialization.append(&mut delta_serialization);
+
+	prefixed_serialization
+}
+
+pub(super) fn serialize_stripped_channel_update(update: &UpdateSerialization, default_values: &DefaultUpdateValues, previous_scid: u64) -> Vec<u8> {
+	let latest_update = &update.update;
+	let mut serialized_flags = latest_update.flags;
+
+	if previous_scid > latest_update.short_channel_id {
+		panic!("unsorted scids!");
+	}
+
+	let mut delta_serialization = Vec::new();
+	let mut prefixed_serialization = Vec::new();
+	match &update.mechanism {
+
+		UpdateSerializationMechanism::Full => {
+			if latest_update.cltv_expiry_delta != default_values.cltv_expiry_delta {
+				serialized_flags |= 0b_0100_0000;
+				latest_update.cltv_expiry_delta.write(&mut delta_serialization).unwrap();
+			}
+
+			if latest_update.htlc_minimum_msat != default_values.htlc_minimum_msat {
+				serialized_flags |= 0b_0010_0000;
+				latest_update.htlc_minimum_msat.write(&mut delta_serialization).unwrap();
+			}
+
+			if latest_update.fee_base_msat != default_values.fee_base_msat {
+				serialized_flags |= 0b_0001_0000;
+				latest_update.fee_base_msat.write(&mut delta_serialization).unwrap();
+			}
+
+			if latest_update.fee_proportional_millionths != default_values.fee_proportional_millionths {
+				serialized_flags |= 0b_0000_1000;
+				latest_update.fee_proportional_millionths.write(&mut delta_serialization).unwrap();
+			}
+
+			let latest_update_htlc_maximum = optional_htlc_maximum_to_u64(&latest_update.htlc_maximum_msat);
+			if latest_update_htlc_maximum != default_values.htlc_maximum_msat {
+				serialized_flags |= 0b_0000_0100;
+				latest_update_htlc_maximum.write(&mut delta_serialization).unwrap();
+			}
+		}
+
+		UpdateSerializationMechanism::Incremental(mutated_properties) => {
+			// indicate that this update is incremental
+			serialized_flags |= 0b_1000_0000;
+
+			if mutated_properties.cltv_expiry_delta {
+				serialized_flags |= 0b_0100_0000;
+				latest_update.cltv_expiry_delta.write(&mut delta_serialization).unwrap();
+			}
+
+			if mutated_properties.htlc_minimum_msat {
+				serialized_flags |= 0b_0010_0000;
+				latest_update.htlc_minimum_msat.write(&mut delta_serialization).unwrap();
+			}
+
+			if mutated_properties.fee_base_msat {
+				serialized_flags |= 0b_0001_0000;
+				latest_update.fee_base_msat.write(&mut delta_serialization).unwrap();
+			}
+
+			if mutated_properties.fee_proportional_millionths {
+				serialized_flags |= 0b_0000_1000;
+				latest_update.fee_proportional_millionths.write(&mut delta_serialization).unwrap();
+			}
+
+			if mutated_properties.htlc_maximum_msat {
+				serialized_flags |= 0b_0000_0100;
+
+				let new_htlc_maximum = optional_htlc_maximum_to_u64(&latest_update.htlc_maximum_msat);
+				new_htlc_maximum.write(&mut delta_serialization).unwrap();
+			}
+		}
+	}
+	let scid_delta = BigSize(latest_update.short_channel_id - previous_scid);
+	scid_delta.write(&mut prefixed_serialization);
+
 	serialized_flags.write(&mut prefixed_serialization);
 	prefixed_serialization.append(&mut delta_serialization);
 
@@ -417,7 +485,7 @@ pub(super) fn compare_update_with_reference(latest_update: &UnsignedChannelUpdat
 			prefixed_serialization.append(&mut delta_serialization);
 		}
 	} else {
-		prefixed_serialization = serialize_stripped_channel_update(latest_update, default_values, previous_scid);
+		prefixed_serialization = serialize_stripped_channel_update_old(latest_update, default_values, previous_scid);
 	}
 
 	UpdateChangeSet {
@@ -434,6 +502,8 @@ pub(super) fn find_most_common_histogram_entry_with_default<T: Copy>(histogram: 
 		// .1 is the frequency
 		return entry_details.0.to_owned();
 	}
+	// the default should pretty much always be a 0 as T
+	// though for htlc maximum msat it could be a u64::max
 	default
 }
 

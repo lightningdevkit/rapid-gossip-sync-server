@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::io::Cursor;
 use std::sync::Arc;
 use std::time::Instant;
@@ -10,7 +10,7 @@ use tokio_postgres::Client;
 
 use crate::hex_utils;
 
-pub(super) type DeltaSet = HashMap<String, ChannelDelta>;
+pub(super) type DeltaSet = BTreeMap<String, ChannelDelta>;
 
 pub(super) struct AnnouncementDelta {
 	pub(super) seen: u32,
@@ -31,7 +31,7 @@ pub(super) struct DirectedUpdateDelta {
 pub(super) struct ChannelDelta {
 	pub(super) announcement: Option<AnnouncementDelta>,
 	pub(super) updates: (Option<DirectedUpdateDelta>, Option<DirectedUpdateDelta>),
-	pub(super) first_update_seen: Option<u32>
+	pub(super) first_update_seen: Option<u32>,
 }
 
 impl Default for ChannelDelta {
@@ -84,7 +84,7 @@ pub(super) async fn fetch_channel_announcements(mut delta_set: DeltaSet, network
 
 	*/
 	// get all the channel announcements that are currently in the network graph
-	let announcement_rows = client.query("SELECT * FROM channels WHERE short_channel_id = any($1)", &[&channel_ids]).await.unwrap();
+	let announcement_rows = client.query("SELECT * FROM channels WHERE short_channel_id = any($1) ORDER BY short_channel_id ASC", &[&channel_ids]).await.unwrap();
 
 	for current_announcement_row in announcement_rows {
 		let blob: String = current_announcement_row.get("announcement_unsigned");
@@ -177,9 +177,9 @@ pub(super) async fn fetch_channel_updates(mut delta_set: DeltaSet, client: &Clie
 		} else {
 			panic!("Channel direction must be binary!")
 		};
-		update_delta.latest_update_after_seen = Some(UpdateDelta{
+		update_delta.latest_update_after_seen = Some(UpdateDelta {
 			seen: current_seen_timestamp,
-			update: unsigned_channel_update
+			update: unsigned_channel_update,
 		});
 	}
 
@@ -197,7 +197,7 @@ pub(super) async fn fetch_channel_updates(mut delta_set: DeltaSet, client: &Clie
 	let mut intermediate_update_count = 0;
 	for intermediate_update in intermediate_updates {
 		let update_id: i32 = intermediate_update.get("id");
-		if non_intermediate_ids.contains(&update_id){
+		if non_intermediate_ids.contains(&update_id) {
 			continue;
 		}
 		intermediate_update_count += 1;
@@ -219,7 +219,7 @@ pub(super) async fn fetch_channel_updates(mut delta_set: DeltaSet, client: &Clie
 		};
 		update_delta.intermediate_updates.push(unsigned_channel_update);
 	}
-	println!("Processed intermediate rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(),start.elapsed());
+	println!("Processed intermediate rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
 
 	delta_set
 }

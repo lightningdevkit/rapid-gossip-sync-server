@@ -10,6 +10,8 @@ use tokio_postgres::Client;
 
 use crate::hex_utils;
 
+/// The delta set needs to be a BTreeMap so the keys are sorted.
+/// That way, the scids in the response automatically grow monotonically
 pub(super) type DeltaSet = BTreeMap<String, ChannelDelta>;
 
 pub(super) struct AnnouncementDelta {

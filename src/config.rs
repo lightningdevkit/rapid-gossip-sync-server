@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use bitcoin::secp256k1::PublicKey;
 use crate::hex_utils;
 
+/// EDIT ME
 pub(crate) fn db_connection_string() -> String {
 	"host=localhost user=arik dbname=ln_graph_sync".to_string()
 }
@@ -42,6 +43,7 @@ pub(crate) fn db_channel_update_table_creation_query() -> String {
 	)".to_string()
 }
 
+/// EDIT ME
 pub(crate) fn ln_peers() -> Vec<(PublicKey, SocketAddr)> {
 	vec![
 		// Alex Bosworth

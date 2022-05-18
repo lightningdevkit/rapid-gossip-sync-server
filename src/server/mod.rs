@@ -20,6 +20,16 @@ mod lookup;
 mod serialization;
 mod snapshot;
 
+struct SerializedResponse {
+	uncompressed: Vec<u8>,
+	compressed: Option<Vec<u8>>,
+	message_count: u32,
+	announcement_count: u32,
+	update_count: u32,
+	update_count_full: u32,
+	update_count_incremental: u32,
+}
+
 pub(crate) struct GossipServer {
 	pub(crate) gossip_refresh_sender: mpsc::Sender<()>,
 	gossip_refresh_receiver: Option<mpsc::Receiver<()>>,
@@ -72,6 +82,49 @@ async fn serve_snapshot(network_graph: Arc<NetworkGraph>, last_sync_timestamp: u
 async fn serve_dynamic(network_graph: Arc<NetworkGraph>, last_sync_timestamp: u32) -> Result<impl warp::Reply, Infallible> {
 	let start = Instant::now();
 
+	let response = serialize_delta(network_graph, last_sync_timestamp, false, false).await;
+
+	let response_length = response.uncompressed.len();
+
+	let mut response_builder = warp::http::Response::builder()
+		.header("X-LDK-Gossip-Message-Count", HeaderValue::from(response.message_count))
+		.header("X-LDK-Gossip-Message-Count-Announcements", HeaderValue::from(response.announcement_count))
+		.header("X-LDK-Gossip-Message-Count-Updates", HeaderValue::from(response.update_count))
+		.header("X-LDK-Gossip-Original-Update-Count", HeaderValue::from(response.update_count_full))
+		.header("X-LDK-Gossip-Modified-Update-Count", HeaderValue::from(response.update_count_incremental))
+		.header("X-LDK-Raw-Output-Length", HeaderValue::from(response_length));
+
+	println!("message count: {}\nannouncement count: {}\nupdate count: {}\nraw output length: {}", response.message_count, response.announcement_count, response.update_count, response_length);
+
+	let response_binary = if let Some(compressed_response) = response.compressed {
+		let compressed_length = compressed_response.len();
+		let compression_efficacy = 1.0 - (compressed_length as f64) / (response_length as f64);
+
+		let efficacy_header = format!("{}%", (compression_efficacy * 1000.0).round() / 10.0);
+		response_builder = response_builder
+			.header("X-LDK-Compressed-Output-Length", HeaderValue::from(compressed_length))
+			.header("X-LDK-Compression-Efficacy", HeaderValue::from_str(efficacy_header.as_str()).unwrap())
+			.header("Content-Encoding", HeaderValue::from_static("gzip"))
+			.header("Content-Length", HeaderValue::from(compressed_length));
+
+		println!("compressed output length: {}\ncompression efficacy: {}", compressed_length, efficacy_header);
+		compressed_response
+	} else {
+		response.uncompressed
+	};
+
+	let duration = start.elapsed();
+	let elapsed_time = format!("{:?}", duration);
+
+	let response = response_builder
+		.header("X-LDK-Elapsed-Time", HeaderValue::from_str(elapsed_time.as_str()).unwrap())
+		.body(response_binary);
+
+	println!("elapsed time: {}", elapsed_time);
+	Ok(response)
+}
+
+async fn serialize_delta(network_graph: Arc<NetworkGraph>, last_sync_timestamp: u32, consider_intermediate_updates: bool, gzip_response: bool) -> SerializedResponse {
 	let (client, connection) =
 		tokio_postgres::connect(config::db_connection_string().as_str(), NoTls).await.unwrap();
 
@@ -89,7 +142,6 @@ async fn serve_dynamic(network_graph: Arc<NetworkGraph>, last_sync_timestamp: u3
 
 	let delta_set = DeltaSet::new();
 
-	let mut scid_deltas = vec![]; // all deltas, across both announcements and updates
 	let mut node_id_set: HashSet<[u8; 33]> = HashSet::new();
 	let mut node_id_indices: HashMap<[u8; 33], usize> = HashMap::new();
 	let mut node_ids: Vec<PublicKey> = Vec::new();
@@ -110,7 +162,7 @@ async fn serve_dynamic(network_graph: Arc<NetworkGraph>, last_sync_timestamp: u3
 	let delta_set = lookup::fetch_channel_announcements(delta_set, network_graph, &client, last_sync_timestamp).await;
 	let delta_set = lookup::fetch_channel_updates(delta_set, &client, last_sync_timestamp).await;
 	let delta_set = lookup::filter_delta_set(delta_set);
-	let serialization_details = serialization::serialize_delta_set(delta_set, last_sync_timestamp, true);
+	let serialization_details = serialization::serialize_delta_set(delta_set, last_sync_timestamp, consider_intermediate_updates);
 
 	// process announcements
 	// write the number of channel announcements to the output
@@ -123,7 +175,6 @@ async fn serve_dynamic(network_graph: Arc<NetworkGraph>, last_sync_timestamp: u3
 		let mut stripped_announcement = serialization::serialize_stripped_channel_announcement(&current_announcement, id_index_1, id_index_2, previous_announcement_scid);
 		output.append(&mut stripped_announcement);
 
-		scid_deltas.push(current_announcement.short_channel_id - previous_announcement_scid);
 		previous_announcement_scid = current_announcement.short_channel_id;
 	}
 
@@ -141,27 +192,26 @@ async fn serve_dynamic(network_graph: Arc<NetworkGraph>, last_sync_timestamp: u3
 		default_update_values.htlc_maximum_msat.write(&mut output);
 	}
 
-	let mut updates_full = 0;
-	let mut updates_incremental = 0;
+	let mut update_count_full = 0;
+	let mut update_count_incremental = 0;
 	for current_update in serialization_details.updates {
 		match &current_update.mechanism {
 			UpdateSerializationMechanism::Full => {
-				updates_full += 1;
+				update_count_full += 1;
 			}
 			UpdateSerializationMechanism::Incremental(_) => {
-				updates_incremental += 1;
+				update_count_incremental += 1;
 			}
 		};
 
 		let mut stripped_update = serialization::serialize_stripped_channel_update(&current_update, &default_update_values, previous_update_scid);
 		output.append(&mut stripped_update);
 
-		scid_deltas.push(current_update.update.short_channel_id - previous_update_scid);
 		previous_update_scid = current_update.update.short_channel_id;
 	}
 
 	// some statis
-	let gossip_message_count = announcement_count + update_count;
+	let message_count = announcement_count + update_count;
 
 	let mut prefixed_output = vec![76, 68, 75, 1];
 	// always write the chain hash
@@ -178,57 +228,24 @@ async fn serve_dynamic(network_graph: Arc<NetworkGraph>, last_sync_timestamp: u3
 
 	prefixed_output.append(&mut output);
 
-	let response_length = prefixed_output.len();
-
-	// useful to print the raw, uncompressed response
-	// println!("packaging raw response: {:?}", prefixed_output);
-	let should_compress = true;
-
-	let mut response_builder = warp::http::Response::builder()
-		.header("X-LDK-Gossip-Message-Count", HeaderValue::from(gossip_message_count))
-		.header("X-LDK-Gossip-Message-Count-Announcements", HeaderValue::from(announcement_count))
-		.header("X-LDK-Gossip-Message-Count-Updates", HeaderValue::from(update_count))
-		.header("X-LDK-Gossip-Original-Update-Count", HeaderValue::from(updates_full))
-		.header("X-LDK-Gossip-Modified-Update-Count", HeaderValue::from(updates_incremental))
-		.header("X-LDK-Raw-Output-Length", HeaderValue::from(response_length));
-
-	println!("message count: {}\nannouncement count: {}\nupdate count: {}\nraw output length: {}", gossip_message_count, announcement_count, update_count, response_length);
-	println!("duplicated node ids: {}", duplicate_node_ids);
-	println!("latest seen timestamp: {:?}", serialization_details.latest_seen);
-
-	if should_compress {
-		println!("compressing gossip data");
+	let mut compressed_output = None;
+	if gzip_response {
 		let mut compressor = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
 		compressor.write_all(&prefixed_output);
 		let compressed_response = compressor.finish().unwrap();
-
-		let compressed_length = compressed_response.len();
-		let compression_efficacy = 1.0 - (compressed_length as f64) / (response_length as f64);
-
-		let efficacy_header = format!("{}%", (compression_efficacy * 1000.0).round() / 10.0);
-		prefixed_output = compressed_response;
-
-		response_builder = response_builder
-			.header("X-LDK-Compressed-Output-Length", HeaderValue::from(compressed_length))
-			.header("X-LDK-Compression-Efficacy", HeaderValue::from_str(efficacy_header.as_str()).unwrap())
-			.header("Content-Encoding", HeaderValue::from_static("gzip"))
-			.header("Content-Length", HeaderValue::from(compressed_length));
-
-		println!("compressed output length: {}\ncompression efficacy: {}", compressed_length, efficacy_header);
+		compressed_output = Some(compressed_response);
 	}
 
-	let duration = start.elapsed();
-	let elapsed_time = format!("{:?}", duration);
+	println!("duplicated node ids: {}", duplicate_node_ids);
+	println!("latest seen timestamp: {:?}", serialization_details.latest_seen);
 
-	let response = response_builder
-		.header("X-LDK-Elapsed-Time", HeaderValue::from_str(elapsed_time.as_str()).unwrap())
-		.body(prefixed_output);
-
-	println!("elapsed time: {}", elapsed_time);
-	println!("max scid delta: {}", scid_deltas.iter().max().unwrap());
-	println!("min scid delta: {}", scid_deltas.iter().min().unwrap());
-	// println!("SCID deltas: {:?}", scid_deltas);
-
-	// let response = format!("block: {}<br/>\ntimestamp: {}<br/>\nlength: {}<br/>\nelapsed: {:?}", block, timestamp, response_length, duration);
-	Ok(response)
+	SerializedResponse {
+		uncompressed: prefixed_output,
+		compressed: compressed_output,
+		message_count,
+		announcement_count,
+		update_count,
+		update_count_full,
+		update_count_incremental,
+	}
 }

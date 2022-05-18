@@ -265,7 +265,6 @@ pub(super) fn serialize_stripped_channel_update(update: &UpdateSerialization, de
 	let mut delta_serialization = Vec::new();
 	let mut prefixed_serialization = Vec::new();
 	match &update.mechanism {
-
 		UpdateSerializationMechanism::Full => {
 			if latest_update.cltv_expiry_delta != default_values.cltv_expiry_delta {
 				serialized_flags |= 0b_0100_0000;

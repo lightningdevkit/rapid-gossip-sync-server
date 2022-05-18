@@ -54,6 +54,9 @@ impl GossipPersister {
 		}
 
 		let mut i = 0u32;
+		// TODO: it would be nice to have some sort of timeout here so after 10 seconds of
+		// inactivity, some sort of message could be broadcast signaling the activation of request
+		// processing
 		while let Some(detected_gossip_message) = &self.gossip_persistence_receiver.recv().await {
 			i += 1;
 

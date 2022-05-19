@@ -52,3 +52,23 @@ announcement.
 
 Finally, all channel update transitions are evaluated and collected into either a full or an
 incremental update.
+
+## Making a call
+
+### Dynamic
+
+Make a call to
+
+`http://localhost:3030/dynamic/1652644698`
+
+Where `1652644698` is the last sync timestamp.
+
+### Snapshotted
+
+Same as above, but sub `dynamic` for `snapshot`:
+
+`http://localhost:3030/snapshot/1652644698`
+
+## License
+
+MIT

@@ -79,6 +79,7 @@ impl GossipPersister {
 					i -= 1; // this wasn't an actual gossip message that needed persisting
 					persistence_log_threshold = 50;
 					self.server_sync_completion_sender.send(()).await;
+					println!("Server has been notified of persistence completion.");
 				}
 				GossipMessage::ChannelAnnouncement(announcement) => {
 					// println!("got message #{}: announcement", i);

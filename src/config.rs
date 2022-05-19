@@ -1,10 +1,21 @@
+use std::env;
 use std::net::SocketAddr;
 use bitcoin::secp256k1::PublicKey;
+use tokio_postgres::Config;
 use crate::hex_utils;
 
-/// EDIT ME
-pub(crate) fn db_connection_string() -> String {
-	"host=localhost user=arik dbname=ln_graph_sync".to_string()
+pub(crate) fn db_connection_config() -> Config {
+	let mut config = Config::new();
+	let host = env::var("RUST_LN_SYNC_DB_HOST").unwrap_or("localhost".to_string());
+	let user = env::var("RUST_LN_SYNC_DB_USER").unwrap_or("alice".to_string());
+	let db = env::var("RUST_LN_SYNC_DB_NAME").unwrap_or("ln_graph_sync".to_string());
+	config.host(&host);
+	config.user(&user);
+	config.dbname(&db);
+	if let Ok(password) = env::var("RUST_LN_SYNC_DB_PASSWORD") {
+		config.password(&password);
+	}
+	config
 }
 
 pub(crate) fn db_channel_table_creation_query() -> String {

@@ -238,8 +238,9 @@ async fn serve_dynamic(network_graph: Arc<NetworkGraph>, initial_sync_complete: 
 }
 
 async fn serialize_delta(network_graph: Arc<NetworkGraph>, last_sync_timestamp: u32, consider_intermediate_updates: bool, gzip_response: bool) -> SerializedResponse {
+	let connection_config = config::db_connection_config();
 	let (client, connection) =
-		tokio_postgres::connect(config::db_connection_string().as_str(), NoTls).await.unwrap();
+		connection_config.connect(NoTls).await.unwrap();
 
 	tokio::spawn(async move {
 		if let Err(e) = connection.await {

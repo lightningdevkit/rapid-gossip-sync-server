@@ -24,10 +24,9 @@ impl GossipPersister {
 	}
 
 	pub(crate) async fn persist_gossip(&mut self) {
+		let connection_config = config::db_connection_config();
 		let (client, connection) =
-			tokio_postgres::connect(config::db_connection_string().as_str(), NoTls)
-				.await
-				.unwrap();
+			connection_config.connect(NoTls).await.unwrap();
 
 		tokio::spawn(async move {
 			if let Err(e) = connection.await {

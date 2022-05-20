@@ -5,7 +5,7 @@ use bitcoin::BlockHash;
 use lightning::ln::msgs::{OptionalField, UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::util::ser::{BigSize, Writeable};
 
-use crate::server::lookup::{DeltaSet, DirectedUpdateDelta};
+use crate::lookup::{DeltaSet, DirectedUpdateDelta};
 
 pub(super) struct SerializationSet {
 	pub(super) announcements: Vec<UnsignedChannelAnnouncement>,

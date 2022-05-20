@@ -6,9 +6,10 @@ use std::time::Instant;
 use lightning::ln::msgs::{UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::routing::network_graph::NetworkGraph;
 use lightning::util::ser::Readable;
-use tokio_postgres::Client;
+use tokio_postgres::{Client, Connection, NoTls, Socket};
+use tokio_postgres::tls::NoTlsStream;
 
-use crate::hex_utils;
+use crate::{config, hex_utils};
 
 /// The delta set needs to be a BTreeMap so the keys are sorted.
 /// That way, the scids in the response automatically grow monotonically
@@ -50,6 +51,11 @@ impl Default for DirectedUpdateDelta {
 			latest_update_after_seen: None,
 		}
 	}
+}
+
+pub(super) async fn connect_to_db() -> (Client, Connection<Socket, NoTlsStream>) {
+	let connection_config = config::db_connection_config();
+	connection_config.connect(NoTls).await.unwrap()
 }
 
 /// Fetch all the channel announcements that are presently in the network graph, regardless of

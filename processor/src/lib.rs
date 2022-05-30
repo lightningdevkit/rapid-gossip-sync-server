@@ -82,11 +82,14 @@ impl RapidSyncProcessor {
 			persistence_future.await;
 		});
 
-		tokio::spawn(async move {
+		// tokio::spawn(async move {
 			sync_completion_receiver.recv().await;
 			initial_sync_complete.store(true, Ordering::Release);
 			println!("Initial sync complete!");
-		});
+
+			// start the gossip snapshotting service
+			snapshotter.snapshot_gossip().await;
+		// });
 
 		// let mut sync_termination_receiver = self.sync_termination_receiver.borrow_mut();
 		// sync_termination_receiver.recv().await;

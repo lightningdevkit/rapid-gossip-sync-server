@@ -49,7 +49,8 @@ impl Snapshotter {
 
 			for (days, current_sync_timestamp) in snapshot_sync_timestamps {
 				let network_graph_clone = self.network_graph.clone();
-				tokio::spawn(async move {
+				// tokio::spawn(async move {
+				{
 					println!("Calculating {}-day snapshot", days);
 					// calculate the snapshot
 					let snapshot = super::serialize_delta(network_graph_clone, current_sync_timestamp as u32, true, true).await;
@@ -86,7 +87,8 @@ impl Snapshotter {
 							fs::remove_file(entry.path()).unwrap();
 						}
 					}
-				});
+				// });
+				}
 			}
 
 			let remainder = timestamp_seen % round_day_seconds;

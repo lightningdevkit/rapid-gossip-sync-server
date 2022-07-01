@@ -3,8 +3,8 @@
 #![deny(non_upper_case_globals)]
 #![deny(non_camel_case_types)]
 #![deny(non_snake_case)]
-// #![deny(unused_mut)]
-// #![deny(unused_variables)]
+#![deny(unused_mut)]
+#![deny(unused_variables)]
 #![deny(unused_imports)]
 
 use std::collections::{HashMap, HashSet};
@@ -58,7 +58,7 @@ impl RapidSyncProcessor {
 		let arc_logger = Arc::new(logger);
 		let network_graph = NetworkGraph::new(genesis_block(Network::Bitcoin).header.block_hash(), arc_logger);
 		let arc_network_graph = Arc::new(network_graph);
-		let (sync_termination_sender, sync_termination_receiver) = mpsc::channel::<()>(1);
+		let (_sync_termination_sender, _sync_termination_receiver) = mpsc::channel::<()>(1);
 		Self {
 			network_graph: arc_network_graph,
 			initial_sync_complete: Arc::new(AtomicBool::new(false)),
@@ -71,21 +71,28 @@ impl RapidSyncProcessor {
 		let initial_sync_complete = self.initial_sync_complete.clone();
 
 		let network_graph = self.network_graph.clone();
+		let snapshotter = Snapshotter::new(network_graph.clone());
 
-		let mut snapshotter = Snapshotter::new(network_graph.clone());
-		let mut persister = GossipPersister::new(sync_completion_sender);
+		let download_new_gossip = true;
+		if download_new_gossip {
 
-		let persistence_sender = persister.gossip_persistence_sender.clone();
-		let download_future = download::download_gossip(persistence_sender, network_graph.clone());
-		let _download_thread = tokio::spawn(async move {
-			// initiate the whole download stuff in the background
-			download_future.await;
-		});
-		let _persistence_thread = tokio::spawn(async move {
-			// initiate persistence of the gossip data
-			let persistence_future = persister.persist_gossip();
-			persistence_future.await;
-		});
+			let mut persister = GossipPersister::new(sync_completion_sender);
+
+			let persistence_sender = persister.gossip_persistence_sender.clone();
+			let download_future = download::download_gossip(persistence_sender, network_graph.clone());
+			let _download_thread = tokio::spawn(async move {
+				// initiate the whole download stuff in the background
+				download_future.await;
+			});
+			let _persistence_thread = tokio::spawn(async move {
+				// initiate persistence of the gossip data
+				let persistence_future = persister.persist_gossip();
+				persistence_future.await;
+			});
+
+		}else{
+			sync_completion_sender.send(());
+		}
 
 		// tokio::spawn(async move {
 			sync_completion_receiver.recv().await;
@@ -146,6 +153,7 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, last
 		node_id_indices[&serialized_node_id]
 	};
 
+	// let comparison_delta_set = lookup::calculate_delta_set(network_graph.clone(), &client, last_sync_timestamp, consider_intermediate_updates).await;
 	let delta_set = lookup::fetch_channel_announcements(delta_set, network_graph, &client, last_sync_timestamp).await;
 	let delta_set = lookup::fetch_channel_updates(delta_set, &client, last_sync_timestamp).await;
 	let delta_set = lookup::filter_delta_set(delta_set);

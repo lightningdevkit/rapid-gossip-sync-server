@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use bitcoin::secp256k1::PublicKey;
 use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, Init, LightningError, NodeAnnouncement, QueryChannelRange, QueryShortChannelIds, ReplyChannelRange, ReplyShortChannelIdsEnd, RoutingMessageHandler};
-use lightning::routing::gossip::{P2PGossipSync, NetworkGraph};
+use lightning::routing::gossip::{NetworkGraph, P2PGossipSync};
 use lightning::util::events::{MessageSendEvent, MessageSendEventsProvider};
 use lightning::util::test_utils::TestLogger;
 use tokio::sync::mpsc;

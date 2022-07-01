@@ -37,7 +37,14 @@ impl GossipPersister {
 		{
 			// initialize the database
 			let initialization = client
-				.execute(config::db_channel_table_creation_query().as_str(), &[])
+				.execute(config::db_config_table_creation_query().as_str(), &[])
+				.await;
+			if let Err(initialization_error) = initialization {
+				eprintln!("db init error: {}", initialization_error);
+			}
+
+			let initialization = client
+				.execute(config::db_announcement_table_creation_query().as_str(), &[])
 				.await;
 			if let Err(initialization_error) = initialization {
 				eprintln!("db init error: {}", initialization_error);
@@ -94,19 +101,8 @@ impl GossipPersister {
 
 					// start with the type prefix, which is already known a priori
 					let mut announcement_signed = Vec::new(); // vec![1, 0];
-					let mut announcement_unsigned = Vec::new(); // vec![1, 0];
-
-					// let type_id = announcement.type_id();
-					// type_id.write(&mut announcement_signed);
-					// type_id.write(&mut announcement_unsigned);
-
 					announcement.write(&mut announcement_signed).unwrap();
-					announcement
-						.contents
-						.write(&mut announcement_unsigned)
-						.unwrap();
 					let announcement_hex = hex_utils::hex_str(&announcement_signed);
-					let announcement_hex_unsigned = hex_utils::hex_str(&announcement_unsigned);
 
 					let result = client
 						.execute("INSERT INTO channels (\
@@ -114,14 +110,12 @@ impl GossipPersister {
 							block_height, \
 							chain_hash, \
 							announcement_signed, \
-							announcement_unsigned, \
 							seen \
-						) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (short_channel_id) DO NOTHING", &[
+						) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (short_channel_id) DO NOTHING", &[
 							&scid_hex,
 							&block_height,
 							&chain_hash_hex,
 							&announcement_hex,
-							&announcement_hex_unsigned,
 							&timestamp_seen,
 						]).await;
 					if result.is_err() {
@@ -157,11 +151,8 @@ impl GossipPersister {
 
 					// start with the type prefix, which is already known a priori
 					let mut update_signed = Vec::new(); // vec![1, 2];
-					let mut update_unsigned = Vec::new(); // vec![1, 2];
 					update.write(&mut update_signed).unwrap();
-					update.contents.write(&mut update_unsigned).unwrap();
 					let update_hex = hex_utils::hex_str(&update_signed);
-					let update_hex_unsigned = hex_utils::hex_str(&update_unsigned);
 
 					let result = client
 						.execute("INSERT INTO channel_updates (\
@@ -178,9 +169,8 @@ impl GossipPersister {
 							fee_proportional_millionths, \
 							htlc_maximum_msat, \
 							blob_signed, \
-							blob_unsigned, \
 							seen \
-						) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)  ON CONFLICT (composite_index) DO NOTHING", &[
+						) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)  ON CONFLICT (composite_index) DO NOTHING", &[
 							&composite_index,
 							&chain_hash_hex,
 							&scid_hex,
@@ -194,7 +184,6 @@ impl GossipPersister {
 							&fee_proportional_millionths,
 							&htlc_maximum_msat,
 							&update_hex,
-							&update_hex_unsigned,
 							&timestamp_seen
 						]).await;
 					if result.is_err() {

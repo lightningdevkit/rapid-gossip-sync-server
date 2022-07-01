@@ -18,14 +18,20 @@ pub(crate) fn db_connection_config() -> Config {
 	config
 }
 
-pub(crate) fn db_channel_table_creation_query() -> String {
+pub(crate) fn db_config_table_creation_query() -> String {
+	"CREATE TABLE IF NOT EXISTS config (
+		id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+		db_schema integer
+	)".to_string()
+}
+
+pub(crate) fn db_announcement_table_creation_query() -> String {
 	"CREATE TABLE IF NOT EXISTS channels (
 		id SERIAL PRIMARY KEY,
 		short_channel_id character varying(255) NOT NULL UNIQUE,
 		block_height integer,
 		chain_hash character varying(255),
 		announcement_signed text,
-		announcement_unsigned text,
 		seen oid NOT NULL,
 		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 	)".to_string()
@@ -47,7 +53,6 @@ pub(crate) fn db_channel_update_table_creation_query() -> String {
 		fee_proportional_millionths integer,
 		htlc_maximum_msat bigint,
 		blob_signed text,
-		blob_unsigned text,
 		seen oid NOT NULL,
 		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 		channel_id integer

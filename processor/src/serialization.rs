@@ -123,7 +123,7 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32,
 	};
 
 	// delta_set.into_iter().is_sorted_by_key()
-	for (scid, channel_delta) in delta_set.into_iter() {
+	for (_scid, channel_delta) in delta_set.into_iter() {
 
 		// any announcement chain hash is gonna be the same value. Just set it from the first one.
 		let channel_announcement_delta = channel_delta.announcement.as_ref().unwrap();

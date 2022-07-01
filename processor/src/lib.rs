@@ -14,8 +14,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::Network;
 use bitcoin::secp256k1::PublicKey;
-use lightning::routing::network_graph::NetworkGraph;
+use lightning::routing::gossip::NetworkGraph;
+use lightning::util::logger::Level;
 use lightning::util::ser::{Writeable, Writer};
+use lightning::util::test_utils::TestLogger;
 use tokio::sync::mpsc;
 use crate::lookup::DeltaSet;
 
@@ -35,7 +37,7 @@ mod config;
 mod hex_utils;
 
 pub struct RapidSyncProcessor {
-	network_graph: Arc<NetworkGraph>,
+	network_graph: Arc<NetworkGraph<Arc<TestLogger>>>,
 	pub initial_sync_complete: Arc<AtomicBool>,
 }
 
@@ -51,7 +53,10 @@ pub struct SerializedResponse {
 
 impl RapidSyncProcessor {
 	pub fn new() -> Self {
-		let network_graph = NetworkGraph::new(genesis_block(Network::Bitcoin).header.block_hash());
+		let mut logger = TestLogger::new();
+		logger.enable(Level::Warn);
+		let arc_logger = Arc::new(logger);
+		let network_graph = NetworkGraph::new(genesis_block(Network::Bitcoin).header.block_hash(), arc_logger);
 		let arc_network_graph = Arc::new(network_graph);
 		let (sync_termination_sender, sync_termination_receiver) = mpsc::channel::<()>(1);
 		Self {
@@ -107,7 +112,7 @@ impl RapidSyncProcessor {
 	// }
 }
 
-async fn serialize_delta(network_graph: Arc<NetworkGraph>, last_sync_timestamp: u32, consider_intermediate_updates: bool, gzip_response: bool) -> SerializedResponse {
+async fn serialize_delta(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, last_sync_timestamp: u32, consider_intermediate_updates: bool, gzip_response: bool) -> SerializedResponse {
 	let (client, connection) = lookup::connect_to_db().await;
 
 	tokio::spawn(async move {

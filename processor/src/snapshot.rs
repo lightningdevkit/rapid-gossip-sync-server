@@ -2,14 +2,15 @@ use std::fs;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use lightning::routing::network_graph::NetworkGraph;
+use lightning::routing::gossip::NetworkGraph;
+use lightning::util::test_utils::TestLogger;
 
 pub(crate) struct Snapshotter {
-	network_graph: Arc<NetworkGraph>,
+	network_graph: Arc<NetworkGraph<Arc<TestLogger>>>,
 }
 
 impl Snapshotter {
-	pub fn new(network_graph: Arc<NetworkGraph>) -> Self {
+	pub fn new(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>) -> Self {
 		Self { network_graph }
 	}
 

@@ -6,7 +6,7 @@ use lightning;
 use lightning::ln::peer_handler::{
 	ErroringMessageHandler, IgnoringMessageHandler, MessageHandler, PeerManager,
 };
-use lightning::routing::network_graph::{NetGraphMsgHandler, NetworkGraph};
+use lightning::routing::gossip::{P2PGossipSync, NetworkGraph};
 use lightning::util::logger::Level;
 use lightning::util::test_utils::TestLogger;
 use rand::{Rng, thread_rng};
@@ -16,7 +16,7 @@ use crate::config;
 use crate::router::{GossipCounter, GossipRouter};
 use crate::types::{DetectedGossipMessage, GossipChainAccess, GossipMessage};
 
-pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGossipMessage>, network_graph: Arc<NetworkGraph>) {
+pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGossipMessage>, network_graph: Arc<NetworkGraph<Arc<TestLogger>>>) {
 	let mut key = [0; 32];
 	let mut random_data = [0; 32];
 	thread_rng().fill_bytes(&mut key);
@@ -35,7 +35,7 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 	logger.enable(Level::Warn);
 	let arc_logger = Arc::new(logger);
 
-	let router = NetGraphMsgHandler::new(
+	let router = P2PGossipSync::new(
 		network_graph.clone(),
 		arc_chain_access,
 		arc_logger.clone(),

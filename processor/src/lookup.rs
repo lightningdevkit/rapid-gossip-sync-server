@@ -4,8 +4,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use lightning::ln::msgs::{UnsignedChannelAnnouncement, UnsignedChannelUpdate};
-use lightning::routing::network_graph::NetworkGraph;
+use lightning::routing::gossip::NetworkGraph;
 use lightning::util::ser::Readable;
+use lightning::util::test_utils::TestLogger;
 use tokio_postgres::{Client, Connection, NoTls, Socket};
 use tokio_postgres::tls::NoTlsStream;
 
@@ -60,7 +61,7 @@ pub(super) async fn connect_to_db() -> (Client, Connection<Socket, NoTlsStream>)
 
 /// Fetch all the channel announcements that are presently in the network graph, regardless of
 /// whether they had been seen before
-pub(super) async fn fetch_channel_announcements(mut delta_set: DeltaSet, network_graph: Arc<NetworkGraph>, client: &Client, last_sync_timestamp: u32) -> DeltaSet {
+pub(super) async fn fetch_channel_announcements(mut delta_set: DeltaSet, network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, client: &Client, last_sync_timestamp: u32) -> DeltaSet {
 	// also include all announcements for which the first update was announced
 	// after `last_syc_timestamp`
 	// omit all announcements for which the latest update is older than 14 days
@@ -73,24 +74,6 @@ pub(super) async fn fetch_channel_announcements(mut delta_set: DeltaSet, network
 			.collect::<Vec<String>>()
 	};
 
-	/*
-
-	// get the oldest channel update in either direction if it's after last_sync_timestamp
-	let unannounced_channel_ids = {
-		let unannounced_rows = client.query("SELECT * FROM (SELECT DISTINCT ON (short_channel_id) * FROM channel_updates ORDER BY short_channel_id ASC, seen ASC) AS first_seens WHERE first_seens.seen >= $1", &[&last_sync_timestamp]).await.unwrap();
-		unannounced_rows.iter().map(|r| {
-			let scid: String = r.get("short_channel_id");
-			scid
-		}).collect::<Vec<String>>()
-	};
-
-	// condition A: announcement is in network graph
-	// condition B: i. seen after last sync, or ii. oldest channel_update is after last_sync,
-	// i. e. MAX(seen, oldest_channel_update) > last_sync
-
-	// let announcement_rows = client.query("SELECT * FROM channels WHERE short_channel_id = any($2) AND (seen >= $1 OR short_channel_id = any($3))", &[&last_sync_timestamp, &channel_ids, &unannounced_channel_ids]).await.unwrap();
-
-	*/
 	// get all the channel announcements that are currently in the network graph
 	let announcement_rows = client.query("SELECT * FROM channels WHERE short_channel_id = any($1) ORDER BY short_channel_id ASC", &[&channel_ids]).await.unwrap();
 
@@ -155,6 +138,8 @@ pub(super) async fn fetch_channel_updates(mut delta_set: DeltaSet, client: &Clie
 			panic!("Channel direction must be binary!")
 		};
 		update_delta.last_update_before_seen = Some(unsigned_channel_update);
+
+
 	}
 
 	println!("Processed reference rows (delta size: {}): {:?}", delta_set.len(), start.elapsed());

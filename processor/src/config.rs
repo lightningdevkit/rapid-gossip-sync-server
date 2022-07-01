@@ -32,8 +32,7 @@ pub(crate) fn db_announcement_table_creation_query() -> String {
 		block_height integer,
 		chain_hash character varying(255),
 		announcement_signed text,
-		seen oid NOT NULL,
-		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		seen oid NOT NULL
 	)".to_string()
 }
 
@@ -53,9 +52,7 @@ pub(crate) fn db_channel_update_table_creation_query() -> String {
 		fee_proportional_millionths integer,
 		htlc_maximum_msat bigint,
 		blob_signed text,
-		seen oid NOT NULL,
-		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-		channel_id integer
+		seen oid NOT NULL
 	)".to_string()
 }
 

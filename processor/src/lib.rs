@@ -8,6 +8,7 @@
 #![deny(unused_imports)]
 
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -16,7 +17,7 @@ use bitcoin::Network;
 use bitcoin::secp256k1::PublicKey;
 use lightning::routing::gossip::NetworkGraph;
 use lightning::util::logger::Level;
-use lightning::util::ser::{Writeable, Writer};
+use lightning::util::ser::{ReadableArgs, Writeable, Writer};
 use lightning::util::test_utils::TestLogger;
 use tokio::sync::mpsc;
 use crate::lookup::DeltaSet;
@@ -54,14 +55,29 @@ pub struct SerializedResponse {
 impl RapidSyncProcessor {
 	pub fn new() -> Self {
 		let mut logger = TestLogger::new();
+		let mut initial_sync_complete = false;
 		logger.enable(Level::Warn);
 		let arc_logger = Arc::new(logger);
-		let network_graph = NetworkGraph::new(genesis_block(Network::Bitcoin).header.block_hash(), arc_logger);
+		let network_graph = if let Ok(mut file) = File::open(&config::network_graph_cache_path()) {
+			println!("Initializing from cached network graph…");
+			let network_graph_result = NetworkGraph::read(&mut file, arc_logger.clone());
+			if let Ok(network_graph) = network_graph_result {
+				initial_sync_complete = true;
+				network_graph.remove_stale_channels();
+				println!("Initialized from cached network graph!");
+				network_graph
+			} else {
+				println!("Initialization from cached network graph failed: {}", network_graph_result.err().unwrap());
+				NetworkGraph::new(genesis_block(Network::Bitcoin).header.block_hash(), arc_logger)
+			}
+		} else {
+			NetworkGraph::new(genesis_block(Network::Bitcoin).header.block_hash(), arc_logger)
+		};
 		let arc_network_graph = Arc::new(network_graph);
 		let (_sync_termination_sender, _sync_termination_receiver) = mpsc::channel::<()>(1);
 		Self {
 			network_graph: arc_network_graph,
-			initial_sync_complete: Arc::new(AtomicBool::new(false)),
+			initial_sync_complete: Arc::new(AtomicBool::new(initial_sync_complete)),
 		}
 	}
 

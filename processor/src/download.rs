@@ -1,3 +1,4 @@
+use std::fs::OpenOptions;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -6,8 +7,9 @@ use lightning;
 use lightning::ln::peer_handler::{
 	ErroringMessageHandler, IgnoringMessageHandler, MessageHandler, PeerManager,
 };
-use lightning::routing::gossip::{P2PGossipSync, NetworkGraph};
+use lightning::routing::gossip::{NetworkGraph, P2PGossipSync};
 use lightning::util::logger::Level;
+use lightning::util::ser::Writeable;
 use lightning::util::test_utils::TestLogger;
 use rand::{Rng, thread_rng};
 use tokio::sync::mpsc;
@@ -108,6 +110,17 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 				if is_caught_up_with_gossip && !was_previously_caught_up_with_gossip {
 					println!("caught up with gossip!");
 					needs_to_notify_persister = true;
+
+					// also persist the network graph here
+					let cache_path = config::network_graph_cache_path();
+					let mut file = OpenOptions::new()
+						.create(true)
+						.write(true)
+						.truncate(true)
+						.open(&cache_path)
+						.unwrap();
+					network_graph.remove_stale_channels();
+					network_graph.write(&mut file).unwrap();
 				} else if !is_caught_up_with_gossip && was_previously_caught_up_with_gossip {
 					println!("no longer caught up with gossip!");
 				}
@@ -118,9 +131,9 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 
 			if needs_to_notify_persister {
 				needs_to_notify_persister = false;
-				persistence_sender.send(DetectedGossipMessage{
+				persistence_sender.send(DetectedGossipMessage {
 					timestamp_seen: current_timestamp as u32,
-					message: GossipMessage::InitialSyncComplete
+					message: GossipMessage::InitialSyncComplete,
 				}).await;
 			}
 		}

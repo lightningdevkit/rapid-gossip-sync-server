@@ -4,6 +4,10 @@ use bitcoin::secp256k1::PublicKey;
 use tokio_postgres::Config;
 use crate::hex_utils;
 
+pub(crate) fn network_graph_cache_path() -> String {
+	"./res/network_graph.bin".to_string()
+}
+
 pub(crate) fn db_connection_config() -> Config {
 	let mut config = Config::new();
 	let host = env::var("RUST_LN_SYNC_DB_HOST").unwrap_or("localhost".to_string());

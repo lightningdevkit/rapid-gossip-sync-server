@@ -26,7 +26,7 @@ pub(crate) fn db_config_table_creation_query() -> String {
 }
 
 pub(crate) fn db_announcement_table_creation_query() -> String {
-	"CREATE TABLE IF NOT EXISTS channels (
+	"CREATE TABLE IF NOT EXISTS channel_announcements (
 		id SERIAL PRIMARY KEY,
 		short_channel_id character varying(255) NOT NULL UNIQUE,
 		block_height integer,
@@ -54,6 +54,15 @@ pub(crate) fn db_channel_update_table_creation_query() -> String {
 		blob_signed text,
 		seen oid NOT NULL
 	)".to_string()
+}
+
+pub(crate) fn db_index_creation_query() -> String {
+	"
+	CREATE INDEX IF NOT EXISTS channels_seen ON channel_announcements(seen);
+	CREATE INDEX IF NOT EXISTS channel_updates_scid ON channel_updates(short_channel_id);
+	CREATE INDEX IF NOT EXISTS channel_updates_direction ON channel_updates(direction);
+	CREATE INDEX IF NOT EXISTS channel_updates_seen ON channel_updates(seen);
+	".to_string()
 }
 
 /// EDIT ME

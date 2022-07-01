@@ -59,6 +59,13 @@ impl GossipPersister {
 			if let Err(initialization_error) = initialization {
 				eprintln!("db init error: {}", initialization_error);
 			}
+
+			let initialization = client
+				.batch_execute(config::db_index_creation_query().as_str())
+				.await;
+			if let Err(initialization_error) = initialization {
+				eprintln!("db init error: {}", initialization_error);
+			}
 		}
 
 		// print log statement every 10,000 messages
@@ -105,7 +112,7 @@ impl GossipPersister {
 					let announcement_hex = hex_utils::hex_str(&announcement_signed);
 
 					let result = client
-						.execute("INSERT INTO channels (\
+						.execute("INSERT INTO channel_announcements (\
 							short_channel_id, \
 							block_height, \
 							chain_hash, \

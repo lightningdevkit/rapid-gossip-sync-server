@@ -150,7 +150,6 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32,
 
 		let mut categorize_directed_update_serialization = |directed_updates: Option<DirectedUpdateDelta>| {
 			if let Some(updates) = directed_updates {
-				// updates.latest_update_after_seen
 				if let Some(latest_update_delta) = updates.latest_update_after_seen {
 					let latest_update = latest_update_delta.update;
 

@@ -102,7 +102,7 @@ pub(super) async fn fetch_channel_announcements(mut delta_set: DeltaSet, network
 	};
 
 	// get all the channel announcements that are currently in the network graph
-	let announcement_rows = client.query("SELECT short_channel_id, announcement_signed, seen FROM channels WHERE short_channel_id = any($1) ORDER BY short_channel_id ASC", &[&channel_ids]).await.unwrap();
+	let announcement_rows = client.query("SELECT short_channel_id, announcement_signed, seen FROM channel_announcements WHERE short_channel_id = any($1) ORDER BY short_channel_id ASC", &[&channel_ids]).await.unwrap();
 
 	for current_announcement_row in announcement_rows {
 		let blob: String = current_announcement_row.get("announcement_signed");

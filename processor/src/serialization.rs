@@ -42,12 +42,12 @@ pub(super) struct UpdateChangeSet {
 }
 
 pub(super) struct MutatedProperties {
-	flags: bool,
-	cltv_expiry_delta: bool,
-	htlc_minimum_msat: bool,
-	fee_base_msat: bool,
-	fee_proportional_millionths: bool,
-	htlc_maximum_msat: bool,
+	pub(super) flags: bool,
+	pub(super) cltv_expiry_delta: bool,
+	pub(super) htlc_minimum_msat: bool,
+	pub(super) fee_base_msat: bool,
+	pub(super) fee_proportional_millionths: bool,
+	pub(super) htlc_maximum_msat: bool,
 }
 
 impl Default for MutatedProperties {
@@ -94,7 +94,7 @@ struct FullUpdateValueHistograms {
 	htlc_maximum_msat: HashMap<u64, usize>,
 }
 
-pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32, consider_intermediate_updates: bool) -> SerializationSet {
+pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32) -> SerializationSet {
 	let mut serialization_set = SerializationSet {
 		announcements: vec![],
 		updates: vec![],
@@ -157,39 +157,8 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32,
 					// announcements and latest updates
 					serialization_set.latest_seen = max(serialization_set.latest_seen, latest_update_delta.seen);
 
-					if let Some(last_seen_update) = updates.last_update_before_seen {
-
-						// we typically compare only the latest update with the last seen
-						let mut compared_updates = vec![latest_update.clone()];
-						if consider_intermediate_updates && !updates.intermediate_updates.is_empty() {
-							// however, if intermediate updates are to be considered,
-							// they are all included
-							// the order of the updates doesn't matter because we compare all
-							// changes solely against the originally known value
-							compared_updates.append(&mut updates.intermediate_updates.clone());
-						}
-
-						let mut mutated_properties = MutatedProperties::default();
-						for current_update in compared_updates {
-							if current_update.flags != last_seen_update.flags {
-								mutated_properties.flags = true;
-							}
-							if current_update.cltv_expiry_delta != last_seen_update.cltv_expiry_delta {
-								mutated_properties.cltv_expiry_delta = true;
-							}
-							if current_update.htlc_minimum_msat != last_seen_update.htlc_minimum_msat {
-								mutated_properties.htlc_minimum_msat = true;
-							}
-							if current_update.fee_base_msat != last_seen_update.fee_base_msat {
-								mutated_properties.fee_base_msat = true;
-							}
-							if current_update.fee_proportional_millionths != last_seen_update.fee_proportional_millionths {
-								mutated_properties.fee_proportional_millionths = true;
-							}
-							if current_update.htlc_maximum_msat != last_seen_update.htlc_maximum_msat {
-								mutated_properties.htlc_maximum_msat = true;
-							}
-						};
+					if updates.last_update_before_seen.is_some() {
+						let mutated_properties = updates.mutated_properties;
 						if mutated_properties.len() == 5 {
 							// all five values have changed, it makes more sense to just
 							// serialize the update as a full update instead of as a change

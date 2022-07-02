@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::io::Cursor;
 use std::sync::Arc;
 use std::time::Instant;
@@ -11,6 +11,7 @@ use tokio_postgres::{Client, Connection, NoTls, Socket};
 use tokio_postgres::tls::NoTlsStream;
 
 use crate::{config, hex_utils};
+use crate::serialization::MutatedProperties;
 
 /// The delta set needs to be a BTreeMap so the keys are sorted.
 /// That way, the scids in the response automatically grow monotonically
@@ -28,7 +29,7 @@ pub(super) struct UpdateDelta {
 
 pub(super) struct DirectedUpdateDelta {
 	pub(super) last_update_before_seen: Option<UnsignedChannelUpdate>,
-	pub(super) intermediate_updates: Vec<UnsignedChannelUpdate>,
+	pub(super) mutated_properties: MutatedProperties,
 	pub(super) latest_update_after_seen: Option<UpdateDelta>,
 }
 
@@ -48,7 +49,7 @@ impl Default for DirectedUpdateDelta {
 	fn default() -> Self {
 		Self {
 			last_update_before_seen: None,
-			intermediate_updates: vec![],
+			mutated_properties: MutatedProperties::default(),
 			latest_update_after_seen: None,
 		}
 	}
@@ -189,7 +190,9 @@ pub(super) async fn fetch_channel_updates(mut delta_set: DeltaSet, client: &Clie
 	let intermediate_updates = client.query(&query_string, &[&last_sync_timestamp]).await.unwrap();
 	println!("Fetched intermediate rows ({}): {:?}", intermediate_updates.len(), start.elapsed());
 
-	let mut previously_seen_direction_map: HashMap<String, (bool, bool)> = HashMap::new();
+	let mut previous_scid_hex = "".to_string();
+	let mut previously_seen_directions = (false, false);
+
 	// let mut previously_seen_directions = (false, false);
 	let mut intermediate_update_count = 0;
 	for intermediate_update in intermediate_updates {
@@ -200,6 +203,12 @@ pub(super) async fn fetch_channel_updates(mut delta_set: DeltaSet, client: &Clie
 		intermediate_update_count += 1;
 
 		let scid_hex: String = intermediate_update.get("short_channel_id");
+
+		if scid_hex != previous_scid_hex {
+			previous_scid_hex = scid_hex.clone();
+			previously_seen_directions = (false, false);
+		}
+
 		let direction: i32 = intermediate_update.get("direction");
 		let current_seen_timestamp: u32 = intermediate_update.get("seen");
 		let blob: String = intermediate_update.get("blob_signed");
@@ -219,28 +228,43 @@ pub(super) async fn fetch_channel_updates(mut delta_set: DeltaSet, client: &Clie
 
 		{
 			// handle the latest deltas
-			let previously_seen_directions = previously_seen_direction_map.entry(scid_hex.clone()).or_insert((false, false));
 			if direction == 0 && !previously_seen_directions.0 {
 				previously_seen_directions.0 = true;
 				update_delta.latest_update_after_seen = Some(UpdateDelta {
 					seen: current_seen_timestamp,
-					update: unsigned_channel_update,
+					update: unsigned_channel_update.clone(),
 				});
-				continue;
-			}
-
-			if direction == 1 && !previously_seen_directions.1 {
+			} else if direction == 1 && !previously_seen_directions.1 {
 				previously_seen_directions.1 = true;
 				update_delta.latest_update_after_seen = Some(UpdateDelta {
 					seen: current_seen_timestamp,
-					update: unsigned_channel_update,
+					update: unsigned_channel_update.clone(),
 				});
-				continue;
 			}
 		}
 
-		// prepend because the updates are traversed in reverse chronological order
-		update_delta.intermediate_updates.insert(0, unsigned_channel_update);
+		// determine mutations
+		if let Some(last_seen_update) = update_delta.last_update_before_seen.as_ref(){
+			if unsigned_channel_update.flags != last_seen_update.flags {
+				update_delta.mutated_properties.flags = true;
+			}
+			if unsigned_channel_update.cltv_expiry_delta != last_seen_update.cltv_expiry_delta {
+				update_delta.mutated_properties.cltv_expiry_delta = true;
+			}
+			if unsigned_channel_update.htlc_minimum_msat != last_seen_update.htlc_minimum_msat {
+				update_delta.mutated_properties.htlc_minimum_msat = true;
+			}
+			if unsigned_channel_update.fee_base_msat != last_seen_update.fee_base_msat {
+				update_delta.mutated_properties.fee_base_msat = true;
+			}
+			if unsigned_channel_update.fee_proportional_millionths != last_seen_update.fee_proportional_millionths {
+				update_delta.mutated_properties.fee_proportional_millionths = true;
+			}
+			if unsigned_channel_update.htlc_maximum_msat != last_seen_update.htlc_maximum_msat {
+				update_delta.mutated_properties.htlc_maximum_msat = true;
+			}
+		}
+
 	}
 	println!("Processed intermediate rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
 

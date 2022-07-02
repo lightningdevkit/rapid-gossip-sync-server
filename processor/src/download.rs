@@ -112,6 +112,7 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 					needs_to_notify_persister = true;
 
 					// also persist the network graph here
+					println!("Caching network graph…");
 					let cache_path = config::network_graph_cache_path();
 					let mut file = OpenOptions::new()
 						.create(true)
@@ -121,6 +122,7 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 						.unwrap();
 					network_graph.remove_stale_channels();
 					network_graph.write(&mut file).unwrap();
+					println!("Cached network graph!");
 				} else if !is_caught_up_with_gossip && was_previously_caught_up_with_gossip {
 					println!("no longer caught up with gossip!");
 				}

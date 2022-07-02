@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Cursor;
 use std::sync::Arc;
 use std::time::Instant;
@@ -132,7 +132,7 @@ pub(super) async fn fetch_channel_announcements(mut delta_set: DeltaSet, network
 	delta_set
 }
 
-pub(super) async fn fetch_channel_updates(mut delta_set: DeltaSet, client: &Client, last_sync_timestamp: u32) -> DeltaSet {
+pub(super) async fn fetch_channel_updates(mut delta_set: DeltaSet, client: &Client, last_sync_timestamp: u32, consider_intermediate_updates: bool) -> DeltaSet {
 	let start = Instant::now();
 
 	// get the latest channel update in each direction prior to last_sync_timestamp, provided
@@ -173,49 +173,24 @@ pub(super) async fn fetch_channel_updates(mut delta_set: DeltaSet, client: &Clie
 
 	println!("Processed reference rows (delta size: {}): {:?}", delta_set.len(), start.elapsed());
 
-	// get the latest channel update in each direction, provided it happened after last_sync_timestamp
-	let update_rows = client.query("SELECT DISTINCT ON (short_channel_id, direction) id, short_channel_id, direction, blob_signed, seen FROM channel_updates WHERE seen >= $1 ORDER BY short_channel_id ASC, direction ASC, seen DESC", &[&last_sync_timestamp]).await.unwrap();
-	println!("Fetched update rows ({}): {:?}", update_rows.len(), start.elapsed());
-
-	let mut latest_update_ids: Vec<i32> = Vec::with_capacity(update_rows.len());
-	for current_update in update_rows {
-		let update_id: i32 = current_update.get("id");
-		latest_update_ids.push(update_id);
-		non_intermediate_ids.insert(update_id);
-
-		let scid_hex: String = current_update.get("short_channel_id");
-		let direction: i32 = current_update.get("direction");
-		let current_seen_timestamp: u32 = current_update.get("seen");
-		let blob: String = current_update.get("blob_signed");
-		let data = hex_utils::to_vec(&blob).unwrap();
-		let mut readable = Cursor::new(data);
-		let unsigned_channel_update = ChannelUpdate::read(&mut readable).unwrap().contents;
-
-		let current_channel_delta = delta_set.entry(scid_hex).or_insert(ChannelDelta::default());
-		let mut update_delta = if direction == 0 {
-			(*current_channel_delta).updates.0.get_or_insert(DirectedUpdateDelta::default())
-		} else if direction == 1 {
-			(*current_channel_delta).updates.1.get_or_insert(DirectedUpdateDelta::default())
-		} else {
-			panic!("Channel direction must be binary!")
-		};
-		update_delta.latest_update_after_seen = Some(UpdateDelta {
-			seen: current_seen_timestamp,
-			update: unsigned_channel_update,
-		});
-	}
-
-	println!("Processed update rows (delta size: {}): {:?}", delta_set.len(), start.elapsed());
-
 	// get all the intermediate channel updates
 	// (to calculate the set of mutated fields for snapshotting, where intermediate updates may
 	// have been omitted)
 	// let intermediate_updates = client.query("SELECT * FROM channel_updates WHERE seen >= $1 AND id != all($2) AND id != all($3) ORDER BY short_channel_id ASC, direction ASC, seen ASC", &[&last_sync_timestamp, &last_seen_update_ids, &latest_update_ids]).await.unwrap();
 	// let non_intermediate_id_array = Vec::from_iter(non_intermediate_ids.iter());
 	// let intermediate_updates = client.query("SELECT * FROM channel_updates WHERE seen >= $1 AND id != all($2) ORDER BY short_channel_id ASC, direction ASC, seen ASC", &[&last_sync_timestamp, &non_intermediate_id_array]).await.unwrap();
-	let intermediate_updates = client.query("SELECT id, short_channel_id, direction, blob_signed FROM channel_updates WHERE seen >= $1 ORDER BY short_channel_id ASC, direction ASC, seen ASC", &[&last_sync_timestamp]).await.unwrap();
+
+	let mut intermediate_update_prefix = "";
+	if !consider_intermediate_updates {
+		intermediate_update_prefix = "DISTINCT ON (short_channel_id, direction)";
+	}
+
+	let query_string = format!("SELECT {} id, short_channel_id, direction, blob_signed, seen FROM channel_updates WHERE seen >= $1 ORDER BY short_channel_id ASC, direction ASC, seen DESC", intermediate_update_prefix);
+	let intermediate_updates = client.query(&query_string, &[&last_sync_timestamp]).await.unwrap();
 	println!("Fetched intermediate rows ({}): {:?}", intermediate_updates.len(), start.elapsed());
 
+	let mut previously_seen_direction_map: HashMap<String, (bool, bool)> = HashMap::new();
+	// let mut previously_seen_directions = (false, false);
 	let mut intermediate_update_count = 0;
 	for intermediate_update in intermediate_updates {
 		let update_id: i32 = intermediate_update.get("id");
@@ -226,12 +201,14 @@ pub(super) async fn fetch_channel_updates(mut delta_set: DeltaSet, client: &Clie
 
 		let scid_hex: String = intermediate_update.get("short_channel_id");
 		let direction: i32 = intermediate_update.get("direction");
+		let current_seen_timestamp: u32 = intermediate_update.get("seen");
 		let blob: String = intermediate_update.get("blob_signed");
 		let data = hex_utils::to_vec(&blob).unwrap();
 		let mut readable = Cursor::new(data);
 		let unsigned_channel_update = ChannelUpdate::read(&mut readable).unwrap().contents;
 
-		let current_channel_delta = delta_set.entry(scid_hex).or_insert(ChannelDelta::default());
+		// get the write configuration for this particular channel's directional details
+		let current_channel_delta = delta_set.entry(scid_hex.clone()).or_insert(ChannelDelta::default());
 		let update_delta = if direction == 0 {
 			(*current_channel_delta).updates.0.get_or_insert(DirectedUpdateDelta::default())
 		} else if direction == 1 {
@@ -239,7 +216,31 @@ pub(super) async fn fetch_channel_updates(mut delta_set: DeltaSet, client: &Clie
 		} else {
 			panic!("Channel direction must be binary!")
 		};
-		update_delta.intermediate_updates.push(unsigned_channel_update);
+
+		{
+			// handle the latest deltas
+			let previously_seen_directions = previously_seen_direction_map.entry(scid_hex.clone()).or_insert((false, false));
+			if direction == 0 && !previously_seen_directions.0 {
+				previously_seen_directions.0 = true;
+				update_delta.latest_update_after_seen = Some(UpdateDelta {
+					seen: current_seen_timestamp,
+					update: unsigned_channel_update,
+				});
+				continue;
+			}
+
+			if direction == 1 && !previously_seen_directions.1 {
+				previously_seen_directions.1 = true;
+				update_delta.latest_update_after_seen = Some(UpdateDelta {
+					seen: current_seen_timestamp,
+					update: unsigned_channel_update,
+				});
+				continue;
+			}
+		}
+
+		// prepend because the updates are traversed in reverse chronological order
+		update_delta.intermediate_updates.insert(0, unsigned_channel_update);
 	}
 	println!("Processed intermediate rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
 

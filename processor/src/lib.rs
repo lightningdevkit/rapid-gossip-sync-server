@@ -171,9 +171,9 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, last
 
 	// let comparison_delta_set = lookup::calculate_delta_set(network_graph.clone(), &client, last_sync_timestamp, consider_intermediate_updates).await;
 	let delta_set = lookup::fetch_channel_announcements(delta_set, network_graph, &client, last_sync_timestamp).await;
-	let delta_set = lookup::fetch_channel_updates(delta_set, &client, last_sync_timestamp).await;
+	let delta_set = lookup::fetch_channel_updates(delta_set, &client, last_sync_timestamp, consider_intermediate_updates).await;
 	let delta_set = lookup::filter_delta_set(delta_set);
-	let serialization_details = serialization::serialize_delta_set(delta_set, last_sync_timestamp, consider_intermediate_updates);
+	let serialization_details = serialization::serialize_delta_set(delta_set, last_sync_timestamp);
 
 	// process announcements
 	// write the number of channel announcements to the output

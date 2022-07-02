@@ -7,5 +7,5 @@ edition = "2018"
 
 [dependencies]
 processor = { path = "../processor" }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.14.1", features = ["full"] }
 warp = { version = "0.3.2", features = ["compression-gzip", "async-compression"] }

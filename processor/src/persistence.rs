@@ -1,5 +1,9 @@
+use std::fs::OpenOptions;
+use std::sync::Arc;
 use lightning::ln::msgs::OptionalField;
+use lightning::routing::gossip::NetworkGraph;
 use lightning::util::ser::Writeable;
+use lightning::util::test_utils::TestLogger;
 use tokio::sync::mpsc;
 use tokio_postgres::NoTls;
 
@@ -9,17 +13,19 @@ use crate::types::{DetectedGossipMessage, GossipMessage};
 pub(crate) struct GossipPersister {
 	pub(crate) gossip_persistence_sender: mpsc::Sender<DetectedGossipMessage>,
 	gossip_persistence_receiver: mpsc::Receiver<DetectedGossipMessage>,
-	server_sync_completion_sender: mpsc::Sender<()>
+	server_sync_completion_sender: mpsc::Sender<()>,
+	network_graph: Arc<NetworkGraph<Arc<TestLogger>>>,
 }
 
 impl GossipPersister {
-	pub fn new(server_sync_completion_sender: mpsc::Sender<()>) -> Self {
+	pub fn new(server_sync_completion_sender: mpsc::Sender<()>, network_graph: Arc<NetworkGraph<Arc<TestLogger>>>) -> Self {
 		let (gossip_persistence_sender, gossip_persistence_receiver) =
 			mpsc::channel::<DetectedGossipMessage>(10000);
 		GossipPersister {
 			gossip_persistence_sender,
 			gossip_persistence_receiver,
-			server_sync_completion_sender
+			server_sync_completion_sender,
+			network_graph
 		}
 	}
 
@@ -93,6 +99,20 @@ impl GossipPersister {
 					persistence_log_threshold = 50;
 					self.server_sync_completion_sender.send(()).await;
 					println!("Server has been notified of persistence completion.");
+
+					// now, cache the persisted network graph
+					// also persist the network graph here
+					println!("Caching network graph…");
+					let cache_path = config::network_graph_cache_path();
+					let mut file = OpenOptions::new()
+						.create(true)
+						.write(true)
+						.truncate(true)
+						.open(&cache_path)
+						.unwrap();
+					self.network_graph.remove_stale_channels();
+					self.network_graph.write(&mut file).unwrap();
+					println!("Cached network graph!");
 				}
 				GossipMessage::ChannelAnnouncement(announcement) => {
 					// println!("got message #{}: announcement", i);

@@ -90,9 +90,10 @@ impl RapidSyncProcessor {
 		let snapshotter = Snapshotter::new(network_graph.clone());
 
 		let download_new_gossip = true;
+		let generate_snapshots = true;
 		if download_new_gossip {
 
-			let mut persister = GossipPersister::new(sync_completion_sender);
+			let mut persister = GossipPersister::new(sync_completion_sender, self.network_graph.clone());
 
 			let persistence_sender = persister.gossip_persistence_sender.clone();
 			let download_future = download::download_gossip(persistence_sender, network_graph.clone());
@@ -111,12 +112,16 @@ impl RapidSyncProcessor {
 		}
 
 		// tokio::spawn(async move {
+		{
 			sync_completion_receiver.recv().await;
 			initial_sync_complete.store(true, Ordering::Release);
 			println!("Initial sync complete!");
 
-			// start the gossip snapshotting service
-			snapshotter.snapshot_gossip().await;
+			if generate_snapshots {
+				// start the gossip snapshotting service
+				snapshotter.snapshot_gossip().await;
+			}
+		}
 		// });
 
 		// let mut sync_termination_receiver = self.sync_termination_receiver.borrow_mut();
@@ -171,8 +176,11 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, last
 
 	// let comparison_delta_set = lookup::calculate_delta_set(network_graph.clone(), &client, last_sync_timestamp, consider_intermediate_updates).await;
 	let delta_set = lookup::fetch_channel_announcements(delta_set, network_graph, &client, last_sync_timestamp).await;
+	println!("announcement channel count: {}", delta_set.len());
 	let delta_set = lookup::fetch_channel_updates(delta_set, &client, last_sync_timestamp, consider_intermediate_updates).await;
+	println!("update-fetched channel count: {}", delta_set.len());
 	let delta_set = lookup::filter_delta_set(delta_set);
+	println!("update-filtered channel count: {}", delta_set.len());
 	let serialization_details = serialization::serialize_delta_set(delta_set, last_sync_timestamp);
 
 	// process announcements

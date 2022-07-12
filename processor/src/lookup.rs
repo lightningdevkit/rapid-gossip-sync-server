@@ -93,8 +93,10 @@ pub(super) async fn calculate_delta_set(network_graph: Arc<NetworkGraph<Arc<Test
 /// Also include all announcements for which the first update was announced
 /// after `last_syc_timestamp`
 pub(super) async fn fetch_channel_announcements(mut delta_set: DeltaSet, network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, client: &Client, last_sync_timestamp: u32) -> DeltaSet {
+	println!("Obtaining channel ids from network graph");
 	let channel_ids = {
 		let read_only_graph = network_graph.read_only();
+		println!("Retrieved read-only network graph copy");
 		let channel_iterator = read_only_graph.channels().into_iter();
 		channel_iterator
 			.filter(|c| c.1.announcement_message.is_some())
@@ -102,6 +104,7 @@ pub(super) async fn fetch_channel_announcements(mut delta_set: DeltaSet, network
 			.collect::<Vec<String>>()
 	};
 
+	println!("Obtaining corresponding database entries");
 	// get all the channel announcements that are currently in the network graph
 	let announcement_rows = client.query("SELECT short_channel_id, announcement_signed, seen FROM channel_announcements WHERE short_channel_id = any($1) ORDER BY short_channel_id ASC", &[&channel_ids]).await.unwrap();
 
@@ -120,6 +123,8 @@ pub(super) async fn fetch_channel_announcements(mut delta_set: DeltaSet, network
 			seen: current_seen_timestamp,
 		});
 	}
+
+	println!("Obtaining channel annoouncements whose first channel updates had not been seen yet");
 
 	/// here is where the channels whose first update in either direction occurred after
 	/// `last_seen_timestamp` are added to the selection

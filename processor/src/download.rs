@@ -1,6 +1,5 @@
-use std::fs::OpenOptions;
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bitcoin::secp256k1::SecretKey;
 use lightning;
@@ -9,7 +8,6 @@ use lightning::ln::peer_handler::{
 };
 use lightning::routing::gossip::{NetworkGraph, P2PGossipSync};
 use lightning::util::logger::Level;
-use lightning::util::ser::Writeable;
 use lightning::util::test_utils::TestLogger;
 use rand::{Rng, thread_rng};
 use tokio::sync::mpsc;
@@ -79,6 +77,8 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 		let mut is_caught_up_with_gossip = false;
 
 		let mut i = 0u32;
+		let mut latest_catch_up_time = Instant::now();
+
 		loop {
 			i += 1; // count the background activity
 			let sleep = tokio::time::sleep(Duration::from_secs(5));
@@ -96,7 +96,7 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 				let was_previously_caught_up_with_gossip = is_caught_up_with_gossip;
 				// TODO: when connected to multiple peers, the message count never seems to stabilize
 				is_caught_up_with_gossip = counter.channel_announcements == previous_announcement_count && counter.channel_updates == previous_update_count && previous_announcement_count > 0 && previous_update_count > 0;
-				// is_caught_up_with_gossip = total_message_count > 0 && new_message_count < 100;
+				// is_caught_up_with_gossip = total_message_count > 0 && new_message_count < 150;
 				// is_caught_up_with_gossip = total_message_count > 10000;
 
 				// if we either aren't caught up, or just stopped/started being caught up
@@ -105,26 +105,22 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 						"gossip count (iteration {}): {} (delta: {}):\n\tannouncements: {}\n\tupdates: {}\n",
 						i, total_message_count, new_message_count, counter.channel_announcements, counter.channel_updates
 					);
+				} else {
+					println!("Monitoring for gossip…")
 				}
 
 				if is_caught_up_with_gossip && !was_previously_caught_up_with_gossip {
 					println!("caught up with gossip!");
+					latest_catch_up_time = Instant::now();
 					needs_to_notify_persister = true;
 
-					// also persist the network graph here
-					println!("Caching network graph…");
-					let cache_path = config::network_graph_cache_path();
-					let mut file = OpenOptions::new()
-						.create(true)
-						.write(true)
-						.truncate(true)
-						.open(&cache_path)
-						.unwrap();
-					network_graph.remove_stale_channels();
-					network_graph.write(&mut file).unwrap();
-					println!("Cached network graph!");
 				} else if !is_caught_up_with_gossip && was_previously_caught_up_with_gossip {
-					println!("no longer caught up with gossip!");
+					println!("Received new messages since catching up with gossip!");
+				}
+
+				let continuous_catch_up_duration = latest_catch_up_time.elapsed();
+				if continuous_catch_up_duration.as_secs() > 600 {
+					eprintln!("No new gossip messages in 10 minutes! Something's amiss!");
 				}
 
 				previous_announcement_count = counter.channel_announcements;

@@ -160,7 +160,7 @@ async fn serve_dynamic(processor: Arc<RapidSyncProcessor>, last_sync_timestamp: 
 
 	let start = Instant::now();
 
-	let response = processor.serialize_delta(last_sync_timestamp, false, false).await;
+	let response = processor.serialize_delta(last_sync_timestamp, false, true).await;
 
 	let response_length = response.uncompressed.len();
 

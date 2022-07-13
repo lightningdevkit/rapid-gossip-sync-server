@@ -17,11 +17,16 @@ impl Snapshotter {
 	pub(crate) async fn snapshot_gossip(&self) {
 		println!("Initiating snapshotting service");
 
+		let round_day_seconds: u64 = 24 * 3600; // 24 hours
+		let snapshot_sync_day_factors = [1, 2, 3, 4, 5, 6, 7, 14, 21, u64::MAX];
+
 		// this is gonna be a never-ending background job
 		loop {
 			// 1. get the current timestamp
 			let timestamp_seen = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-			println!("Capturing snapshots: {}", timestamp_seen);
+			let filename_timestamp = Self::round_down_to_nearest_multiple(timestamp_seen, round_day_seconds);
+			println!("Capturing snapshots at {} for: {}", timestamp_seen, filename_timestamp);
+
 			// 2. sleep until the next round 24 hours
 			// 3. refresh all snapshots
 
@@ -39,8 +44,6 @@ impl Snapshotter {
 			// channel updates
 			//
 
-			let round_day_seconds: u64 = 24 * 3600; // 24 hours
-			let snapshot_sync_day_factors = [1, 2, 3, 4, 5, 6, 7, 14, 21, u64::MAX];
 			let snapshot_sync_timestamps = snapshot_sync_day_factors.map(|factor| {
 				// basically timestamp - day_seconds * factor
 				let timestamp = timestamp_seen.saturating_sub(round_day_seconds.saturating_mul(factor));
@@ -57,7 +60,7 @@ impl Snapshotter {
 
 					// persist the snapshot
 					let snapshot_directory = "./res/snapshots";
-					let snapshot_filename = format!("snapshot-after_{}-days_{}-calculated_{}.lngossip", current_sync_timestamp, days, timestamp_seen);
+					let snapshot_filename = format!("snapshot-after_{}-days_{}-calculated_{}.lngossip", current_sync_timestamp, days, filename_timestamp);
 					let snapshot_path = format!("{}/{}", snapshot_directory, snapshot_filename);
 					println!("Persisting {}-day snapshot: {} ({} messages, {} announcements, {} updates ({} full, {} incremental))", days, snapshot_filename, snapshot.message_count, snapshot.announcement_count, snapshot.update_count, snapshot.update_count_full, snapshot.update_count_incremental);
 					fs::write(&snapshot_path, snapshot.compressed.unwrap()).unwrap();
@@ -95,8 +98,25 @@ impl Snapshotter {
 			let time_until_next_day = round_day_seconds - remainder;
 
 			println!("Sleeping until next snapshot capture: {}s", time_until_next_day);
-			let sleep = tokio::time::sleep(Duration::from_secs(time_until_next_day));
+			// add in an extra five seconds to assure the rounding down works correctly
+			let sleep = tokio::time::sleep(Duration::from_secs(time_until_next_day + 5));
 			sleep.await;
 		}
+	}
+
+	fn round_to_nearest_multiple(number: u64, multiple: u64) -> u64 {
+		assert!(multiple % 2 == 0);
+		let round_multiple_delta = number % multiple;
+		let half_multiple = multiple / 2;
+		if round_multiple_delta < half_multiple {
+			number - round_multiple_delta
+		} else {
+			number + multiple - round_multiple_delta
+		}
+	}
+
+	fn round_down_to_nearest_multiple(number: u64, multiple: u64) -> u64 {
+		let round_multiple_delta = number % multiple;
+		number - round_multiple_delta
 	}
 }

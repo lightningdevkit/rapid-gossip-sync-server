@@ -98,6 +98,9 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 				is_caught_up_with_gossip = counter.channel_announcements == previous_announcement_count && counter.channel_updates == previous_update_count && previous_announcement_count > 0 && previous_update_count > 0;
 				// is_caught_up_with_gossip = total_message_count > 0 && new_message_count < 150;
 				// is_caught_up_with_gossip = total_message_count > 10000;
+				if is_caught_up_with_gossip {
+					latest_catch_up_time = Instant::now();
+				}
 
 				// if we either aren't caught up, or just stopped/started being caught up
 				if !is_caught_up_with_gossip || (is_caught_up_with_gossip != was_previously_caught_up_with_gossip) {
@@ -111,7 +114,6 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 
 				if is_caught_up_with_gossip && !was_previously_caught_up_with_gossip {
 					println!("caught up with gossip!");
-					latest_catch_up_time = Instant::now();
 					needs_to_notify_persister = true;
 
 				} else if !is_caught_up_with_gossip && was_previously_caught_up_with_gossip {

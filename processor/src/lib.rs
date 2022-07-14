@@ -108,7 +108,7 @@ impl RapidSyncProcessor {
 			});
 
 		}else{
-			sync_completion_sender.send(());
+			sync_completion_sender.send(()).await;
 		}
 
 		// tokio::spawn(async move {

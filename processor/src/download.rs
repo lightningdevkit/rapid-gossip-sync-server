@@ -77,12 +77,14 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 		let mut is_caught_up_with_gossip = false;
 
 		let mut i = 0u32;
-		let mut latest_catch_up_time = Instant::now();
+		let mut latest_new_gossip_time = Instant::now();
 
 		loop {
+			println!("Reached point A");
 			i += 1; // count the background activity
 			let sleep = tokio::time::sleep(Duration::from_secs(5));
 			sleep.await;
+			println!("Reached point B");
 
 			let current_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 			let router_clone = Arc::clone(&arc_wrapped_router);
@@ -98,9 +100,11 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 				is_caught_up_with_gossip = counter.channel_announcements == previous_announcement_count && counter.channel_updates == previous_update_count && previous_announcement_count > 0 && previous_update_count > 0;
 				// is_caught_up_with_gossip = total_message_count > 0 && new_message_count < 150;
 				// is_caught_up_with_gossip = total_message_count > 10000;
-				if is_caught_up_with_gossip {
-					latest_catch_up_time = Instant::now();
+				if new_message_count > 0 {
+					latest_new_gossip_time = Instant::now();
 				}
+
+				println!("Reached point C");
 
 				// if we either aren't caught up, or just stopped/started being caught up
 				if !is_caught_up_with_gossip || (is_caught_up_with_gossip != was_previously_caught_up_with_gossip) {
@@ -112,6 +116,8 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 					println!("Monitoring for gossip…")
 				}
 
+				println!("Reached point D");
+
 				if is_caught_up_with_gossip && !was_previously_caught_up_with_gossip {
 					println!("caught up with gossip!");
 					needs_to_notify_persister = true;
@@ -120,22 +126,32 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 					println!("Received new messages since catching up with gossip!");
 				}
 
-				let continuous_catch_up_duration = latest_catch_up_time.elapsed();
-				if continuous_catch_up_duration.as_secs() > 600 {
+				println!("Reached point E");
+
+				let continuous_caught_up_duration = latest_new_gossip_time.elapsed();
+				if continuous_caught_up_duration.as_secs() > 600 {
 					eprintln!("No new gossip messages in 10 minutes! Something's amiss!");
 				}
+
+				println!("Reached point F");
 
 				previous_announcement_count = counter.channel_announcements;
 				previous_update_count = counter.channel_updates;
 			}
 
+			println!("Reached point G");
+
 			if needs_to_notify_persister {
 				needs_to_notify_persister = false;
+				println!("Reached point H");
 				persistence_sender.send(DetectedGossipMessage {
 					timestamp_seen: current_timestamp as u32,
 					message: GossipMessage::InitialSyncComplete,
 				}).await;
+				println!("Reached point I");
 			}
+
+			println!("Reached point J");
 		}
 	});
 }

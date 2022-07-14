@@ -30,15 +30,21 @@ impl GossipPersister {
 	}
 
 	pub(crate) async fn persist_gossip(&mut self) {
+		println!("Reached point K");
 		let connection_config = config::db_connection_config();
 		let (client, connection) =
 			connection_config.connect(NoTls).await.unwrap();
 
+		println!("Reached point L");
+
 		tokio::spawn(async move {
+			println!("Reached point M");
 			if let Err(e) = connection.await {
 				eprintln!("connection error: {}", e);
 			}
 		});
+
+		println!("Reached point N");
 
 		{
 			// initialize the database
@@ -49,12 +55,16 @@ impl GossipPersister {
 				eprintln!("db init error: {}", initialization_error);
 			}
 
+			println!("Reached point O");
+
 			let initialization = client
 				.execute(config::db_announcement_table_creation_query().as_str(), &[])
 				.await;
 			if let Err(initialization_error) = initialization {
 				eprintln!("db init error: {}", initialization_error);
 			}
+
+			println!("Reached point P");
 
 			let initialization = client
 				.execute(
@@ -66,26 +76,35 @@ impl GossipPersister {
 				eprintln!("db init error: {}", initialization_error);
 			}
 
+			println!("Reached point Q");
+
 			let initialization = client
 				.batch_execute(config::db_index_creation_query().as_str())
 				.await;
 			if let Err(initialization_error) = initialization {
 				eprintln!("db init error: {}", initialization_error);
 			}
+
+			println!("Reached point R");
 		}
 
 		// print log statement every 10,000 messages
 		let mut persistence_log_threshold = 10000;
 		let mut i = 0u32;
+		let mut server_sync_completion_sent = false;
 		// TODO: it would be nice to have some sort of timeout here so after 10 seconds of
 		// inactivity, some sort of message could be broadcast signaling the activation of request
 		// processing
+		println!("Reached point S");
 		while let Some(detected_gossip_message) = &self.gossip_persistence_receiver.recv().await {
+			println!("Reached point T");
 			i += 1; // count the persisted gossip messages
 
 			if i == 1 || i % persistence_log_threshold == 0 {
 				println!("Persisting gossip message #{}", i);
 			}
+
+			println!("Reached point U");
 
 			let timestamp_seen = detected_gossip_message.timestamp_seen;
 			match &detected_gossip_message.message {
@@ -97,8 +116,11 @@ impl GossipPersister {
 					println!("Persister caught up with gossip!");
 					i -= 1; // this wasn't an actual gossip message that needed persisting
 					persistence_log_threshold = 50;
-					self.server_sync_completion_sender.send(()).await;
-					println!("Server has been notified of persistence completion.");
+					if !server_sync_completion_sent {
+						server_sync_completion_sent = true;
+						self.server_sync_completion_sender.send(()).await;
+						println!("Server has been notified of persistence completion.");
+					}
 
 					// now, cache the persisted network graph
 					// also persist the network graph here
@@ -111,6 +133,7 @@ impl GossipPersister {
 						.open(&cache_path)
 						.unwrap();
 					self.network_graph.remove_stale_channels();
+					println!("Reached point V");
 					self.network_graph.write(&mut file).unwrap();
 					println!("Cached network graph!");
 				}
@@ -148,6 +171,7 @@ impl GossipPersister {
 					if result.is_err() {
 						panic!("error: {}", result.err().unwrap());
 					}
+					println!("Reached point W");
 				}
 				GossipMessage::ChannelUpdate(update) => {
 					// println!("got message #{}: update", i);
@@ -216,8 +240,10 @@ impl GossipPersister {
 					if result.is_err() {
 						panic!("error: {}", result.err().unwrap());
 					}
+					println!("Reached point X");
 				}
 			}
+			println!("Reached point Y");
 		}
 	}
 }

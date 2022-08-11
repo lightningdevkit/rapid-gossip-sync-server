@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lightning::routing::gossip::NetworkGraph;
-use lightning::util::test_utils::TestLogger;
+use crate::TestLogger;
 
 pub(crate) struct Snapshotter {
 	network_graph: Arc<NetworkGraph<Arc<TestLogger>>>,
@@ -43,26 +43,29 @@ impl Snapshotter {
 			// The snapshots, unlike dynamic updates, should account for all intermediate
 			// channel updates
 			//
-
-			let snapshot_sync_timestamps = snapshot_sync_day_factors.map(|factor| {
+			let mut snapshot_sync_timestamps: Vec<(u64, u64)> = Vec::new();
+			for factor in &snapshot_sync_day_factors {
 				// basically timestamp - day_seconds * factor
-				let timestamp = timestamp_seen.saturating_sub(round_day_seconds.saturating_mul(factor));
-				(factor, timestamp)
-			});
+				let timestamp = timestamp_seen.saturating_sub(round_day_seconds.saturating_mul(factor.clone()));
+				snapshot_sync_timestamps.push((factor.clone(), timestamp));
+			};
 
-			for (days, current_sync_timestamp) in snapshot_sync_timestamps {
+			for (days, current_sync_timestamp) in &snapshot_sync_timestamps {
 				let network_graph_clone = self.network_graph.clone();
 				// tokio::spawn(async move {
 				{
 					println!("Calculating {}-day snapshot", days);
 					// calculate the snapshot
-					let snapshot = super::serialize_delta(network_graph_clone, current_sync_timestamp as u32, true, true).await;
+					let snapshot = super::serialize_delta(network_graph_clone, current_sync_timestamp.clone() as u32, true, true).await;
 
 					// persist the snapshot
 					let snapshot_directory = "./res/snapshots";
 					let snapshot_filename = format!("snapshot-after_{}-days_{}-calculated_{}.lngossip", current_sync_timestamp, days, filename_timestamp);
 					let snapshot_path = format!("{}/{}", snapshot_directory, snapshot_filename);
 					println!("Persisting {}-day snapshot: {} ({} messages, {} announcements, {} updates ({} full, {} incremental))", days, snapshot_filename, snapshot.message_count, snapshot.announcement_count, snapshot.update_count, snapshot.update_count_full, snapshot.update_count_incremental);
+
+					// TODO: start writing the compressed snapshot again!
+					// fs::write(&snapshot_path, snapshot.uncompressed).unwrap();
 					fs::write(&snapshot_path, snapshot.compressed.unwrap()).unwrap();
 
 					// remove the old snapshots for the given time interval

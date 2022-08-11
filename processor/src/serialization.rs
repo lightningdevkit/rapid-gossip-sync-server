@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use bitcoin::BlockHash;
 use lightning::ln::msgs::{OptionalField, UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::util::ser::{BigSize, Writeable};
+use crate::config;
 
 use crate::lookup::{DeltaSet, DirectedUpdateDelta};
 
@@ -205,6 +206,15 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 
 pub fn serialize_stripped_channel_announcement(announcement: &UnsignedChannelAnnouncement, node_id_a_index: usize, node_id_b_index: usize, previous_scid: u64) -> Vec<u8> {
 	let mut stripped_announcement = vec![];
+
+	if config::SIMULATE_NAIVE_SERIALIZATION {
+		// prepend 4 signatures of 65 bytes each
+		let prefix = [0u8; 65 * 4];
+		stripped_announcement.extend_from_slice(&prefix);
+		announcement.write(&mut stripped_announcement);
+		return stripped_announcement;
+	}
+
 	announcement.features.write(&mut stripped_announcement);
 
 	if previous_scid > announcement.short_channel_id {
@@ -229,8 +239,21 @@ pub(super) fn serialize_stripped_channel_update(update: &UpdateSerialization, de
 		panic!("unsorted scids!");
 	}
 
+	if let OptionalField::Absent = latest_update.htlc_maximum_msat {
+		panic!("HTLC maximum msat must always be set going forward!")
+	}
+
 	let mut delta_serialization = Vec::new();
 	let mut prefixed_serialization = Vec::new();
+
+	if config::SIMULATE_NAIVE_SERIALIZATION {
+		// prepend 1 signatures of 65 bytes
+		let prefix = [0u8; 65 * 1];
+		prefixed_serialization.extend_from_slice(&prefix);
+		latest_update.write(&mut prefixed_serialization);
+		return prefixed_serialization;
+	}
+
 	match &update.mechanism {
 		UpdateSerializationMechanism::Full => {
 			if latest_update.cltv_expiry_delta != default_values.cltv_expiry_delta {
@@ -317,6 +340,7 @@ pub(super) fn optional_htlc_maximum_to_u64(htlc_maximum_msat: &OptionalField<u64
 	if let OptionalField::Present(maximum) = htlc_maximum_msat {
 		maximum.clone()
 	} else {
+		panic!("HTLC maximum msat must always be set going forward!");
 		u64::MAX
 	}
 }

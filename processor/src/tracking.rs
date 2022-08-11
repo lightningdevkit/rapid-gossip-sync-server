@@ -7,13 +7,11 @@ use lightning::ln::peer_handler::{
 	ErroringMessageHandler, IgnoringMessageHandler, MessageHandler, PeerManager,
 };
 use lightning::routing::gossip::{NetworkGraph, P2PGossipSync};
-use lightning::util::logger::Level;
-use lightning::util::test_utils::TestLogger;
 use rand::{Rng, thread_rng};
 use tokio::sync::mpsc;
 
-use crate::config;
-use crate::router::{GossipCounter, GossipRouter};
+use crate::{config, TestLogger};
+use crate::downloader::{GossipCounter, GossipRouter};
 use crate::types::{DetectedGossipMessage, GossipChainAccess, GossipMessage};
 
 pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGossipMessage>, network_graph: Arc<NetworkGraph<Arc<TestLogger>>>) {
@@ -30,15 +28,13 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 	let errorer = ErroringMessageHandler::new();
 	let arc_errorer = Arc::new(errorer);
 
-	let mut logger = TestLogger::new();
-	// logger.enable(Level::Debug);
-	logger.enable(Level::Warn);
+	let logger = TestLogger::new();
 	let arc_logger = Arc::new(logger);
 
 	let router = P2PGossipSync::new(
 		network_graph.clone(),
 		arc_chain_access,
-		arc_logger.clone(),
+		Arc::clone(&arc_logger),
 	);
 	let arc_router = Arc::new(router);
 	let wrapped_router = GossipRouter {
@@ -56,7 +52,7 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 		message_handler,
 		our_node_secret,
 		&random_data,
-		arc_logger.clone(),
+		Arc::clone(&arc_logger),
 		arc_ignorer,
 	);
 	let arc_peer_handler = Arc::new(peer_handler);
@@ -109,8 +105,13 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 				// if we either aren't caught up, or just stopped/started being caught up
 				if !is_caught_up_with_gossip || (is_caught_up_with_gossip != was_previously_caught_up_with_gossip) {
 					println!(
-						"gossip count (iteration {}): {} (delta: {}):\n\tannouncements: {}\n\tupdates: {}\n",
-						i, total_message_count, new_message_count, counter.channel_announcements, counter.channel_updates
+						"gossip count (iteration {}): {} (delta: {}):\n\tannouncements: {}\n\tupdates: {}\n\t\tno HTLC max: {}\n",
+						i,
+						total_message_count,
+						new_message_count,
+						counter.channel_announcements,
+						counter.channel_updates,
+						counter.channel_updates_without_htlc_max_msats
 					);
 				} else {
 					println!("Monitoring for gossip…")
@@ -139,19 +140,16 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 				previous_update_count = counter.channel_updates;
 			}
 
-			// println!("Reached point G");
-
 			if needs_to_notify_persister {
 				needs_to_notify_persister = false;
-				// println!("Reached point H");
-				persistence_sender.send(DetectedGossipMessage {
-					timestamp_seen: current_timestamp as u32,
-					message: GossipMessage::InitialSyncComplete,
-				}).await;
-				// println!("Reached point I");
+				let sender = persistence_sender.clone();
+				tokio::spawn(async move {
+					sender.send(DetectedGossipMessage {
+						timestamp_seen: current_timestamp as u32,
+						message: GossipMessage::InitialSyncComplete,
+					}).await;
+				});
 			}
-
-			// println!("Reached point J");
 		}
 	});
 }

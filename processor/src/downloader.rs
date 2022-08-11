@@ -2,18 +2,19 @@ use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bitcoin::secp256k1::PublicKey;
-use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, Init, LightningError, NodeAnnouncement, QueryChannelRange, QueryShortChannelIds, ReplyChannelRange, ReplyShortChannelIdsEnd, RoutingMessageHandler};
+use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, ErrorAction, Init, LightningError, NodeAnnouncement, OptionalField, QueryChannelRange, QueryShortChannelIds, ReplyChannelRange, ReplyShortChannelIdsEnd, RoutingMessageHandler};
 use lightning::routing::gossip::{NetworkGraph, P2PGossipSync};
 use lightning::util::events::{MessageSendEvent, MessageSendEventsProvider};
-use lightning::util::test_utils::TestLogger;
+use lightning::util::ser::Writeable;
 use tokio::sync::mpsc;
 
-use crate::GossipChainAccess;
+use crate::{GossipChainAccess, TestLogger};
 use crate::types::{DetectedGossipMessage, GossipMessage};
 
 pub(crate) struct GossipCounter {
 	pub(crate) channel_announcements: u64,
 	pub(crate) channel_updates: u64,
+	pub(crate) channel_updates_without_htlc_max_msats: u64,
 }
 
 impl GossipCounter {
@@ -21,6 +22,7 @@ impl GossipCounter {
 		Self {
 			channel_announcements: 0,
 			channel_updates: 0,
+			channel_updates_without_htlc_max_msats: 0,
 		}
 	}
 }
@@ -62,6 +64,21 @@ impl RoutingMessageHandler for GossipRouter {
 	}
 
 	fn handle_channel_update(&self, msg: &ChannelUpdate) -> Result<bool, LightningError> {
+		if let OptionalField::Absent = msg.contents.htlc_maximum_msat {
+			let mut counter = self.counter.write().unwrap();
+			counter.channel_updates_without_htlc_max_msats += 1;
+
+			let mut update_signed = Vec::new(); // vec![1, 2];
+			msg.write(&mut update_signed).unwrap();
+			let update_hex = super::hex_utils::hex_str(&update_signed);
+
+			// println!("No HTLC maximum msat: 0x{} ({}, direction: {})", super::hex_utils::hex_str(&msg.contents.short_channel_id.to_be_bytes()), msg.contents.short_channel_id, msg.contents.flags & 1);
+			println!("No HTLC maximum msat: {}", update_hex);
+			return Err(LightningError {
+				err: "HTLC maximum msat must always be set.".to_string(),
+				action: ErrorAction::IgnoreError
+			});
+		}
 		let timestamp_seen = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 		let result = self.native_router.handle_channel_update(msg);
 		if result.is_ok() {

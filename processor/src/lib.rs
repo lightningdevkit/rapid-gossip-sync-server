@@ -16,20 +16,18 @@ use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::Network;
 use bitcoin::secp256k1::PublicKey;
 use lightning::routing::gossip::NetworkGraph;
-use lightning::util::logger::Level;
 use lightning::util::ser::{ReadableArgs, Writeable, Writer};
-use lightning::util::test_utils::TestLogger;
 use tokio::sync::mpsc;
 use crate::lookup::DeltaSet;
 
 use crate::persistence::GossipPersister;
 use crate::serialization::UpdateSerializationMechanism;
 use crate::snapshot::Snapshotter;
-use crate::types::GossipChainAccess;
+use crate::types::{GossipChainAccess, TestLogger};
 
-mod router;
+mod downloader;
 mod types;
-mod download;
+mod tracking;
 mod lookup;
 mod persistence;
 mod serialization;
@@ -54,13 +52,12 @@ pub struct SerializedResponse {
 
 impl RapidSyncProcessor {
 	pub fn new() -> Self {
-		let mut logger = TestLogger::new();
+		let logger = TestLogger::new();
 		let mut initial_sync_complete = false;
-		logger.enable(Level::Warn);
 		let arc_logger = Arc::new(logger);
 		let network_graph = if let Ok(mut file) = File::open(&config::network_graph_cache_path()) {
 			println!("Initializing from cached network graph…");
-			let network_graph_result = NetworkGraph::read(&mut file, arc_logger.clone());
+			let network_graph_result = NetworkGraph::read(&mut file, Arc::clone(&arc_logger));
 			if let Ok(network_graph) = network_graph_result {
 				initial_sync_complete = true;
 				network_graph.remove_stale_channels();
@@ -89,14 +86,12 @@ impl RapidSyncProcessor {
 		let network_graph = self.network_graph.clone();
 		let snapshotter = Snapshotter::new(network_graph.clone());
 
-		let download_new_gossip = true;
-		let generate_snapshots = true;
-		if download_new_gossip {
+		if config::DOWNLOAD_NEW_GOSSIP {
 
 			let mut persister = GossipPersister::new(sync_completion_sender, self.network_graph.clone());
 
 			let persistence_sender = persister.gossip_persistence_sender.clone();
-			let download_future = download::download_gossip(persistence_sender, network_graph.clone());
+			let download_future = tracking::download_gossip(persistence_sender, network_graph.clone());
 			let _download_thread = tokio::spawn(async move {
 				// initiate the whole download stuff in the background
 				download_future.await;
@@ -117,7 +112,7 @@ impl RapidSyncProcessor {
 			initial_sync_complete.store(true, Ordering::Release);
 			println!("Initial sync complete!");
 
-			if generate_snapshots {
+			if config::GENERATE_SNAPSHOTS {
 				// start the gossip snapshotting service
 				snapshotter.snapshot_gossip().await;
 			}
@@ -160,7 +155,7 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, last
 	let mut node_id_set: HashSet<[u8; 33]> = HashSet::new();
 	let mut node_id_indices: HashMap<[u8; 33], usize> = HashMap::new();
 	let mut node_ids: Vec<PublicKey> = Vec::new();
-	let mut duplicate_node_ids = 0;
+	let mut duplicate_node_ids: i32 = 0;
 
 	let mut get_node_id_index = |node_id: PublicKey| {
 		let serialized_node_id = node_id.serialize();
@@ -233,16 +228,19 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, last
 	let message_count = announcement_count + update_count;
 
 	let mut prefixed_output = vec![76, 68, 75, 1];
-	// always write the chain hash
-	serialization_details.chain_hash.write(&mut prefixed_output);
-	// always write the latest seen timestamp
-	serialization_details.latest_seen.write(&mut prefixed_output);
 
-	let node_id_count = node_ids.len() as u32;
-	node_id_count.write(&mut prefixed_output);
+	if !config::SIMULATE_NAIVE_SERIALIZATION {
+		// always write the chain hash
+		serialization_details.chain_hash.write(&mut prefixed_output);
+		// always write the latest seen timestamp
+		serialization_details.latest_seen.write(&mut prefixed_output);
 
-	for current_node_id in node_ids {
-		current_node_id.write(&mut prefixed_output);
+		let node_id_count = node_ids.len() as u32;
+		node_id_count.write(&mut prefixed_output);
+
+		for current_node_id in node_ids {
+			current_node_id.write(&mut prefixed_output);
+		}
 	}
 
 	prefixed_output.append(&mut output);

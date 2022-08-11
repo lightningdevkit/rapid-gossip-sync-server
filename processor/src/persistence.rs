@@ -4,11 +4,10 @@ use std::time::Instant;
 use lightning::ln::msgs::OptionalField;
 use lightning::routing::gossip::NetworkGraph;
 use lightning::util::ser::Writeable;
-use lightning::util::test_utils::TestLogger;
 use tokio::sync::mpsc;
 use tokio_postgres::NoTls;
 
-use crate::{config, hex_utils};
+use crate::{config, hex_utils, TestLogger};
 use crate::types::{DetectedGossipMessage, GossipMessage};
 
 pub(crate) struct GossipPersister {
@@ -50,7 +49,7 @@ impl GossipPersister {
 		{
 			// initialize the database
 			let initialization = client
-				.execute(config::db_config_table_creation_query().as_str(), &[])
+				.execute(config::db_config_table_creation_query(), &[])
 				.await;
 			if let Err(initialization_error) = initialization {
 				eprintln!("db init error: {}", initialization_error);
@@ -59,7 +58,7 @@ impl GossipPersister {
 			// println!("Reached point O");
 
 			let initialization = client
-				.execute(config::db_announcement_table_creation_query().as_str(), &[])
+				.execute(config::db_announcement_table_creation_query(), &[])
 				.await;
 			if let Err(initialization_error) = initialization {
 				eprintln!("db init error: {}", initialization_error);
@@ -69,7 +68,7 @@ impl GossipPersister {
 
 			let initialization = client
 				.execute(
-					config::db_channel_update_table_creation_query().as_str(),
+					config::db_channel_update_table_creation_query(),
 					&[],
 				)
 				.await;
@@ -80,7 +79,7 @@ impl GossipPersister {
 			// println!("Reached point Q");
 
 			let initialization = client
-				.batch_execute(config::db_index_creation_query().as_str())
+				.batch_execute(config::db_index_creation_query())
 				.await;
 			if let Err(initialization_error) = initialization {
 				eprintln!("db init error: {}", initialization_error);

@@ -4,8 +4,12 @@ use bitcoin::secp256k1::PublicKey;
 use tokio_postgres::Config;
 use crate::hex_utils;
 
-pub(crate) fn network_graph_cache_path() -> String {
-	"./res/network_graph.bin".to_string()
+pub(crate) const DOWNLOAD_NEW_GOSSIP: bool = true;
+pub(crate) const GENERATE_SNAPSHOTS: bool = true;
+pub(crate) const SIMULATE_NAIVE_SERIALIZATION: bool = false;
+
+pub(crate) fn network_graph_cache_path() -> &'static str {
+	"./res/network_graph.bin"
 }
 
 pub(crate) fn db_connection_config() -> Config {
@@ -22,14 +26,14 @@ pub(crate) fn db_connection_config() -> Config {
 	config
 }
 
-pub(crate) fn db_config_table_creation_query() -> String {
+pub(crate) fn db_config_table_creation_query() -> &'static str {
 	"CREATE TABLE IF NOT EXISTS config (
 		id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 		db_schema integer
-	)".to_string()
+	)"
 }
 
-pub(crate) fn db_announcement_table_creation_query() -> String {
+pub(crate) fn db_announcement_table_creation_query() -> &'static str {
 	"CREATE TABLE IF NOT EXISTS channel_announcements (
 		id SERIAL PRIMARY KEY,
 		short_channel_id character varying(255) NOT NULL UNIQUE,
@@ -37,10 +41,10 @@ pub(crate) fn db_announcement_table_creation_query() -> String {
 		chain_hash character varying(255),
 		announcement_signed text,
 		seen oid NOT NULL
-	)".to_string()
+	)"
 }
 
-pub(crate) fn db_channel_update_table_creation_query() -> String {
+pub(crate) fn db_channel_update_table_creation_query() -> &'static str {
 	"CREATE TABLE IF NOT EXISTS channel_updates (
 		id SERIAL PRIMARY KEY,
 		composite_index character varying(255) UNIQUE,
@@ -57,25 +61,28 @@ pub(crate) fn db_channel_update_table_creation_query() -> String {
 		htlc_maximum_msat bigint,
 		blob_signed text,
 		seen oid NOT NULL
-	)".to_string()
+	)"
 }
 
-pub(crate) fn db_index_creation_query() -> String {
+pub(crate) fn db_index_creation_query() -> &'static str {
 	"
 	CREATE INDEX IF NOT EXISTS channels_seen ON channel_announcements(seen);
 	CREATE INDEX IF NOT EXISTS channel_updates_scid ON channel_updates(short_channel_id);
 	CREATE INDEX IF NOT EXISTS channel_updates_direction ON channel_updates(direction);
 	CREATE INDEX IF NOT EXISTS channel_updates_seen ON channel_updates(seen);
-	".to_string()
+	"
 }
 
 /// EDIT ME
 pub(crate) fn ln_peers() -> Vec<(PublicKey, SocketAddr)> {
 	vec![
-		// Alex Bosworth
+		// Bitfinex
 		(hex_utils::to_compressed_pubkey("033d8656219478701227199cbd6f670335c8d408a92ae88b962c49d4dc0e83e025").unwrap(), "34.65.85.39:9735".parse().unwrap()),
 
 		// Matt Corallo
 		// (hex_utils::to_compressed_pubkey("03db10aa09ff04d3568b0621750794063df401e6853c79a21a83e1a3f3b5bfb0c8").unwrap(), "69.59.18.80:9735".parse().unwrap())
+
+		// River Financial
+		// (hex_utils::to_compressed_pubkey("03037dc08e9ac63b82581f79b662a4d0ceca8a8ca162b1af3551595b8f2d97b70a").unwrap(), "104.196.249.140:9735".parse().unwrap())
 	]
 }

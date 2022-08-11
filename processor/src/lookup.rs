@@ -6,11 +6,10 @@ use std::time::Instant;
 use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::routing::gossip::NetworkGraph;
 use lightning::util::ser::Readable;
-use lightning::util::test_utils::TestLogger;
 use tokio_postgres::{Client, Connection, NoTls, Socket};
 use tokio_postgres::tls::NoTlsStream;
 
-use crate::{config, hex_utils};
+use crate::{config, hex_utils, TestLogger};
 use crate::serialization::MutatedProperties;
 
 /// The delta set needs to be a BTreeMap so the keys are sorted.

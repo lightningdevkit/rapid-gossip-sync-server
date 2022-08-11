@@ -13,7 +13,7 @@ bitcoin-bech32 = "0.12"
 #lightning-block-sync = { git ="https://github.com/arik-so/rust-lightning", branch ="graph_sync_crate", features = [ "rpc-client" ] }
 # lightning-net-tokio = { git ="https://github.com/arik-so/rust-lightning", branch ="graph_sync_crate" }
 
-lightning = { version = "0.0.108", features = ["_test_utils"] }
+lightning = { version = "0.0.108" }
 lightning-net-tokio = { version = "0.0.108" }
 
 #lightning = { path = "/Users/arik/Developer/rust-lightning/lightning", features = ["_test_utils", "std"] }

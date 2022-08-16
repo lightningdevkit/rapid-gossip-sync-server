@@ -107,17 +107,6 @@ impl Snapshotter {
 		}
 	}
 
-	fn round_to_nearest_multiple(number: u64, multiple: u64) -> u64 {
-		assert!(multiple % 2 == 0);
-		let round_multiple_delta = number % multiple;
-		let half_multiple = multiple / 2;
-		if round_multiple_delta < half_multiple {
-			number - round_multiple_delta
-		} else {
-			number + multiple - round_multiple_delta
-		}
-	}
-
 	fn round_down_to_nearest_multiple(number: u64, multiple: u64) -> u64 {
 		let round_multiple_delta = number % multiple;
 		number - round_multiple_delta

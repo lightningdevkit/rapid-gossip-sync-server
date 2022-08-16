@@ -74,6 +74,7 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 
 		let mut i = 0u32;
 		let mut latest_new_gossip_time = Instant::now();
+		let mut needs_to_notify_persister = false;
 
 		loop {
 			// println!("Reached point A");
@@ -84,7 +85,6 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 
 			let current_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 			let router_clone = Arc::clone(&arc_wrapped_router);
-			let mut needs_to_notify_persister = false;
 
 			{
 				let counter = router_clone.counter.read().unwrap();
@@ -144,7 +144,7 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 				needs_to_notify_persister = false;
 				let sender = persistence_sender.clone();
 				tokio::spawn(async move {
-					sender.send(DetectedGossipMessage {
+					let _ = sender.send(DetectedGossipMessage {
 						timestamp_seen: current_timestamp as u32,
 						message: GossipMessage::InitialSyncComplete,
 					}).await;

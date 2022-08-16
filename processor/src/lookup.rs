@@ -14,7 +14,7 @@ use crate::serialization::MutatedProperties;
 
 /// The delta set needs to be a BTreeMap so the keys are sorted.
 /// That way, the scids in the response automatically grow monotonically
-pub(super) type DeltaSet = BTreeMap<String, ChannelDelta>;
+pub(super) type DeltaSet = BTreeMap<u64, ChannelDelta>;
 
 pub(super) struct AnnouncementDelta {
 	pub(super) seen: u32,
@@ -59,39 +59,11 @@ pub(super) async fn connect_to_db() -> (Client, Connection<Socket, NoTlsStream>)
 	connection_config.connect(NoTls).await.unwrap()
 }
 
-/*
-/// Slower, but more memory-efficient alternative to doing the three-step method below
-pub(super) async fn calculate_delta_set(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, client: &Client, last_sync_timestamp: u32, consider_intermediate_updates: bool) -> DeltaSet {
-	let delta_set = DeltaSet::new();
-
-	// step 1: get all the current channel IDs
-	let active_channel_ids = {
-		let read_only_graph = network_graph.read_only();
-		let channel_iterator = read_only_graph.channels().into_iter();
-		channel_iterator
-			.filter(|c| c.1.announcement_message.is_some())
-			.map(|c| hex_utils::hex_str(&c.1.announcement_message.clone().unwrap().contents.short_channel_id.to_be_bytes()))
-			.collect::<Vec<String>>()
-	};
-
-	// step 2: iterate over all the channel IDs and do slow as fuck database operations
-	for current_scid_hex in active_channel_ids {
-		/// determine whether this channel has any updates yet. Unless it has at least one update
-		/// per direction, this channel can be skipped
-
-		// fetch the latest seen channel updates per direction
-		let last_seen_updates = client.query("SELECT DISTINCT ON (direction) * FROM channel_updates WHERE seen < $1 AND short_channel_id = $2 ORDER BY direction ASC, seen DESC", &[&last_sync_timestamp, &current_scid_hex]).await.unwrap();
-		// println!("here we are");
-	}
-
-	delta_set
-}*/
-
 /// Fetch all the channel announcements that are presently in the network graph, regardless of
 /// whether they had been seen before.
 /// Also include all announcements for which the first update was announced
 /// after `last_syc_timestamp`
-pub(super) async fn fetch_channel_announcements(mut delta_set: DeltaSet, network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, client: &Client, last_sync_timestamp: u32) -> DeltaSet {
+pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, client: &Client, last_sync_timestamp: u32) {
 	println!("Obtaining channel ids from network graph");
 	let channel_ids = {
 		let read_only_graph = network_graph.read_only();
@@ -113,7 +85,7 @@ pub(super) async fn fetch_channel_announcements(mut delta_set: DeltaSet, network
 		let mut readable = Cursor::new(data);
 		let unsigned_announcement = ChannelAnnouncement::read(&mut readable).unwrap().contents;
 
-		let scid: String = current_announcement_row.get("short_channel_id");
+		let scid = unsigned_announcement.short_channel_id;
 		let current_seen_timestamp: u32 = current_announcement_row.get("seen");
 
 		let mut current_channel_delta = delta_set.entry(scid).or_insert(ChannelDelta::default());
@@ -125,19 +97,24 @@ pub(super) async fn fetch_channel_announcements(mut delta_set: DeltaSet, network
 
 	println!("Obtaining channel annoouncements whose first channel updates had not been seen yet");
 
-	/// here is where the channels whose first update in either direction occurred after
-	/// `last_seen_timestamp` are added to the selection
-	let unannounced_rows = client.query("SELECT short_channel_id, seen FROM (SELECT DISTINCT ON (short_channel_id) short_channel_id, seen FROM channel_updates ORDER BY short_channel_id ASC, seen ASC) AS first_seens WHERE first_seens.seen >= $1", &[&last_sync_timestamp]).await.unwrap();
+	// here is where the channels whose first update in either direction occurred after
+	// `last_seen_timestamp` are added to the selection
+	let unannounced_rows = client.query("SELECT short_channel_id, blob_signed, seen FROM (SELECT DISTINCT ON (short_channel_id) short_channel_id, seen FROM channel_updates ORDER BY short_channel_id ASC, seen ASC) AS first_seens WHERE first_seens.seen >= $1", &[&last_sync_timestamp]).await.unwrap();
 	for current_row in unannounced_rows {
-		let scid: String = current_row.get("short_channel_id");
+
+		let blob: String = current_row.get("blob_signed");
+		let data = hex_utils::to_vec(&blob).unwrap();
+		let mut readable = Cursor::new(data);
+		let unsigned_update = ChannelUpdate::read(&mut readable).unwrap().contents;
+		let scid = unsigned_update.short_channel_id;
 		let current_seen_timestamp: u32 = current_row.get("seen");
+
 		let mut current_channel_delta = delta_set.entry(scid).or_insert(ChannelDelta::default());
 		(*current_channel_delta).first_update_seen = Some(current_seen_timestamp);
 	}
-	delta_set
 }
 
-pub(super) async fn fetch_channel_updates(mut delta_set: DeltaSet, client: &Client, last_sync_timestamp: u32, consider_intermediate_updates: bool) -> DeltaSet {
+pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Client, last_sync_timestamp: u32, consider_intermediate_updates: bool) {
 	let start = Instant::now();
 
 	// get the latest channel update in each direction prior to last_sync_timestamp, provided
@@ -155,15 +132,14 @@ pub(super) async fn fetch_channel_updates(mut delta_set: DeltaSet, client: &Clie
 		last_seen_update_ids.push(update_id);
 		non_intermediate_ids.insert(update_id);
 
-		let scid_hex: String = current_reference.get("short_channel_id");
 		let direction: i32 = current_reference.get("direction");
-		let _reference_key = format!("{}:{}", scid_hex, direction);
 		let blob: String = current_reference.get("blob_signed");
 		let data = hex_utils::to_vec(&blob).unwrap();
 		let mut readable = Cursor::new(data);
 		let unsigned_channel_update = ChannelUpdate::read(&mut readable).unwrap().contents;
+		let scid = unsigned_channel_update.short_channel_id;
 
-		let current_channel_delta = delta_set.entry(scid_hex).or_insert(ChannelDelta::default());
+		let current_channel_delta = delta_set.entry(scid).or_insert(ChannelDelta::default());
 		let mut update_delta = if direction == 0 {
 			(*current_channel_delta).updates.0.get_or_insert(DirectedUpdateDelta::default())
 		} else if direction == 1 {
@@ -181,9 +157,6 @@ pub(super) async fn fetch_channel_updates(mut delta_set: DeltaSet, client: &Clie
 	// get all the intermediate channel updates
 	// (to calculate the set of mutated fields for snapshotting, where intermediate updates may
 	// have been omitted)
-	// let intermediate_updates = client.query("SELECT * FROM channel_updates WHERE seen >= $1 AND id != all($2) AND id != all($3) ORDER BY short_channel_id ASC, direction ASC, seen ASC", &[&last_sync_timestamp, &last_seen_update_ids, &latest_update_ids]).await.unwrap();
-	// let non_intermediate_id_array = Vec::from_iter(non_intermediate_ids.iter());
-	// let intermediate_updates = client.query("SELECT * FROM channel_updates WHERE seen >= $1 AND id != all($2) ORDER BY short_channel_id ASC, direction ASC, seen ASC", &[&last_sync_timestamp, &non_intermediate_id_array]).await.unwrap();
 
 	let mut intermediate_update_prefix = "";
 	if !consider_intermediate_updates {
@@ -194,7 +167,7 @@ pub(super) async fn fetch_channel_updates(mut delta_set: DeltaSet, client: &Clie
 	let intermediate_updates = client.query(&query_string, &[&last_sync_timestamp]).await.unwrap();
 	println!("Fetched intermediate rows ({}): {:?}", intermediate_updates.len(), start.elapsed());
 
-	let mut previous_scid_hex = "".to_string();
+	let mut previous_scid = u64::MAX;
 	let mut previously_seen_directions = (false, false);
 
 	// let mut previously_seen_directions = (false, false);
@@ -206,13 +179,6 @@ pub(super) async fn fetch_channel_updates(mut delta_set: DeltaSet, client: &Clie
 		}
 		intermediate_update_count += 1;
 
-		let scid_hex: String = intermediate_update.get("short_channel_id");
-
-		if scid_hex != previous_scid_hex {
-			previous_scid_hex = scid_hex.clone();
-			previously_seen_directions = (false, false);
-		}
-
 		let direction: i32 = intermediate_update.get("direction");
 		let current_seen_timestamp: u32 = intermediate_update.get("seen");
 		let blob: String = intermediate_update.get("blob_signed");
@@ -220,8 +186,14 @@ pub(super) async fn fetch_channel_updates(mut delta_set: DeltaSet, client: &Clie
 		let mut readable = Cursor::new(data);
 		let unsigned_channel_update = ChannelUpdate::read(&mut readable).unwrap().contents;
 
+		let scid = unsigned_channel_update.short_channel_id;
+		if scid != previous_scid {
+			previous_scid = scid.clone();
+			previously_seen_directions = (false, false);
+		}
+
 		// get the write configuration for this particular channel's directional details
-		let current_channel_delta = delta_set.entry(scid_hex.clone()).or_insert(ChannelDelta::default());
+		let current_channel_delta = delta_set.entry(scid.clone()).or_insert(ChannelDelta::default());
 		let update_delta = if direction == 0 {
 			(*current_channel_delta).updates.0.get_or_insert(DirectedUpdateDelta::default())
 		} else if direction == 1 {
@@ -271,12 +243,10 @@ pub(super) async fn fetch_channel_updates(mut delta_set: DeltaSet, client: &Clie
 
 	}
 	println!("Processed intermediate rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
-
-	delta_set
 }
 
-pub(super) fn filter_delta_set(delta_set: DeltaSet) -> DeltaSet {
-	let filtered_delta: DeltaSet = delta_set.into_iter().filter(|(_k, v)| {
+pub(super) fn filter_delta_set(delta_set: &mut DeltaSet) {
+	delta_set.retain(|_k, v| {
 		if v.announcement.is_none() {
 			// this channel is not currently in the network graph
 			return false;
@@ -296,7 +266,5 @@ pub(super) fn filter_delta_set(delta_set: DeltaSet) -> DeltaSet {
 		let direction_b_meets_criteria = update_meets_criteria(&v.updates.1);
 
 		direction_a_meets_criteria || direction_b_meets_criteria
-	}).collect();
-	println!("filtered delta count: {}", filtered_delta.len());
-	filtered_delta
+	});
 }

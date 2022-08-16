@@ -103,7 +103,7 @@ impl RapidSyncProcessor {
 			});
 
 		}else{
-			sync_completion_sender.send(()).await;
+			sync_completion_sender.send(()).await.unwrap();
 		}
 
 		// tokio::spawn(async move {
@@ -150,8 +150,6 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, last
 	// chain hash only necessary if either channel announcements or non-incremental updates are present
 	// for announcement-free incremental-only updates, chain hash can be skipped
 
-	let delta_set = DeltaSet::new();
-
 	let mut node_id_set: HashSet<[u8; 33]> = HashSet::new();
 	let mut node_id_indices: HashMap<[u8; 33], usize> = HashMap::new();
 	let mut node_ids: Vec<PublicKey> = Vec::new();
@@ -169,19 +167,19 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, last
 		node_id_indices[&serialized_node_id]
 	};
 
-	// let comparison_delta_set = lookup::calculate_delta_set(network_graph.clone(), &client, last_sync_timestamp, consider_intermediate_updates).await;
-	let delta_set = lookup::fetch_channel_announcements(delta_set, network_graph, &client, last_sync_timestamp).await;
+	let mut delta_set = DeltaSet::new();
+	lookup::fetch_channel_announcements(&mut delta_set, network_graph, &client, last_sync_timestamp).await;
 	println!("announcement channel count: {}", delta_set.len());
-	let delta_set = lookup::fetch_channel_updates(delta_set, &client, last_sync_timestamp, consider_intermediate_updates).await;
+	lookup::fetch_channel_updates(&mut delta_set, &client, last_sync_timestamp, consider_intermediate_updates).await;
 	println!("update-fetched channel count: {}", delta_set.len());
-	let delta_set = lookup::filter_delta_set(delta_set);
+	lookup::filter_delta_set(&mut delta_set);
 	println!("update-filtered channel count: {}", delta_set.len());
 	let serialization_details = serialization::serialize_delta_set(delta_set, last_sync_timestamp);
 
 	// process announcements
 	// write the number of channel announcements to the output
 	let announcement_count = serialization_details.announcements.len() as u32;
-	announcement_count.write(&mut output);
+	announcement_count.write(&mut output).unwrap();
 	let mut previous_announcement_scid = 0;
 	for current_announcement in serialization_details.announcements {
 		let id_index_1 = get_node_id_index(current_announcement.node_id_1);
@@ -195,15 +193,15 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, last
 	// process updates
 	let mut previous_update_scid = 0;
 	let update_count = serialization_details.updates.len() as u32;
-	update_count.write(&mut output);
+	update_count.write(&mut output).unwrap();
 
 	let default_update_values = serialization_details.full_update_defaults;
 	if update_count > 0 {
-		default_update_values.cltv_expiry_delta.write(&mut output);
-		default_update_values.htlc_minimum_msat.write(&mut output);
-		default_update_values.fee_base_msat.write(&mut output);
-		default_update_values.fee_proportional_millionths.write(&mut output);
-		default_update_values.htlc_maximum_msat.write(&mut output);
+		default_update_values.cltv_expiry_delta.write(&mut output).unwrap();
+		default_update_values.htlc_minimum_msat.write(&mut output).unwrap();
+		default_update_values.fee_base_msat.write(&mut output).unwrap();
+		default_update_values.fee_proportional_millionths.write(&mut output).unwrap();
+		default_update_values.htlc_maximum_msat.write(&mut output).unwrap();
 	}
 
 	let mut update_count_full = 0;
@@ -231,15 +229,15 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, last
 
 	if !config::SIMULATE_NAIVE_SERIALIZATION {
 		// always write the chain hash
-		serialization_details.chain_hash.write(&mut prefixed_output);
+		serialization_details.chain_hash.write(&mut prefixed_output).unwrap();
 		// always write the latest seen timestamp
-		serialization_details.latest_seen.write(&mut prefixed_output);
+		serialization_details.latest_seen.write(&mut prefixed_output).unwrap();
 
 		let node_id_count = node_ids.len() as u32;
-		node_id_count.write(&mut prefixed_output);
+		node_id_count.write(&mut prefixed_output).unwrap();
 
 		for current_node_id in node_ids {
-			current_node_id.write(&mut prefixed_output);
+			current_node_id.write(&mut prefixed_output).unwrap();
 		}
 	}
 
@@ -248,7 +246,7 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, last
 	let mut compressed_output = None;
 	if gzip_response {
 		let mut compressor = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-		compressor.write_all(&prefixed_output);
+		compressor.write_all(&prefixed_output).unwrap();
 		let compressed_response = compressor.finish().unwrap();
 		compressed_output = Some(compressed_response);
 	}

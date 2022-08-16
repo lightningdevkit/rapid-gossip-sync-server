@@ -57,7 +57,7 @@ impl RoutingMessageHandler for GossipRouter {
 			};
 			let sender = self.sender.clone();
 			tokio::spawn(async move {
-				sender.send(detected_gossip_message).await;
+				let _ = sender.send(detected_gossip_message).await;
 			});
 		}
 		result
@@ -91,7 +91,7 @@ impl RoutingMessageHandler for GossipRouter {
 			};
 			let sender = self.sender.clone();
 			tokio::spawn(async move {
-				sender.send(detected_gossip_message).await;
+				let _ = sender.send(detected_gossip_message).await;
 			});
 		}
 		result
@@ -122,6 +122,6 @@ impl RoutingMessageHandler for GossipRouter {
 	}
 
 	fn handle_query_short_channel_ids(&self, their_node_id: &PublicKey, msg: QueryShortChannelIds) -> Result<(), LightningError> {
-		self.handle_query_short_channel_ids(their_node_id, msg)
+		self.native_router.handle_query_short_channel_ids(their_node_id, msg)
 	}
 }

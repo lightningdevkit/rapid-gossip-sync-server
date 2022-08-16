@@ -55,16 +55,12 @@ impl GossipPersister {
 				eprintln!("db init error: {}", initialization_error);
 			}
 
-			// println!("Reached point O");
-
 			let initialization = client
 				.execute(config::db_announcement_table_creation_query(), &[])
 				.await;
 			if let Err(initialization_error) = initialization {
 				eprintln!("db init error: {}", initialization_error);
 			}
-
-			// println!("Reached point P");
 
 			let initialization = client
 				.execute(
@@ -76,16 +72,12 @@ impl GossipPersister {
 				eprintln!("db init error: {}", initialization_error);
 			}
 
-			// println!("Reached point Q");
-
 			let initialization = client
 				.batch_execute(config::db_index_creation_query())
 				.await;
 			if let Err(initialization_error) = initialization {
 				eprintln!("db init error: {}", initialization_error);
 			}
-
-			// println!("Reached point R");
 		}
 
 		// print log statement every 10,000 messages
@@ -96,16 +88,12 @@ impl GossipPersister {
 		// TODO: it would be nice to have some sort of timeout here so after 10 seconds of
 		// inactivity, some sort of message could be broadcast signaling the activation of request
 		// processing
-		// println!("Reached point S");
 		while let Some(detected_gossip_message) = &self.gossip_persistence_receiver.recv().await {
-			// println!("Reached point T");
 			i += 1; // count the persisted gossip messages
 
 			if i == 1 || i % persistence_log_threshold == 0 {
 				println!("Persisting gossip message #{}", i);
 			}
-
-			// println!("Reached point U");
 
 			let timestamp_seen = detected_gossip_message.timestamp_seen;
 			match &detected_gossip_message.message {
@@ -119,7 +107,7 @@ impl GossipPersister {
 					persistence_log_threshold = 50;
 					if !server_sync_completion_sent {
 						server_sync_completion_sent = true;
-						self.server_sync_completion_sender.send(()).await;
+						self.server_sync_completion_sender.send(()).await.unwrap();
 						println!("Server has been notified of persistence completion.");
 					}
 
@@ -150,7 +138,6 @@ impl GossipPersister {
 					}
 				}
 				GossipMessage::ChannelAnnouncement(announcement) => {
-					// println!("got message #{}: announcement", i);
 
 					let scid = announcement.contents.short_channel_id;
 					let scid_hex = hex_utils::hex_str(&scid.to_be_bytes());
@@ -183,11 +170,8 @@ impl GossipPersister {
 					if result.is_err() {
 						panic!("error: {}", result.err().unwrap());
 					}
-					// println!("Reached point W");
 				}
 				GossipMessage::ChannelUpdate(update) => {
-					// println!("got message #{}: update", i);
-
 					let scid = update.contents.short_channel_id;
 					let scid_hex = hex_utils::hex_str(&scid.to_be_bytes());
 
@@ -252,10 +236,8 @@ impl GossipPersister {
 					if result.is_err() {
 						panic!("error: {}", result.err().unwrap());
 					}
-					// println!("Reached point X");
 				}
 			}
-			// println!("Reached point Y");
 		}
 	}
 }

@@ -36,12 +36,6 @@ impl Default for DefaultUpdateValues {
 	}
 }
 
-pub(super) struct UpdateChangeSet {
-	pub(super) affected_field_count: u8,
-	pub(super) affected_fields: Vec<String>,
-	pub(super) serialization: Vec<u8>,
-}
-
 pub(super) struct MutatedProperties {
 	pub(super) flags: bool,
 	pub(super) cltv_expiry_delta: bool,
@@ -211,21 +205,21 @@ pub fn serialize_stripped_channel_announcement(announcement: &UnsignedChannelAnn
 		// prepend 4 signatures of 65 bytes each
 		let prefix = [0u8; 65 * 4];
 		stripped_announcement.extend_from_slice(&prefix);
-		announcement.write(&mut stripped_announcement);
+		announcement.write(&mut stripped_announcement).unwrap();
 		return stripped_announcement;
 	}
 
-	announcement.features.write(&mut stripped_announcement);
+	announcement.features.write(&mut stripped_announcement).unwrap();
 
 	if previous_scid > announcement.short_channel_id {
 		panic!("unsorted scids!");
 	}
 	let scid_delta = BigSize(announcement.short_channel_id - previous_scid);
-	scid_delta.write(&mut stripped_announcement);
+	scid_delta.write(&mut stripped_announcement).unwrap();
 
 	// write indices of node ids rather than the node IDs themselves
-	BigSize(node_id_a_index as u64).write(&mut stripped_announcement);
-	BigSize(node_id_b_index as u64).write(&mut stripped_announcement);
+	BigSize(node_id_a_index as u64).write(&mut stripped_announcement).unwrap();
+	BigSize(node_id_b_index as u64).write(&mut stripped_announcement).unwrap();
 
 	// println!("serialized CA: {}, \n{:?}\n{:?}\n", announcement.short_channel_id, announcement.node_id_1, announcement.node_id_2);
 	stripped_announcement
@@ -250,7 +244,7 @@ pub(super) fn serialize_stripped_channel_update(update: &UpdateSerialization, de
 		// prepend 1 signatures of 65 bytes
 		let prefix = [0u8; 65 * 1];
 		prefixed_serialization.extend_from_slice(&prefix);
-		latest_update.write(&mut prefixed_serialization);
+		latest_update.write(&mut prefixed_serialization).unwrap();
 		return prefixed_serialization;
 	}
 
@@ -316,9 +310,9 @@ pub(super) fn serialize_stripped_channel_update(update: &UpdateSerialization, de
 		}
 	}
 	let scid_delta = BigSize(latest_update.short_channel_id - previous_scid);
-	scid_delta.write(&mut prefixed_serialization);
+	scid_delta.write(&mut prefixed_serialization).unwrap();
 
-	serialized_flags.write(&mut prefixed_serialization);
+	serialized_flags.write(&mut prefixed_serialization).unwrap();
 	prefixed_serialization.append(&mut delta_serialization);
 
 	prefixed_serialization
@@ -340,7 +334,9 @@ pub(super) fn optional_htlc_maximum_to_u64(htlc_maximum_msat: &OptionalField<u64
 	if let OptionalField::Present(maximum) = htlc_maximum_msat {
 		maximum.clone()
 	} else {
-		panic!("HTLC maximum msat must always be set going forward!");
+		if config::REQUIRE_HTLC_MAX {
+			panic!("HTLC maximum msat must always be set going forward!");
+		}
 		u64::MAX
 	}
 }

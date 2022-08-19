@@ -2,15 +2,17 @@ use std::convert::Infallible;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Instant;
+
 use warp::Filter;
 use warp::http::HeaderValue;
+
 use processor::RapidSyncProcessor;
 
 #[tokio::main]
 async fn main() {
-	let mut processor = Arc::new(RapidSyncProcessor::new());
+	let processor = Arc::new(RapidSyncProcessor::new());
 	let gossip_server = RapidSyncServer {
 		processor: Some(processor.clone())
 	};
@@ -21,7 +23,7 @@ async fn main() {
 }
 
 struct RapidSyncServer {
-	processor: Option<Arc<RapidSyncProcessor>>
+	processor: Option<Arc<RapidSyncProcessor>>,
 }
 
 impl RapidSyncServer {
@@ -54,7 +56,7 @@ async fn serve_snapshot(last_sync_timestamp: u32) -> Result<impl warp::Reply, In
 		calculated: u64,
 		path: PathBuf,
 	}
-	;
+
 	let files = fs::read_dir(snapshot_directory).unwrap();
 	let mut relevant_snapshots = Vec::new();
 	for current_file in files {
@@ -85,7 +87,6 @@ async fn serve_snapshot(last_sync_timestamp: u32) -> Result<impl warp::Reply, In
 		let components: Vec<u64> = snapshot_components.map(|current_component| {
 			let subcomponents: Vec<&str> = current_component.split("_").collect();
 			if subcomponents.len() != 2 { return 0; }
-			let component_name = subcomponents[0];
 			let component_value = subcomponents[1];
 			let numeric_value = component_value.parse::<u64>().unwrap_or(0);
 			numeric_value

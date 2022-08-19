@@ -95,11 +95,11 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 		});
 	}
 
-	println!("Obtaining channel annoouncements whose first channel updates had not been seen yet");
+	println!("Obtaining channel announcements whose first channel updates had not been seen yet");
 
 	// here is where the channels whose first update in either direction occurred after
 	// `last_seen_timestamp` are added to the selection
-	let unannounced_rows = client.query("SELECT short_channel_id, blob_signed, seen FROM (SELECT DISTINCT ON (short_channel_id) short_channel_id, seen FROM channel_updates ORDER BY short_channel_id ASC, seen ASC) AS first_seens WHERE first_seens.seen >= $1", &[&last_sync_timestamp]).await.unwrap();
+	let unannounced_rows = client.query("SELECT short_channel_id, blob_signed, seen FROM (SELECT DISTINCT ON (short_channel_id) short_channel_id, blob_signed, seen FROM channel_updates ORDER BY short_channel_id ASC, seen ASC) AS first_seens WHERE first_seens.seen >= $1", &[&last_sync_timestamp]).await.unwrap();
 	for current_row in unannounced_rows {
 
 		let blob: String = current_row.get("blob_signed");
@@ -246,10 +246,14 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 }
 
 pub(super) fn filter_delta_set(delta_set: &mut DeltaSet) {
-	delta_set.retain(|_k, v| {
+	let original_length = delta_set.len();
+	let keys: Vec<u64> = delta_set.keys().cloned().collect();
+	for k in keys {
+		let v = delta_set.get(&k).unwrap();
 		if v.announcement.is_none() {
 			// this channel is not currently in the network graph
-			return false;
+			delta_set.remove(&k);
+			continue;
 		}
 
 		let update_meets_criteria = |update: &Option<DirectedUpdateDelta>| {
@@ -265,6 +269,13 @@ pub(super) fn filter_delta_set(delta_set: &mut DeltaSet) {
 		let direction_a_meets_criteria = update_meets_criteria(&v.updates.0);
 		let direction_b_meets_criteria = update_meets_criteria(&v.updates.1);
 
-		direction_a_meets_criteria || direction_b_meets_criteria
-	});
+		if !direction_a_meets_criteria && !direction_b_meets_criteria {
+			delta_set.remove(&k);
+		}
+	}
+
+	let new_length = delta_set.len();
+	if original_length != new_length {
+		println!("length modified!");
+	}
 }

@@ -1,5 +1,6 @@
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use bitcoin::hashes::hex::ToHex;
 
 use bitcoin::secp256k1::SecretKey;
 use lightning;
@@ -60,13 +61,22 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 	let arc_peer_handler = Arc::new(peer_handler);
 
 	let peers = config::ln_peers();
+	let mut connected_peer_count = 0;
 	for current_peer in peers {
-		println!("connecting peer!");
-		lightning_net_tokio::connect_outbound(
+		let connection = lightning_net_tokio::connect_outbound(
 			Arc::clone(&arc_peer_handler),
 			current_peer.0,
 			current_peer.1,
 		).await;
+		if connection.is_some() {
+			connected_peer_count += 1;
+		}else{
+			eprintln!("Failed to connect to peer {}@{}", current_peer.0.to_hex(), current_peer.1.to_string())
+		}
+	}
+
+	if connected_peer_count < 1 {
+		panic!("Failed to connect to any peer.");
 	}
 
 	tokio::spawn(async move {

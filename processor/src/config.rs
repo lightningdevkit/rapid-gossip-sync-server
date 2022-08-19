@@ -1,6 +1,7 @@
 use std::env;
 use std::net::SocketAddr;
 use bitcoin::secp256k1::PublicKey;
+use lightning_block_sync::http::HttpEndpoint;
 use tokio_postgres::Config;
 use crate::hex_utils;
 
@@ -25,6 +26,16 @@ pub(crate) fn db_connection_config() -> Config {
 		config.password(&password);
 	}
 	config
+}
+
+pub(crate) fn bitcoin_rest_endpoint() -> HttpEndpoint {
+	let host = env::var("BITCOIN_REST_DOMAIN").unwrap_or("127.0.0.1".to_string());
+	let port = env::var("BITCOIN_REST_PORT")
+		.unwrap_or("80".to_string())
+		.parse::<u16>()
+		.expect("BITCOIN_REST_PORT env variable must be a u16.");
+	let path = env::var("BITCOIN_REST_PATH").unwrap_or("/rest/".to_string());
+	HttpEndpoint::for_host(host).with_port(port).with_path(path)
 }
 
 pub(crate) fn db_config_table_creation_query() -> &'static str {
@@ -78,12 +89,12 @@ pub(crate) fn db_index_creation_query() -> &'static str {
 pub(crate) fn ln_peers() -> Vec<(PublicKey, SocketAddr)> {
 	vec![
 		// Bitfinex
-		(hex_utils::to_compressed_pubkey("033d8656219478701227199cbd6f670335c8d408a92ae88b962c49d4dc0e83e025").unwrap(), "34.65.85.39:9735".parse().unwrap()),
+		// (hex_utils::to_compressed_pubkey("033d8656219478701227199cbd6f670335c8d408a92ae88b962c49d4dc0e83e025").unwrap(), "34.65.85.39:9735".parse().unwrap()),
 
 		// Matt Corallo
-		// (hex_utils::to_compressed_pubkey("03db10aa09ff04d3568b0621750794063df401e6853c79a21a83e1a3f3b5bfb0c8").unwrap(), "69.59.18.80:9735".parse().unwrap())
+		(hex_utils::to_compressed_pubkey("03db10aa09ff04d3568b0621750794063df401e6853c79a21a83e1a3f3b5bfb0c8").unwrap(), "69.59.18.80:9735".parse().unwrap())
 
 		// River Financial
-		// (hex_utils::to_compressed_pubkey("03037dc08e9ac63b82581f79b662a4d0ceca8a8ca162b1af3551595b8f2d97b70a").unwrap(), "104.196.249.140:9735".parse().unwrap())
+		// (hex_utils::to_compressed_pubkey("03037dc08e9ac63b82581f79b662a4d0ceca8a8ca162b1af3551595b8f2d97b70a").unwrap(), "104.196.249.140:1735".parse().unwrap())
 	]
 }

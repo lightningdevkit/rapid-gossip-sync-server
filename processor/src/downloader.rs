@@ -2,10 +2,9 @@ use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bitcoin::secp256k1::PublicKey;
-use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, ErrorAction, Init, LightningError, NodeAnnouncement, OptionalField, QueryChannelRange, QueryShortChannelIds, ReplyChannelRange, ReplyShortChannelIdsEnd, RoutingMessageHandler};
+use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, Init, LightningError, NodeAnnouncement, QueryChannelRange, QueryShortChannelIds, ReplyChannelRange, ReplyShortChannelIdsEnd, RoutingMessageHandler};
 use lightning::routing::gossip::{NetworkGraph, P2PGossipSync};
 use lightning::util::events::{MessageSendEvent, MessageSendEventsProvider};
-use lightning::util::ser::Writeable;
 use tokio::sync::mpsc;
 
 use crate::{GossipChainAccess, TestLogger};
@@ -15,6 +14,7 @@ pub(crate) struct GossipCounter {
 	pub(crate) channel_announcements: u64,
 	pub(crate) channel_updates: u64,
 	pub(crate) channel_updates_without_htlc_max_msats: u64,
+	pub(crate) channel_announcements_with_mismatched_scripts: u64
 }
 
 impl GossipCounter {
@@ -23,6 +23,7 @@ impl GossipCounter {
 			channel_announcements: 0,
 			channel_updates: 0,
 			channel_updates_without_htlc_max_msats: 0,
+			channel_announcements_with_mismatched_scripts: 0,
 		}
 	}
 }
@@ -46,55 +47,49 @@ impl RoutingMessageHandler for GossipRouter {
 
 	fn handle_channel_announcement(&self, msg: &ChannelAnnouncement) -> Result<bool, LightningError> {
 		let timestamp_seen = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-		let result = self.native_router.handle_channel_announcement(msg);
-		if result.is_ok() {
-			let mut counter = self.counter.write().unwrap();
-			counter.channel_announcements += 1;
-			let gossip_message = GossipMessage::ChannelAnnouncement(msg.clone());
-			let detected_gossip_message = DetectedGossipMessage {
-				message: gossip_message,
-				timestamp_seen: timestamp_seen as u32,
-			};
-			let sender = self.sender.clone();
-			tokio::spawn(async move {
-				let _ = sender.send(detected_gossip_message).await;
-			});
-		}
-		result
+
+		let mut counter = self.counter.write().unwrap();
+
+		let output_value = self.native_router.handle_channel_announcement(msg).map_err(|error| {
+			let error_string = format!("{:?}", error);
+			if error_string.contains("announced on an unknown chain"){
+				return error;
+			}
+			counter.channel_announcements_with_mismatched_scripts += 1;
+			error
+		})?;
+
+		counter.channel_announcements += 1;
+		let gossip_message = GossipMessage::ChannelAnnouncement(msg.clone());
+		let detected_gossip_message = DetectedGossipMessage {
+			message: gossip_message,
+			timestamp_seen: timestamp_seen as u32,
+		};
+		let sender = self.sender.clone();
+		tokio::spawn(async move {
+			let _ = sender.send(detected_gossip_message).await;
+		});
+
+		Ok(output_value)
 	}
 
 	fn handle_channel_update(&self, msg: &ChannelUpdate) -> Result<bool, LightningError> {
-		if let OptionalField::Absent = msg.contents.htlc_maximum_msat {
-			let mut counter = self.counter.write().unwrap();
-			counter.channel_updates_without_htlc_max_msats += 1;
-
-			let mut update_signed = Vec::new(); // vec![1, 2];
-			msg.write(&mut update_signed).unwrap();
-			let update_hex = super::hex_utils::hex_str(&update_signed);
-
-			// println!("No HTLC maximum msat: 0x{} ({}, direction: {})", super::hex_utils::hex_str(&msg.contents.short_channel_id.to_be_bytes()), msg.contents.short_channel_id, msg.contents.flags & 1);
-			println!("No HTLC maximum msat: {}", update_hex);
-			return Err(LightningError {
-				err: "HTLC maximum msat must always be set.".to_string(),
-				action: ErrorAction::IgnoreError
-			});
-		}
 		let timestamp_seen = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-		let result = self.native_router.handle_channel_update(msg);
-		if result.is_ok() {
-			let mut counter = self.counter.write().unwrap();
-			counter.channel_updates += 1;
-			let gossip_message = GossipMessage::ChannelUpdate(msg.clone());
-			let detected_gossip_message = DetectedGossipMessage {
-				message: gossip_message,
-				timestamp_seen: timestamp_seen as u32,
-			};
-			let sender = self.sender.clone();
-			tokio::spawn(async move {
-				let _ = sender.send(detected_gossip_message).await;
-			});
-		}
-		result
+		let output_value = self.native_router.handle_channel_update(msg)?;
+
+		let mut counter = self.counter.write().unwrap();
+		counter.channel_updates += 1;
+		let gossip_message = GossipMessage::ChannelUpdate(msg.clone());
+		let detected_gossip_message = DetectedGossipMessage {
+			message: gossip_message,
+			timestamp_seen: timestamp_seen as u32,
+		};
+		let sender = self.sender.clone();
+		tokio::spawn(async move {
+			let _ = sender.send(detected_gossip_message).await;
+		});
+
+		Ok(output_value)
 	}
 
 	fn get_next_channel_announcements(&self, starting_point: u64, batch_amount: u8) -> Vec<(ChannelAnnouncement, Option<ChannelUpdate>, Option<ChannelUpdate>)> {

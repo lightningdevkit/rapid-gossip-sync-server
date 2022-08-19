@@ -1,10 +1,11 @@
 use std::sync::Arc;
-use lightning::chain;
 use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate};
 use lightning::util::logger::{Logger, Record};
+use crate::verifier::ChainVerifier;
 
-
-pub(crate) type GossipChainAccess = Arc<dyn chain::Access + Send + Sync>;
+// use lightning::chain;
+pub(crate) type GossipChainAccess = Arc<ChainVerifier>;
+// pub(crate) type GossipChainAccess = Arc<dyn chain::Access + Send + Sync>;
 
 pub(crate) enum GossipMessage {
     ChannelAnnouncement(ChannelAnnouncement),

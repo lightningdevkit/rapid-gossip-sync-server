@@ -13,6 +13,7 @@ use tokio::sync::mpsc;
 use crate::{config, TestLogger};
 use crate::downloader::{GossipCounter, GossipRouter};
 use crate::types::{DetectedGossipMessage, GossipChainAccess, GossipMessage};
+use crate::verifier::ChainVerifier;
 
 pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGossipMessage>, network_graph: Arc<NetworkGraph<Arc<TestLogger>>>) {
 	let mut key = [0; 32];
@@ -21,7 +22,8 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 	thread_rng().fill_bytes(&mut random_data);
 	let our_node_secret = SecretKey::from_slice(&key).unwrap();
 
-	let arc_chain_access = None::<GossipChainAccess>;
+	let _arc_chain_access = None::<GossipChainAccess>;
+	let arc_chain_access = Some(Arc::new(ChainVerifier::new()));
 	let ignorer = IgnoringMessageHandler {};
 	let arc_ignorer = Arc::new(ignorer);
 
@@ -100,16 +102,15 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 					latest_new_gossip_time = Instant::now();
 				}
 
-				// println!("Reached point C");
-
 				// if we either aren't caught up, or just stopped/started being caught up
 				if !is_caught_up_with_gossip || (is_caught_up_with_gossip != was_previously_caught_up_with_gossip) {
 					println!(
-						"gossip count (iteration {}): {} (delta: {}):\n\tannouncements: {}\n\tupdates: {}\n\t\tno HTLC max: {}\n",
+						"gossip count (iteration {}): {} (delta: {}):\n\tannouncements: {}\n\t\tmismatched scripts: {}\n\tupdates: {}\n\t\tno HTLC max: {}\n",
 						i,
 						total_message_count,
 						new_message_count,
 						counter.channel_announcements,
+						counter.channel_announcements_with_mismatched_scripts,
 						counter.channel_updates,
 						counter.channel_updates_without_htlc_max_msats
 					);

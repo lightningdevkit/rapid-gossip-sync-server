@@ -113,8 +113,7 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 		*full_update_histograms.htlc_minimum_msat.entry(full_update.htlc_minimum_msat).or_insert(0) += 1;
 		*full_update_histograms.fee_base_msat.entry(full_update.fee_base_msat).or_insert(0) += 1;
 		*full_update_histograms.fee_proportional_millionths.entry(full_update.fee_proportional_millionths).or_insert(0) += 1;
-		let htlc_maximum_msat_key = optional_htlc_maximum_to_u64(&full_update.htlc_maximum_msat);
-		*full_update_histograms.htlc_maximum_msat.entry(htlc_maximum_msat_key).or_insert(0) += 1;
+		*full_update_histograms.htlc_maximum_msat.entry(full_update.htlc_maximum_msat).or_insert(0) += 1;
 	};
 
 	// delta_set.into_iter().is_sorted_by_key()
@@ -233,10 +232,6 @@ pub(super) fn serialize_stripped_channel_update(update: &UpdateSerialization, de
 		panic!("unsorted scids!");
 	}
 
-	if let OptionalField::Absent = latest_update.htlc_maximum_msat {
-		panic!("HTLC maximum msat must always be set going forward!")
-	}
-
 	let mut delta_serialization = Vec::new();
 	let mut prefixed_serialization = Vec::new();
 
@@ -270,10 +265,9 @@ pub(super) fn serialize_stripped_channel_update(update: &UpdateSerialization, de
 				latest_update.fee_proportional_millionths.write(&mut delta_serialization).unwrap();
 			}
 
-			let latest_update_htlc_maximum = optional_htlc_maximum_to_u64(&latest_update.htlc_maximum_msat);
-			if latest_update_htlc_maximum != default_values.htlc_maximum_msat {
+			if latest_update.htlc_maximum_msat != default_values.htlc_maximum_msat {
 				serialized_flags |= 0b_0000_0100;
-				latest_update_htlc_maximum.write(&mut delta_serialization).unwrap();
+				latest_update.htlc_maximum_msat.write(&mut delta_serialization).unwrap();
 			}
 		}
 
@@ -303,9 +297,7 @@ pub(super) fn serialize_stripped_channel_update(update: &UpdateSerialization, de
 
 			if mutated_properties.htlc_maximum_msat {
 				serialized_flags |= 0b_0000_0100;
-
-				let new_htlc_maximum = optional_htlc_maximum_to_u64(&latest_update.htlc_maximum_msat);
-				new_htlc_maximum.write(&mut delta_serialization).unwrap();
+				latest_update.htlc_maximum_msat.write(&mut delta_serialization).unwrap();
 			}
 		}
 	}

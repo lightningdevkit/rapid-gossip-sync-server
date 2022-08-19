@@ -1,7 +1,6 @@
 use std::fs::OpenOptions;
 use std::sync::Arc;
 use std::time::Instant;
-use lightning::ln::msgs::OptionalField;
 use lightning::routing::gossip::NetworkGraph;
 use lightning::util::ser::Writeable;
 use tokio::sync::mpsc;
@@ -191,10 +190,7 @@ impl GossipPersister {
 					let fee_base_msat = update.contents.fee_base_msat as i32;
 					let fee_proportional_millionths =
 						update.contents.fee_proportional_millionths as i32;
-					let htlc_maximum_msat = match update.contents.htlc_maximum_msat {
-						OptionalField::Present(maximum) => Some(maximum as i64),
-						OptionalField::Absent => None,
-					};
+					let htlc_maximum_msat = update.contents.htlc_maximum_msat as i64;
 
 					// start with the type prefix, which is already known a priori
 					let mut update_signed = Vec::new(); // vec![1, 2];

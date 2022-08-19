@@ -7,6 +7,8 @@
 #![deny(unused_variables)]
 #![deny(unused_imports)]
 
+extern crate core;
+
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::sync::Arc;
@@ -34,6 +36,7 @@ mod serialization;
 mod snapshot;
 mod config;
 mod hex_utils;
+mod verifier;
 
 pub struct RapidSyncProcessor {
 	network_graph: Arc<NetworkGraph<Arc<TestLogger>>>,

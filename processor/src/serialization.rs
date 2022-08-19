@@ -2,7 +2,7 @@ use std::cmp::max;
 use std::collections::HashMap;
 
 use bitcoin::BlockHash;
-use lightning::ln::msgs::{OptionalField, UnsignedChannelAnnouncement, UnsignedChannelUpdate};
+use lightning::ln::msgs::{UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::util::ser::{BigSize, Writeable};
 use crate::config;
 
@@ -320,15 +320,4 @@ pub(super) fn find_most_common_histogram_entry_with_default<T: Copy>(histogram: 
 	// the default should pretty much always be a 0 as T
 	// though for htlc maximum msat it could be a u64::max
 	default
-}
-
-pub(super) fn optional_htlc_maximum_to_u64(htlc_maximum_msat: &OptionalField<u64>) -> u64 {
-	if let OptionalField::Present(maximum) = htlc_maximum_msat {
-		maximum.clone()
-	} else {
-		if config::REQUIRE_HTLC_MAX {
-			panic!("HTLC maximum msat must always be set going forward!");
-		}
-		u64::MAX
-	}
 }

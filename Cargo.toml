@@ -1,5 +1,4 @@
 [workspace]
-name = "rapid-gossip-sync-server"
 members = [
     "processor",
     "server"

@@ -8,7 +8,6 @@ use crate::hex_utils;
 pub(crate) const DOWNLOAD_NEW_GOSSIP: bool = true;
 pub(crate) const GENERATE_SNAPSHOTS: bool = true;
 pub(crate) const SIMULATE_NAIVE_SERIALIZATION: bool = false;
-pub(crate) const REQUIRE_HTLC_MAX: bool = true;
 
 pub(crate) fn network_graph_cache_path() -> &'static str {
 	"./res/network_graph.bin"
@@ -92,9 +91,9 @@ pub(crate) fn ln_peers() -> Vec<(PublicKey, SocketAddr)> {
 		// (hex_utils::to_compressed_pubkey("033d8656219478701227199cbd6f670335c8d408a92ae88b962c49d4dc0e83e025").unwrap(), "34.65.85.39:9735".parse().unwrap()),
 
 		// Matt Corallo
-		(hex_utils::to_compressed_pubkey("03db10aa09ff04d3568b0621750794063df401e6853c79a21a83e1a3f3b5bfb0c8").unwrap(), "69.59.18.80:9735".parse().unwrap())
+		// (hex_utils::to_compressed_pubkey("03db10aa09ff04d3568b0621750794063df401e6853c79a21a83e1a3f3b5bfb0c8").unwrap(), "69.59.18.80:9735".parse().unwrap())
 
 		// River Financial
-		// (hex_utils::to_compressed_pubkey("03037dc08e9ac63b82581f79b662a4d0ceca8a8ca162b1af3551595b8f2d97b70a").unwrap(), "104.196.249.140:1735".parse().unwrap())
+		(hex_utils::to_compressed_pubkey("03037dc08e9ac63b82581f79b662a4d0ceca8a8ca162b1af3551595b8f2d97b70a").unwrap(), "104.196.249.140:1735".parse().unwrap())
 	]
 }

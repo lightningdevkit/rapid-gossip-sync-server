@@ -1,4 +1,5 @@
 use std::fs::OpenOptions;
+use std::io::BufWriter;
 use std::sync::Arc;
 use std::time::Instant;
 use lightning::routing::gossip::NetworkGraph;
@@ -118,15 +119,15 @@ impl GossipPersister {
 						latest_graph_cache_time = Some(Instant::now());
 						println!("Caching network graph…");
 						let cache_path = config::network_graph_cache_path();
-						let mut file = OpenOptions::new()
+						let file = OpenOptions::new()
 							.create(true)
 							.write(true)
 							.truncate(true)
 							.open(&cache_path)
 							.unwrap();
 						self.network_graph.remove_stale_channels();
-						// println!("Reached point V");
-						self.network_graph.write(&mut file).unwrap();
+						let mut writer = BufWriter::new(file);
+						self.network_graph.write(&mut writer).unwrap();
 						println!("Cached network graph!");
 					}
 				}

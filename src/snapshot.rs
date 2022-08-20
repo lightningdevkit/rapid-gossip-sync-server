@@ -1,6 +1,5 @@
 use std::fs;
 use std::os::unix::fs::symlink;
-use std::slice::range;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

@@ -12,6 +12,7 @@ extern crate core;
 
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
+use std::io::BufReader;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -58,9 +59,10 @@ impl RapidSyncProcessor {
 		let logger = TestLogger::new();
 		let mut initial_sync_complete = false;
 		let arc_logger = Arc::new(logger);
-		let network_graph = if let Ok(mut file) = File::open(&config::network_graph_cache_path()) {
+		let network_graph = if let Ok(file) = File::open(&config::network_graph_cache_path()) {
 			println!("Initializing from cached network graph…");
-			let network_graph_result = NetworkGraph::read(&mut file, Arc::clone(&arc_logger));
+			let mut buffered_reader = BufReader::new(file);
+			let network_graph_result = NetworkGraph::read(&mut buffered_reader, Arc::clone(&arc_logger));
 			if let Ok(network_graph) = network_graph_result {
 				initial_sync_complete = true;
 				network_graph.remove_stale_channels();
@@ -94,12 +96,14 @@ impl RapidSyncProcessor {
 			let mut persister = GossipPersister::new(sync_completion_sender, self.network_graph.clone());
 
 			let persistence_sender = persister.gossip_persistence_sender.clone();
+			println!("Starting gossip download");
 			let download_future = tracking::download_gossip(persistence_sender, network_graph.clone());
-			let _download_thread = tokio::spawn(async move {
+			tokio::spawn(async move {
 				// initiate the whole download stuff in the background
 				download_future.await;
 			});
-			let _persistence_thread = tokio::spawn(async move {
+			println!("Starting gossip db persistence listener");
+			tokio::spawn(async move {
 				// initiate persistence of the gossip data
 				let persistence_future = persister.persist_gossip();
 				persistence_future.await;

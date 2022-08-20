@@ -108,7 +108,6 @@ impl GossipPersister {
 				}
 			} else {
 				// initialize graph cache timer
-				self.persist_network_graph();
 				latest_graph_cache_time = Some(Instant::now());
 			}
 

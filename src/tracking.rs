@@ -83,6 +83,8 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 				panic!("Failed to connect to any peer.");
 			}
 
+			println!("Connected to {} Lightning peers!", connected_peer_count);
+
 			let local_router = arc_wrapped_router.clone();
 			let local_persistence_sender = persistence_sender.clone();
 			let tracking_process = tokio::spawn(async move {

@@ -50,6 +50,17 @@ impl GossipPersister {
 			}
 
 			let initialization = client
+				.execute(
+					// TODO: figure out a way to fix the id value without Postgres complaining about
+					// its value not being default
+					"INSERT INTO config (db_schema) VALUES ($1) ON CONFLICT (id) DO NOTHING",
+					&[&config::SCHEMA_VERSION]
+				).await;
+			if let Err(initialization_error) = initialization {
+				eprintln!("db init error: {}", initialization_error);
+			}
+
+			let initialization = client
 				.execute(config::db_announcement_table_creation_query(), &[])
 				.await;
 			if let Err(initialization_error) = initialization {
@@ -89,6 +100,18 @@ impl GossipPersister {
 				println!("Persisting gossip message #{}", i);
 			}
 
+			if let Some(last_cache_time) = latest_graph_cache_time {
+				// has it been ten minutes? Just cache it
+				if last_cache_time.elapsed().as_secs() >= 600 {
+					self.persist_network_graph();
+					latest_graph_cache_time = Some(Instant::now());
+				}
+			} else {
+				// initialize graph cache timer
+				self.persist_network_graph();
+				latest_graph_cache_time = Some(Instant::now());
+			}
+
 			let timestamp_seen = detected_gossip_message.timestamp_seen;
 			match &detected_gossip_message.message {
 				GossipMessage::InitialSyncComplete => {
@@ -110,25 +133,14 @@ impl GossipPersister {
 					let mut too_soon = false;
 					if let Some(latest_graph_cache_time) = latest_graph_cache_time {
 						let time_since_last_cached = latest_graph_cache_time.elapsed().as_secs();
-						// don't cache more frequently than every 10 minutes
-						too_soon = time_since_last_cached < 600;
+						// don't cache more frequently than every 2 minutes
+						too_soon = time_since_last_cached < 120;
 					}
 					if too_soon {
 						println!("Network graph has been cached too recently.");
 					}else {
 						latest_graph_cache_time = Some(Instant::now());
-						println!("Caching network graph…");
-						let cache_path = config::network_graph_cache_path();
-						let file = OpenOptions::new()
-							.create(true)
-							.write(true)
-							.truncate(true)
-							.open(&cache_path)
-							.unwrap();
-						self.network_graph.remove_stale_channels();
-						let mut writer = BufWriter::new(file);
-						self.network_graph.write(&mut writer).unwrap();
-						println!("Cached network graph!");
+						self.persist_network_graph();
 					}
 				}
 				GossipMessage::ChannelAnnouncement(announcement) => {
@@ -230,5 +242,20 @@ impl GossipPersister {
 				}
 			}
 		}
+	}
+
+	fn persist_network_graph(&self) {
+		println!("Caching network graph…");
+		let cache_path = config::network_graph_cache_path();
+		let file = OpenOptions::new()
+			.create(true)
+			.write(true)
+			.truncate(true)
+			.open(&cache_path)
+			.unwrap();
+		self.network_graph.remove_stale_channels();
+		let mut writer = BufWriter::new(file);
+		self.network_graph.write(&mut writer).unwrap();
+		println!("Cached network graph!");
 	}
 }

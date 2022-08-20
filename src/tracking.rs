@@ -1,5 +1,4 @@
 use std::sync::{Arc, RwLock};
-use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use bitcoin::hashes::hex::ToHex;
 
@@ -161,7 +160,8 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 				}
 			});
 			// sleep for twelve hours; then reconnect to peers and restart the download
-			thread::sleep(Duration::from_secs(config::SNAPSHOT_CALCULATION_INTERVAL as u64 / 2));
+			let sleep = tokio::time::sleep(Duration::from_secs(config::SNAPSHOT_CALCULATION_INTERVAL as u64 / 2));
+			sleep.await;
 			tracking_process.abort();
 		}
 	});

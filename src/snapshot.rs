@@ -1,9 +1,12 @@
 use std::fs;
+use std::os::unix::fs::symlink;
+use std::slice::range;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lightning::routing::gossip::NetworkGraph;
-use crate::TestLogger;
+
+use crate::{config, TestLogger};
 
 pub(crate) struct Snapshotter {
 	network_graph: Arc<NetworkGraph<Arc<TestLogger>>>,
@@ -17,8 +20,13 @@ impl Snapshotter {
 	pub(crate) async fn snapshot_gossip(&self) {
 		println!("Initiating snapshotting service");
 
-		let round_day_seconds: u64 = 24 * 3600; // 24 hours
 		let snapshot_sync_day_factors = [1, 2, 3, 4, 5, 6, 7, 14, 21, u64::MAX];
+		let round_day_seconds = config::SNAPSHOT_CALCULATION_INTERVAL as u64;
+
+		let snapshot_directory = "./res/snapshots";
+		let symlink_directory = "./res/symlinks";
+		fs::create_dir_all(&snapshot_directory).expect("Failed to create snapshot directory");
+		fs::create_dir_all(&symlink_directory).expect("Failed to create symlink directory");
 
 		// this is gonna be a never-ending background job
 		loop {
@@ -50,19 +58,44 @@ impl Snapshotter {
 				snapshot_sync_timestamps.push((factor.clone(), timestamp));
 			};
 
-			for (days, current_sync_timestamp) in &snapshot_sync_timestamps {
+			for (days, current_last_sync_timestamp) in &snapshot_sync_timestamps {
 				let network_graph_clone = self.network_graph.clone();
 				{
 					println!("Calculating {}-day snapshot", days);
 					// calculate the snapshot
-					let snapshot = super::serialize_delta(network_graph_clone, current_sync_timestamp.clone() as u32, true).await;
+					let snapshot = super::serialize_delta(network_graph_clone, current_last_sync_timestamp.clone() as u32, true).await;
 
-					// persist the snapshot
-					let snapshot_directory = "./res/snapshots";
-					let snapshot_filename = format!("snapshot-after_{}-days_{}-calculated_{}.lngossip", current_sync_timestamp, days, filename_timestamp);
+					// persist the snapshot and update the symlink
+					let snapshot_filename = format!("snapshot__calculated-at:{}__range:{}-days__previous-sync:{}.lngossip", filename_timestamp, days, current_last_sync_timestamp);
 					let snapshot_path = format!("{}/{}", snapshot_directory, snapshot_filename);
 					println!("Persisting {}-day snapshot: {} ({} messages, {} announcements, {} updates ({} full, {} incremental))", days, snapshot_filename, snapshot.message_count, snapshot.announcement_count, snapshot.update_count, snapshot.update_count_full, snapshot.update_count_incremental);
 					fs::write(&snapshot_path, snapshot.data).unwrap();
+					// with the file persister, a canonical snapshot path can be determined
+					let canonical_snapshot_path = fs::canonicalize(&snapshot_path).unwrap();
+
+					// symlinks require intermediate days to also be filled
+					// for most days, the only delta is 0
+					let mut symlink_gap_days = vec![0];
+					if [14, 21].contains(days) {
+						symlink_gap_days.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
+					}
+					for current_day_gap in symlink_gap_days {
+						println!("Creating symlink for {}-day-delta with {}-day gap (or emulated {}-day-delta)", days, current_day_gap, days - current_day_gap);
+						let canonical_last_sync_timestamp = Self::round_down_to_nearest_multiple(current_last_sync_timestamp.clone(), round_day_seconds).saturating_sub(round_day_seconds * current_day_gap);
+						let symlink_path = format!("{}/{}.bin", symlink_directory, canonical_last_sync_timestamp);
+
+						if let Ok(canonical_symlink_path) = fs::canonicalize(&symlink_path) {
+							// symlink exists
+							if let Ok(previous_snapshot_path) = fs::read_link(&symlink_path) {
+								println!("Removing symlinked file: {:?}", previous_snapshot_path);
+								fs::remove_file(previous_snapshot_path).expect("Failed to remove symlinked file.");
+							}
+							println!("Removing symlink: {:?}", canonical_symlink_path);
+							fs::remove_file(&symlink_path).unwrap();
+						}
+						println!("Recreating symlink: {} -> {}", symlink_path, snapshot_path);
+						symlink(&canonical_snapshot_path, &symlink_path).unwrap();
+					}
 
 					// remove the old snapshots for the given time interval
 					let other_snapshots = fs::read_dir(snapshot_directory).unwrap();
@@ -83,8 +116,8 @@ impl Snapshotter {
 							continue;
 						}
 						let file_name = file_name_result.unwrap();
-						let substring = format!("-days_{}-", days);
-						if file_name.starts_with("snapshot-after") && file_name.contains(&substring) && file_name != snapshot_filename {
+						let substring = format!("range:{}-days", days);
+						if file_name.starts_with("snapshot__") && file_name.contains(&substring) && file_name != snapshot_filename {
 							println!("Removing expired {}-day snapshot: {}", days, file_name);
 							fs::remove_file(entry.path()).unwrap();
 						}

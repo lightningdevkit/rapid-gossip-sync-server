@@ -19,7 +19,7 @@ use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::Network;
 use bitcoin::secp256k1::PublicKey;
 use lightning::routing::gossip::NetworkGraph;
-use lightning::util::ser::{ReadableArgs, Writeable, Writer};
+use lightning::util::ser::{ReadableArgs, Writeable};
 use tokio::sync::mpsc;
 use crate::lookup::DeltaSet;
 
@@ -45,8 +45,7 @@ pub struct RapidSyncProcessor {
 }
 
 pub struct SerializedResponse {
-	pub uncompressed: Vec<u8>,
-	pub compressed: Option<Vec<u8>>,
+	pub data: Vec<u8>,
 	pub message_count: u32,
 	pub announcement_count: u32,
 	pub update_count: u32,
@@ -115,19 +114,17 @@ impl RapidSyncProcessor {
 			initial_sync_complete.store(true, Ordering::Release);
 			println!("Initial sync complete!");
 
-			if config::GENERATE_SNAPSHOTS {
-				// start the gossip snapshotting service
-				snapshotter.snapshot_gossip().await;
-			}
+			// start the gossip snapshotting service
+			snapshotter.snapshot_gossip().await;
 		}
 	}
 
-	pub async fn serialize_delta(&self, last_sync_timestamp: u32, consider_intermediate_updates: bool, gzip_response: bool) -> SerializedResponse {
-		crate::serialize_delta(self.network_graph.clone(), last_sync_timestamp, consider_intermediate_updates, gzip_response).await
+	pub async fn serialize_delta(&self, last_sync_timestamp: u32, consider_intermediate_updates: bool) -> SerializedResponse {
+		crate::serialize_delta(self.network_graph.clone(), last_sync_timestamp, consider_intermediate_updates).await
 	}
 }
 
-async fn serialize_delta(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, last_sync_timestamp: u32, consider_intermediate_updates: bool, gzip_response: bool) -> SerializedResponse {
+async fn serialize_delta(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, last_sync_timestamp: u32, consider_intermediate_updates: bool) -> SerializedResponse {
 	let (client, connection) = lookup::connect_to_db().await;
 
 	tokio::spawn(async move {
@@ -219,36 +216,25 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, last
 
 	let mut prefixed_output = vec![76, 68, 75, 1];
 
-	if !config::SIMULATE_NAIVE_SERIALIZATION {
-		// always write the chain hash
-		serialization_details.chain_hash.write(&mut prefixed_output).unwrap();
-		// always write the latest seen timestamp
-		serialization_details.latest_seen.write(&mut prefixed_output).unwrap();
+	// always write the chain hash
+	serialization_details.chain_hash.write(&mut prefixed_output).unwrap();
+	// always write the latest seen timestamp
+	serialization_details.latest_seen.write(&mut prefixed_output).unwrap();
 
-		let node_id_count = node_ids.len() as u32;
-		node_id_count.write(&mut prefixed_output).unwrap();
+	let node_id_count = node_ids.len() as u32;
+	node_id_count.write(&mut prefixed_output).unwrap();
 
-		for current_node_id in node_ids {
-			current_node_id.write(&mut prefixed_output).unwrap();
-		}
+	for current_node_id in node_ids {
+		current_node_id.write(&mut prefixed_output).unwrap();
 	}
 
 	prefixed_output.append(&mut output);
-
-	let mut compressed_output = None;
-	if gzip_response {
-		let mut compressor = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-		compressor.write_all(&prefixed_output).unwrap();
-		let compressed_response = compressor.finish().unwrap();
-		compressed_output = Some(compressed_response);
-	}
 
 	println!("duplicated node ids: {}", duplicate_node_ids);
 	println!("latest seen timestamp: {:?}", serialization_details.latest_seen);
 
 	SerializedResponse {
-		uncompressed: prefixed_output,
-		compressed: compressed_output,
+		data: prefixed_output,
 		message_count,
 		announcement_count,
 		update_count,

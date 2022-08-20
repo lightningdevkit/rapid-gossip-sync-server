@@ -6,8 +6,6 @@ use tokio_postgres::Config;
 use crate::hex_utils;
 
 pub(crate) const DOWNLOAD_NEW_GOSSIP: bool = true;
-pub(crate) const GENERATE_SNAPSHOTS: bool = true;
-pub(crate) const SIMULATE_NAIVE_SERIALIZATION: bool = false;
 
 pub(crate) fn network_graph_cache_path() -> &'static str {
 	"./res/network_graph.bin"

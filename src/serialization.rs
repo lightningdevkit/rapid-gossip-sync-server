@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use bitcoin::BlockHash;
 use lightning::ln::msgs::{UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::util::ser::{BigSize, Writeable};
-use crate::config;
 
 use crate::lookup::{DeltaSet, DirectedUpdateDelta};
 
@@ -199,14 +198,6 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 pub fn serialize_stripped_channel_announcement(announcement: &UnsignedChannelAnnouncement, node_id_a_index: usize, node_id_b_index: usize, previous_scid: u64) -> Vec<u8> {
 	let mut stripped_announcement = vec![];
 
-	if config::SIMULATE_NAIVE_SERIALIZATION {
-		// prepend 4 signatures of 65 bytes each
-		let prefix = [0u8; 65 * 4];
-		stripped_announcement.extend_from_slice(&prefix);
-		announcement.write(&mut stripped_announcement).unwrap();
-		return stripped_announcement;
-	}
-
 	announcement.features.write(&mut stripped_announcement).unwrap();
 
 	if previous_scid > announcement.short_channel_id {
@@ -233,14 +224,6 @@ pub(super) fn serialize_stripped_channel_update(update: &UpdateSerialization, de
 
 	let mut delta_serialization = Vec::new();
 	let mut prefixed_serialization = Vec::new();
-
-	if config::SIMULATE_NAIVE_SERIALIZATION {
-		// prepend 1 signatures of 65 bytes
-		let prefix = [0u8; 65 * 1];
-		prefixed_serialization.extend_from_slice(&prefix);
-		latest_update.write(&mut prefixed_serialization).unwrap();
-		return prefixed_serialization;
-	}
 
 	match &update.mechanism {
 		UpdateSerializationMechanism::Full => {

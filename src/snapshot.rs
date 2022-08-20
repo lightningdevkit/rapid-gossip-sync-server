@@ -55,16 +55,14 @@ impl Snapshotter {
 				{
 					println!("Calculating {}-day snapshot", days);
 					// calculate the snapshot
-					let snapshot = super::serialize_delta(network_graph_clone, current_sync_timestamp.clone() as u32, true, true).await;
+					let snapshot = super::serialize_delta(network_graph_clone, current_sync_timestamp.clone() as u32, true).await;
 
 					// persist the snapshot
 					let snapshot_directory = "./res/snapshots";
 					let snapshot_filename = format!("snapshot-after_{}-days_{}-calculated_{}.lngossip", current_sync_timestamp, days, filename_timestamp);
 					let snapshot_path = format!("{}/{}", snapshot_directory, snapshot_filename);
 					println!("Persisting {}-day snapshot: {} ({} messages, {} announcements, {} updates ({} full, {} incremental))", days, snapshot_filename, snapshot.message_count, snapshot.announcement_count, snapshot.update_count, snapshot.update_count_full, snapshot.update_count_incremental);
-
-					// TODO: start writing the compressed snapshot again!
-					fs::write(&snapshot_path, snapshot.compressed.unwrap()).unwrap();
+					fs::write(&snapshot_path, snapshot.data).unwrap();
 
 					// remove the old snapshots for the given time interval
 					let other_snapshots = fs::read_dir(snapshot_directory).unwrap();

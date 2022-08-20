@@ -1,11 +1,9 @@
-use std::collections::HashMap;
 use std::convert::TryInto;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use bitcoin::{BlockHash, TxOut};
 use bitcoin::blockdata::block::Block;
 use bitcoin::hashes::Hash;
-use bitcoin::hashes::hex::ToHex;
 use futures::executor;
 use lightning::chain;
 use lightning::chain::AccessError;
@@ -17,7 +15,6 @@ use crate::config;
 
 pub(crate) struct ChainVerifier {
 	rest_client: Arc<RestClient>,
-	block_cache: RwLock<HashMap<u32, Block>>,
 }
 
 struct RestBinaryResponse(Vec<u8>);
@@ -27,24 +24,12 @@ impl ChainVerifier {
 		let rest_client = RestClient::new(config::bitcoin_rest_endpoint()).unwrap();
 		ChainVerifier {
 			rest_client: Arc::new(rest_client),
-			block_cache: RwLock::new(HashMap::new()),
 		}
 	}
 
 	fn retrieve_block(&self, block_height: u32) -> Result<Block, AccessError> {
-		{
-			// todo: measure how much block retrieval slows down gossip sync when using a local
-			// REST endpoint, and determine if caching is worth the massive space usage, or if there
-			// exists a smart heuristic of cache invalidation
-			let cache = self.block_cache.read().unwrap();
-			if cache.contains_key(&block_height) {
-				return Ok(cache.get(&block_height).unwrap().clone());
-			}
-			// if the key is absent, the cache must be dropped so the write lock can be obtained
-		}
-
 		let rest_client = self.rest_client.clone();
-		let block = executor::block_on(async move {
+		executor::block_on(async move {
 			let block_hash_result = rest_client.request_resource::<BinaryResponse, RestBinaryResponse>(&format!("blockhashbyheight/{}.bin", block_height)).await;
 			let block_hash: Vec<u8> = block_hash_result.map_err(|error| {
 				eprintln!("Could't find block hash at height {}: {}", block_height, error.to_string());
@@ -52,18 +37,13 @@ impl ChainVerifier {
 			})?.0;
 			let block_hash = BlockHash::from_slice(&block_hash).unwrap();
 
-			println!("Fetching block {} ({})", block_height, block_hash.to_hex());
 			let block_result = rest_client.get_block(&block_hash).await;
 			let block = block_result.map_err(|error| {
 				eprintln!("Couldn't retrieve block {}: {:?} ({})", block_height, error, block_hash);
 				AccessError::UnknownChain
 			})?;
 			Ok(block)
-		})?;
-
-		let mut mutable_cache = self.block_cache.write().unwrap();
-		mutable_cache.insert(block_height, block.clone());
-		Ok(block)
+		})
 	}
 }
 

@@ -1,3 +1,13 @@
+#![deny(unsafe_code)]
+#![deny(broken_intra_doc_links)]
+#![deny(private_intra_doc_links)]
+#![deny(non_upper_case_globals)]
+#![deny(non_camel_case_types)]
+#![deny(non_snake_case)]
+#![deny(unused_mut)]
+#![deny(unused_variables)]
+#![deny(unused_imports)]
+
 use std::convert::Infallible;
 use std::fs;
 use std::path::PathBuf;
@@ -28,21 +38,17 @@ struct RapidSyncServer {
 
 impl RapidSyncServer {
 	pub(crate) async fn start_gossip_server(self) {
-		// let network_graph_clone = self.network_graph.clone();
 		let arc_processor = self.processor.unwrap();
 		let dynamic_gossip_route = warp::path!("dynamic" / u32).and_then(move |timestamp| {
 			let processor = Arc::clone(&arc_processor);
 			serve_dynamic(processor, timestamp)
 		});
 
-		// let network_graph_clone = self.network_graph.clone();
 		let snapshotted_gossip_route = warp::path!("snapshot" / u32).and_then(move |timestamp| {
-			// let network_graph = Arc::clone(&network_graph_clone);
 			serve_snapshot(timestamp)
 		});
 
 		let routes = warp::get().and(snapshotted_gossip_route.or(dynamic_gossip_route));
-		// let routes = warp::get().and(snapshotted_gossip_route);
 		warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 	}
 }
@@ -52,7 +58,6 @@ async fn serve_snapshot(last_sync_timestamp: u32) -> Result<impl warp::Reply, In
 	let snapshot_directory = "./res/snapshots";
 	struct SnapshotDescriptor {
 		after: u64,
-		days: u64,
 		calculated: u64,
 		path: PathBuf,
 	}
@@ -99,7 +104,6 @@ async fn serve_snapshot(last_sync_timestamp: u32) -> Result<impl warp::Reply, In
 
 		let descriptor = SnapshotDescriptor {
 			after: components[0],
-			days: components[1],
 			calculated: components[2],
 			path: entry.path(),
 		};

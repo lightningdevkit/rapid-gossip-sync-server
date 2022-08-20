@@ -1,5 +1,6 @@
 #![deny(unsafe_code)]
 #![deny(broken_intra_doc_links)]
+#![deny(private_intra_doc_links)]
 #![deny(non_upper_case_globals)]
 #![deny(non_camel_case_types)]
 #![deny(non_snake_case)]

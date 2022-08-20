@@ -116,7 +116,6 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 		*full_update_histograms.htlc_maximum_msat.entry(full_update.htlc_maximum_msat).or_insert(0) += 1;
 	};
 
-	// delta_set.into_iter().is_sorted_by_key()
 	for (_scid, channel_delta) in delta_set.into_iter() {
 
 		// any announcement chain hash is gonna be the same value. Just set it from the first one.

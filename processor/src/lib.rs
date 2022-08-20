@@ -109,7 +109,6 @@ impl RapidSyncProcessor {
 			sync_completion_sender.send(()).await.unwrap();
 		}
 
-		// tokio::spawn(async move {
 		{
 			sync_completion_receiver.recv().await;
 			initial_sync_complete.store(true, Ordering::Release);
@@ -120,22 +119,11 @@ impl RapidSyncProcessor {
 				snapshotter.snapshot_gossip().await;
 			}
 		}
-		// });
-
-		// let mut sync_termination_receiver = self.sync_termination_receiver.borrow_mut();
-		// sync_termination_receiver.recv().await;
-		// download_thread.abort();
-		// persistence_thread.await.unwrap();
 	}
 
 	pub async fn serialize_delta(&self, last_sync_timestamp: u32, consider_intermediate_updates: bool, gzip_response: bool) -> SerializedResponse {
 		crate::serialize_delta(self.network_graph.clone(), last_sync_timestamp, consider_intermediate_updates, gzip_response).await
 	}
-
-	// pub fn stop_sync(&self) {
-	// 	self.sync_termination_sender.send(());
-	// 	abort();
-	// }
 }
 
 async fn serialize_delta(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, last_sync_timestamp: u32, consider_intermediate_updates: bool, gzip_response: bool) -> SerializedResponse {
@@ -225,7 +213,7 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, last
 		previous_update_scid = current_update.update.short_channel_id;
 	}
 
-	// some statis
+	// some stats
 	let message_count = announcement_count + update_count;
 
 	let mut prefixed_output = vec![76, 68, 75, 1];

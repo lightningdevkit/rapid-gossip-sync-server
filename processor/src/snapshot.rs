@@ -52,7 +52,6 @@ impl Snapshotter {
 
 			for (days, current_sync_timestamp) in &snapshot_sync_timestamps {
 				let network_graph_clone = self.network_graph.clone();
-				// tokio::spawn(async move {
 				{
 					println!("Calculating {}-day snapshot", days);
 					// calculate the snapshot
@@ -65,7 +64,6 @@ impl Snapshotter {
 					println!("Persisting {}-day snapshot: {} ({} messages, {} announcements, {} updates ({} full, {} incremental))", days, snapshot_filename, snapshot.message_count, snapshot.announcement_count, snapshot.update_count, snapshot.update_count_full, snapshot.update_count_incremental);
 
 					// TODO: start writing the compressed snapshot again!
-					// fs::write(&snapshot_path, snapshot.uncompressed).unwrap();
 					fs::write(&snapshot_path, snapshot.compressed.unwrap()).unwrap();
 
 					// remove the old snapshots for the given time interval
@@ -93,7 +91,6 @@ impl Snapshotter {
 							fs::remove_file(entry.path()).unwrap();
 						}
 					}
-				// });
 				}
 			}
 

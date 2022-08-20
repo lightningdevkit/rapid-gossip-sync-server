@@ -3,9 +3,7 @@ use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate};
 use lightning::util::logger::{Logger, Record};
 use crate::verifier::ChainVerifier;
 
-// use lightning::chain;
 pub(crate) type GossipChainAccess = Arc<ChainVerifier>;
-// pub(crate) type GossipChainAccess = Arc<dyn chain::Access + Send + Sync>;
 
 pub(crate) enum GossipMessage {
     ChannelAnnouncement(ChannelAnnouncement),
@@ -25,7 +23,8 @@ impl TestLogger {
 	}
 }
 impl Logger for TestLogger {
-	fn log(&self, _record: &Record) {
-		// println!("{:<5} [{} : {}, {}] {}", record.level.to_string(), record.module_path, record.file, record.line, record.args);
+	fn log(&self, record: &Record) {
+		// TODO: allow log level threshold to be set
+		println!("{:<5} [{} : {}, {}] {}", record.level.to_string(), record.module_path, record.file, record.line, record.args);
 	}
 }

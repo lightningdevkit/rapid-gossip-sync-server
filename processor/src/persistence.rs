@@ -29,21 +29,15 @@ impl GossipPersister {
 	}
 
 	pub(crate) async fn persist_gossip(&mut self) {
-		// println!("Reached point K");
 		let connection_config = config::db_connection_config();
 		let (client, connection) =
 			connection_config.connect(NoTls).await.unwrap();
 
-		// println!("Reached point L");
-
 		tokio::spawn(async move {
-			// println!("Reached point M");
 			if let Err(e) = connection.await {
 				eprintln!("connection error: {}", e);
 			}
 		});
-
-		// println!("Reached point N");
 
 		{
 			// initialize the database

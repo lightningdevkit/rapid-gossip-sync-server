@@ -33,6 +33,9 @@ impl ChainVerifier {
 
 	fn retrieve_block(&self, block_height: u32) -> Result<Block, AccessError> {
 		{
+			// todo: measure how much block retrieval slows down gossip sync when using a local
+			// REST endpoint, and determine if caching is worth the massive space usage, or if there
+			// exists a smart heuristic of cache invalidation
 			let cache = self.block_cache.read().unwrap();
 			if cache.contains_key(&block_height) {
 				return Ok(cache.get(&block_height).unwrap().clone());

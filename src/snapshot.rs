@@ -79,6 +79,7 @@ impl Snapshotter {
 					if [14, 21].contains(days) {
 						symlink_gap_days.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
 					}
+					// TODO: create symlinks for days 22 through 100 pointing to the full sync
 					for current_day_gap in symlink_gap_days {
 						println!("Creating symlink for {}-day-delta with {}-day gap (or emulated {}-day-delta)", days, current_day_gap, days - current_day_gap);
 						let canonical_last_sync_timestamp = Self::round_down_to_nearest_multiple(current_last_sync_timestamp.clone(), round_day_seconds).saturating_sub(round_day_seconds * current_day_gap);

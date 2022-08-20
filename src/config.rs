@@ -5,6 +5,7 @@ use lightning_block_sync::http::HttpEndpoint;
 use tokio_postgres::Config;
 use crate::hex_utils;
 
+pub(crate) const SNAPSHOT_CALCULATION_INTERVAL: u64 = 3600 * 24; // every 24 hours, in seconds
 pub(crate) const DOWNLOAD_NEW_GOSSIP: bool = true;
 
 pub(crate) fn network_graph_cache_path() -> &'static str {

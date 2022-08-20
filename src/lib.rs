@@ -219,7 +219,10 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, last
 	// always write the chain hash
 	serialization_details.chain_hash.write(&mut prefixed_output).unwrap();
 	// always write the latest seen timestamp
-	serialization_details.latest_seen.write(&mut prefixed_output).unwrap();
+	let latest_seen_timestamp = serialization_details.latest_seen;
+	let overflow_seconds = latest_seen_timestamp % config::SNAPSHOT_CALCULATION_INTERVAL;
+	let serialized_seen_timestamp = latest_seen_timestamp.saturating_sub(overflow_seconds);
+	serialized_seen_timestamp.write(&mut prefixed_output).unwrap();
 
 	let node_id_count = node_ids.len() as u32;
 	node_id_count.write(&mut prefixed_output).unwrap();

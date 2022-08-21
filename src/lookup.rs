@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, HashSet};
 use std::io::Cursor;
+use std::ops::Add;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant, SystemTime};
 
 use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::routing::gossip::NetworkGraph;
@@ -64,6 +65,7 @@ pub(super) async fn connect_to_db() -> (Client, Connection<Socket, NoTlsStream>)
 /// Also include all announcements for which the first update was announced
 /// after `last_syc_timestamp`
 pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, client: &Client, last_sync_timestamp: u32) {
+	let last_sync_timestamp_object = SystemTime::UNIX_EPOCH.add(Duration::from_secs(last_sync_timestamp as u64));
 	println!("Obtaining channel ids from network graph");
 	let channel_ids = {
 		let read_only_graph = network_graph.read_only();
@@ -86,7 +88,8 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 		let unsigned_announcement = ChannelAnnouncement::read(&mut readable).unwrap().contents;
 
 		let scid = unsigned_announcement.short_channel_id;
-		let current_seen_timestamp: u32 = current_announcement_row.get("seen");
+		let current_seen_timestamp_object: SystemTime = current_announcement_row.get("seen");
+		let current_seen_timestamp: u32 = current_seen_timestamp_object.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u32;
 
 		let mut current_channel_delta = delta_set.entry(scid).or_insert(ChannelDelta::default());
 		(*current_channel_delta).announcement = Some(AnnouncementDelta {
@@ -99,7 +102,7 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 
 	// here is where the channels whose first update in either direction occurred after
 	// `last_seen_timestamp` are added to the selection
-	let unannounced_rows = client.query("SELECT short_channel_id, blob_signed, seen FROM (SELECT DISTINCT ON (short_channel_id) short_channel_id, blob_signed, seen FROM channel_updates ORDER BY short_channel_id ASC, seen ASC) AS first_seens WHERE first_seens.seen >= $1", &[&last_sync_timestamp]).await.unwrap();
+	let unannounced_rows = client.query("SELECT short_channel_id, blob_signed, seen FROM (SELECT DISTINCT ON (short_channel_id) short_channel_id, blob_signed, seen FROM channel_updates ORDER BY short_channel_id ASC, seen ASC) AS first_seens WHERE first_seens.seen >= $1", &[&last_sync_timestamp_object]).await.unwrap();
 	for current_row in unannounced_rows {
 
 		let blob: String = current_row.get("blob_signed");
@@ -107,7 +110,8 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 		let mut readable = Cursor::new(data);
 		let unsigned_update = ChannelUpdate::read(&mut readable).unwrap().contents;
 		let scid = unsigned_update.short_channel_id;
-		let current_seen_timestamp: u32 = current_row.get("seen");
+		let current_seen_timestamp_object: SystemTime = current_row.get("seen");
+		let current_seen_timestamp: u32 = current_seen_timestamp_object.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u32;
 
 		let mut current_channel_delta = delta_set.entry(scid).or_insert(ChannelDelta::default());
 		(*current_channel_delta).first_update_seen = Some(current_seen_timestamp);
@@ -116,11 +120,12 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 
 pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Client, last_sync_timestamp: u32, consider_intermediate_updates: bool) {
 	let start = Instant::now();
+	let last_sync_timestamp_object = SystemTime::UNIX_EPOCH.add(Duration::from_secs(last_sync_timestamp as u64));
 
 	// get the latest channel update in each direction prior to last_sync_timestamp, provided
 	// there was an update in either direction that happened after the last sync (to avoid
 	// collecting too many reference updates)
-	let reference_rows = client.query("SELECT DISTINCT ON (short_channel_id, direction) id, short_channel_id, direction, blob_signed FROM channel_updates WHERE seen < $1 AND short_channel_id IN (SELECT short_channel_id FROM channel_updates WHERE seen >= $1 GROUP BY short_channel_id) ORDER BY short_channel_id ASC, direction ASC, seen DESC", &[&last_sync_timestamp]).await.unwrap();
+	let reference_rows = client.query("SELECT DISTINCT ON (short_channel_id, direction) id, short_channel_id, direction, blob_signed FROM channel_updates WHERE seen < $1 AND short_channel_id IN (SELECT short_channel_id FROM channel_updates WHERE seen >= $1 GROUP BY short_channel_id) ORDER BY short_channel_id ASC, direction ASC, seen DESC", &[&last_sync_timestamp_object]).await.unwrap();
 
 	println!("Fetched reference rows ({}): {:?}", reference_rows.len(), start.elapsed());
 
@@ -164,7 +169,7 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 	}
 
 	let query_string = format!("SELECT {} id, short_channel_id, direction, blob_signed, seen FROM channel_updates WHERE seen >= $1 ORDER BY short_channel_id ASC, direction ASC, seen DESC", intermediate_update_prefix);
-	let intermediate_updates = client.query(&query_string, &[&last_sync_timestamp]).await.unwrap();
+	let intermediate_updates = client.query(&query_string, &[&last_sync_timestamp_object]).await.unwrap();
 	println!("Fetched intermediate rows ({}): {:?}", intermediate_updates.len(), start.elapsed());
 
 	let mut previous_scid = u64::MAX;
@@ -180,7 +185,8 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 		intermediate_update_count += 1;
 
 		let direction: i32 = intermediate_update.get("direction");
-		let current_seen_timestamp: u32 = intermediate_update.get("seen");
+		let current_seen_timestamp_object: SystemTime = intermediate_update.get("seen");
+		let current_seen_timestamp: u32 = current_seen_timestamp_object.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u32;
 		let blob: String = intermediate_update.get("blob_signed");
 		let data = hex_utils::to_vec(&blob).unwrap();
 		let mut readable = Cursor::new(data);

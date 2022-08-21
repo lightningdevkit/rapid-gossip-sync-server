@@ -51,7 +51,7 @@ pub(crate) fn db_announcement_table_creation_query() -> &'static str {
 		block_height integer,
 		chain_hash character varying(255),
 		announcement_signed text,
-		seen oid NOT NULL
+		seen timestamp NOT NULL DEFAULT NOW()
 	)"
 }
 
@@ -71,7 +71,7 @@ pub(crate) fn db_channel_update_table_creation_query() -> &'static str {
 		fee_proportional_millionths integer,
 		htlc_maximum_msat bigint,
 		blob_signed text,
-		seen oid NOT NULL
+		seen timestamp NOT NULL DEFAULT NOW()
 	)"
 }
 

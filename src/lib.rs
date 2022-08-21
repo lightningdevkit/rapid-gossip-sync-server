@@ -109,12 +109,15 @@ impl RapidSyncProcessor {
 				persistence_future.await;
 			});
 
-		}else{
+		} else {
 			sync_completion_sender.send(()).await.unwrap();
 		}
 
 		{
-			sync_completion_receiver.recv().await;
+			let sync_completion = sync_completion_receiver.recv().await;
+			if sync_completion.is_none() {
+				panic!("Sync failed!");
+			}
 			initial_sync_complete.store(true, Ordering::Release);
 			println!("Initial sync complete!");
 

@@ -36,7 +36,7 @@ impl GossipPersister {
 
 		tokio::spawn(async move {
 			if let Err(e) = connection.await {
-				eprintln!("connection error: {}", e);
+				panic!("connection error: {}", e);
 			}
 		});
 
@@ -46,7 +46,7 @@ impl GossipPersister {
 				.execute(config::db_config_table_creation_query(), &[])
 				.await;
 			if let Err(initialization_error) = initialization {
-				eprintln!("db init error: {}", initialization_error);
+				panic!("db init error: {}", initialization_error);
 			}
 
 			let initialization = client
@@ -57,14 +57,14 @@ impl GossipPersister {
 					&[&1, &config::SCHEMA_VERSION]
 				).await;
 			if let Err(initialization_error) = initialization {
-				eprintln!("db init error: {}", initialization_error);
+				panic!("db init error: {}", initialization_error);
 			}
 
 			let initialization = client
 				.execute(config::db_announcement_table_creation_query(), &[])
 				.await;
 			if let Err(initialization_error) = initialization {
-				eprintln!("db init error: {}", initialization_error);
+				panic!("db init error: {}", initialization_error);
 			}
 
 			let initialization = client
@@ -74,14 +74,14 @@ impl GossipPersister {
 				)
 				.await;
 			if let Err(initialization_error) = initialization {
-				eprintln!("db init error: {}", initialization_error);
+				panic!("db init error: {}", initialization_error);
 			}
 
 			let initialization = client
 				.batch_execute(config::db_index_creation_query())
 				.await;
 			if let Err(initialization_error) = initialization {
-				eprintln!("db init error: {}", initialization_error);
+				panic!("db init error: {}", initialization_error);
 			}
 		}
 
@@ -111,7 +111,6 @@ impl GossipPersister {
 				latest_graph_cache_time = Some(Instant::now());
 			}
 
-			let timestamp_seen = detected_gossip_message.timestamp_seen;
 			match &detected_gossip_message.message {
 				GossipMessage::InitialSyncComplete => {
 					// signal to the server that it may now serve dynamic responses and calculate
@@ -163,14 +162,12 @@ impl GossipPersister {
 							short_channel_id, \
 							block_height, \
 							chain_hash, \
-							announcement_signed, \
-							seen \
-						) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (short_channel_id) DO NOTHING", &[
+							announcement_signed \
+						) VALUES ($1, $2, $3, $4) ON CONFLICT (short_channel_id) DO NOTHING", &[
 							&scid_hex,
 							&block_height,
 							&chain_hash_hex,
-							&announcement_hex,
-							&timestamp_seen,
+							&announcement_hex
 						]).await;
 					if result.is_err() {
 						panic!("error: {}", result.err().unwrap());
@@ -217,9 +214,8 @@ impl GossipPersister {
 							fee_base_msat, \
 							fee_proportional_millionths, \
 							htlc_maximum_msat, \
-							blob_signed, \
-							seen \
-						) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)  ON CONFLICT (composite_index) DO NOTHING", &[
+							blob_signed \
+						) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)  ON CONFLICT (composite_index) DO NOTHING", &[
 							&composite_index,
 							&chain_hash_hex,
 							&scid_hex,
@@ -232,8 +228,7 @@ impl GossipPersister {
 							&fee_base_msat,
 							&fee_proportional_millionths,
 							&htlc_maximum_msat,
-							&update_hex,
-							&timestamp_seen
+							&update_hex
 						]).await;
 					if result.is_err() {
 						panic!("error: {}", result.err().unwrap());

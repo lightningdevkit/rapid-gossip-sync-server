@@ -84,13 +84,14 @@ impl Snapshotter {
 						let canonical_last_sync_timestamp = Self::round_down_to_nearest_multiple(current_last_sync_timestamp.clone(), round_day_seconds).saturating_sub(round_day_seconds * current_day_gap);
 						let symlink_path = format!("{}/{}.bin", symlink_directory, canonical_last_sync_timestamp);
 
-						if let Ok(canonical_symlink_path) = fs::canonicalize(&symlink_path) {
+						if let Ok(metadata) = fs::symlink_metadata(&symlink_path) {
+							println!("Symlink metadata: {:#?}", metadata);
 							// symlink exists
-							if let Ok(previous_snapshot_path) = fs::read_link(&symlink_path) {
+							if let Ok(previous_snapshot_path) = fs::canonicalize(&symlink_path) {
 								println!("Removing symlinked file: {:?}", previous_snapshot_path);
 								fs::remove_file(previous_snapshot_path).expect("Failed to remove symlinked file.");
 							}
-							println!("Removing symlink: {:?}", canonical_symlink_path);
+							println!("Removing symlink: {:?}", symlink_path);
 							fs::remove_file(&symlink_path).unwrap();
 						}
 						println!("Recreating symlink: {} -> {}", symlink_path, snapshot_path);

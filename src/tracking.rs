@@ -164,10 +164,11 @@ async fn monitor_peer_connection(current_peer: (PublicKey, SocketAddr), peer_man
 		current_peer.1,
 	).await;
 	let mut initial_connection_succeeded = false;
+
+	let peer_manager_clone = Arc::clone(&peer_manager);
 	if let Some(disconnection_future) = connection {
 		eprintln!("Connected to peer {}@{}!", current_peer.0.to_hex(), current_peer.1.to_string());
 		initial_connection_succeeded = true;
-		let peer_manager_clone = Arc::clone(&peer_manager);
 		tokio::spawn(async move {
 			disconnection_future.await;
 			eprintln!("Disconnected from peer {}@{}", current_peer.0.to_hex(), current_peer.1.to_string());
@@ -175,7 +176,7 @@ async fn monitor_peer_connection(current_peer: (PublicKey, SocketAddr), peer_man
 			monitor_peer_connection(current_peer.clone(), peer_manager_clone);
 		});
 	} else {
-		eprintln!("Failed to connect to peer {}@{}", current_peer.0.to_hex(), current_peer.1.to_string())
+		eprintln!("Failed to connect to peer {}@{}", current_peer.0.to_hex(), current_peer.1.to_string());
 	};
 	initial_connection_succeeded
 }

@@ -155,7 +155,6 @@ impl GossipPersister {
 					// start with the type prefix, which is already known a priori
 					let mut announcement_signed = Vec::new(); // vec![1, 0];
 					announcement.write(&mut announcement_signed).unwrap();
-					let announcement_hex = hex_utils::hex_str(&announcement_signed);
 
 					let result = client
 						.execute("INSERT INTO channel_announcements (\
@@ -167,7 +166,7 @@ impl GossipPersister {
 							&scid_hex,
 							&block_height,
 							&chain_hash_hex,
-							&announcement_hex
+							&announcement_signed
 						]).await;
 					if result.is_err() {
 						panic!("error: {}", result.err().unwrap());
@@ -198,7 +197,6 @@ impl GossipPersister {
 					// start with the type prefix, which is already known a priori
 					let mut update_signed = Vec::new(); // vec![1, 2];
 					update.write(&mut update_signed).unwrap();
-					let update_hex = hex_utils::hex_str(&update_signed);
 
 					let result = client
 						.execute("INSERT INTO channel_updates (\
@@ -228,7 +226,7 @@ impl GossipPersister {
 							&fee_base_msat,
 							&fee_proportional_millionths,
 							&htlc_maximum_msat,
-							&update_hex
+							&update_signed
 						]).await;
 					if result.is_err() {
 						panic!("error: {}", result.err().unwrap());

@@ -82,9 +82,8 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 	let announcement_rows = client.query("SELECT short_channel_id, announcement_signed, seen FROM channel_announcements WHERE short_channel_id = any($1) ORDER BY short_channel_id ASC", &[&channel_ids]).await.unwrap();
 
 	for current_announcement_row in announcement_rows {
-		let blob: String = current_announcement_row.get("announcement_signed");
-		let data = hex_utils::to_vec(&blob).unwrap();
-		let mut readable = Cursor::new(data);
+		let blob: Vec<u8> = current_announcement_row.get("announcement_signed");
+		let mut readable = Cursor::new(blob);
 		let unsigned_announcement = ChannelAnnouncement::read(&mut readable).unwrap().contents;
 
 		let scid = unsigned_announcement.short_channel_id;
@@ -105,9 +104,8 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 	let unannounced_rows = client.query("SELECT short_channel_id, blob_signed, seen FROM (SELECT DISTINCT ON (short_channel_id) short_channel_id, blob_signed, seen FROM channel_updates ORDER BY short_channel_id ASC, seen ASC) AS first_seens WHERE first_seens.seen >= $1", &[&last_sync_timestamp_object]).await.unwrap();
 	for current_row in unannounced_rows {
 
-		let blob: String = current_row.get("blob_signed");
-		let data = hex_utils::to_vec(&blob).unwrap();
-		let mut readable = Cursor::new(data);
+		let blob: Vec<u8> = current_row.get("blob_signed");
+		let mut readable = Cursor::new(blob);
 		let unsigned_update = ChannelUpdate::read(&mut readable).unwrap().contents;
 		let scid = unsigned_update.short_channel_id;
 		let current_seen_timestamp_object: SystemTime = current_row.get("seen");
@@ -138,9 +136,8 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 		non_intermediate_ids.insert(update_id);
 
 		let direction: i32 = current_reference.get("direction");
-		let blob: String = current_reference.get("blob_signed");
-		let data = hex_utils::to_vec(&blob).unwrap();
-		let mut readable = Cursor::new(data);
+		let blob: Vec<u8> = current_reference.get("blob_signed");
+		let mut readable = Cursor::new(blob);
 		let unsigned_channel_update = ChannelUpdate::read(&mut readable).unwrap().contents;
 		let scid = unsigned_channel_update.short_channel_id;
 
@@ -187,9 +184,8 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 		let direction: i32 = intermediate_update.get("direction");
 		let current_seen_timestamp_object: SystemTime = intermediate_update.get("seen");
 		let current_seen_timestamp: u32 = current_seen_timestamp_object.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u32;
-		let blob: String = intermediate_update.get("blob_signed");
-		let data = hex_utils::to_vec(&blob).unwrap();
-		let mut readable = Cursor::new(data);
+		let blob: Vec<u8> = intermediate_update.get("blob_signed");
+		let mut readable = Cursor::new(blob);
 		let unsigned_channel_update = ChannelUpdate::read(&mut readable).unwrap().contents;
 
 		let scid = unsigned_channel_update.short_channel_id;

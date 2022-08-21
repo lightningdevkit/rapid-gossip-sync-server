@@ -39,7 +39,7 @@ pub(crate) fn bitcoin_rest_endpoint() -> HttpEndpoint {
 
 pub(crate) fn db_config_table_creation_query() -> &'static str {
 	"CREATE TABLE IF NOT EXISTS config (
-		id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+		id SERIAL PRIMARY KEY,
 		db_schema integer
 	)"
 }

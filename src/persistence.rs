@@ -53,8 +53,8 @@ impl GossipPersister {
 				.execute(
 					// TODO: figure out a way to fix the id value without Postgres complaining about
 					// its value not being default
-					"INSERT INTO config (db_schema) VALUES ($1) ON CONFLICT (id) DO NOTHING",
-					&[&config::SCHEMA_VERSION]
+					"INSERT INTO config (id, db_schema) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
+					&[&1, &config::SCHEMA_VERSION]
 				).await;
 			if let Err(initialization_error) = initialization {
 				eprintln!("db init error: {}", initialization_error);

@@ -14,7 +14,6 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::Network;
@@ -42,7 +41,6 @@ mod verifier;
 
 pub struct RapidSyncProcessor {
 	network_graph: Arc<NetworkGraph<TestLogger>>,
-	pub initial_sync_complete: Arc<AtomicBool>,
 }
 
 pub struct SerializedResponse {
@@ -57,13 +55,11 @@ pub struct SerializedResponse {
 impl RapidSyncProcessor {
 	pub fn new() -> Self {
 		let logger = TestLogger::new();
-		let mut initial_sync_complete = false;
 		let network_graph = if let Ok(file) = File::open(&config::network_graph_cache_path()) {
 			println!("Initializing from cached network graph…");
 			let mut buffered_reader = BufReader::new(file);
 			let network_graph_result = NetworkGraph::read(&mut buffered_reader, logger);
 			if let Ok(network_graph) = network_graph_result {
-				initial_sync_complete = true;
 				network_graph.remove_stale_channels();
 				println!("Initialized from cached network graph!");
 				network_graph
@@ -77,14 +73,12 @@ impl RapidSyncProcessor {
 		let arc_network_graph = Arc::new(network_graph);
 		Self {
 			network_graph: arc_network_graph,
-			initial_sync_complete: Arc::new(AtomicBool::new(initial_sync_complete)),
 		}
 	}
 
 	pub async fn start_sync(&self) {
 		// means to indicate sync completion status within this module
 		let (sync_completion_sender, mut sync_completion_receiver) = mpsc::channel::<()>(1);
-		let initial_sync_complete = self.initial_sync_complete.clone();
 
 		if config::DOWNLOAD_NEW_GOSSIP {
 			let (mut persister, persistence_sender) = GossipPersister::new(Arc::clone(&self.network_graph));
@@ -98,21 +92,14 @@ impl RapidSyncProcessor {
 			sync_completion_sender.send(()).await.unwrap();
 		}
 
-		{
-			let sync_completion = sync_completion_receiver.recv().await;
-			if sync_completion.is_none() {
-				panic!("Sync failed!");
-			}
-			initial_sync_complete.store(true, Ordering::Release);
-			println!("Initial sync complete!");
-
-			// start the gossip snapshotting service
-			Snapshotter::new(Arc::clone(&self.network_graph)).snapshot_gossip().await;
+		let sync_completion = sync_completion_receiver.recv().await;
+		if sync_completion.is_none() {
+			panic!("Sync failed!");
 		}
-	}
+		println!("Initial sync complete!");
 
-	pub async fn serialize_delta(&self, last_sync_timestamp: u32, consider_intermediate_updates: bool) -> SerializedResponse {
-		crate::serialize_delta(self.network_graph.clone(), last_sync_timestamp, consider_intermediate_updates).await
+		// start the gossip snapshotting service
+		Snapshotter::new(Arc::clone(&self.network_graph)).snapshot_gossip().await;
 	}
 }
 

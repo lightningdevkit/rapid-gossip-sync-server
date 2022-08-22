@@ -58,4 +58,4 @@ incremental update.
 
 ## License
 
-[Apache 2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT), at your option.
+[Apache 2.0](LICENSE-APACHE.md) or [MIT](LICENSE-MIT.md), [at your option](LICENSE.md).

@@ -87,11 +87,11 @@ impl RapidSyncProcessor {
 		let initial_sync_complete = self.initial_sync_complete.clone();
 
 		if config::DOWNLOAD_NEW_GOSSIP {
-			let (mut persister, persistence_sender) =
-				GossipPersister::new(sync_completion_sender, Arc::clone(&self.network_graph));
+			let (mut persister, persistence_sender) = GossipPersister::new(Arc::clone(&self.network_graph));
 
 			println!("Starting gossip download");
-			tokio::spawn(tracking::download_gossip(persistence_sender, Arc::clone(&self.network_graph)));
+			tokio::spawn(tracking::download_gossip(persistence_sender, sync_completion_sender,
+				Arc::clone(&self.network_graph)));
 			println!("Starting gossip db persistence listener");
 			tokio::spawn(async move { persister.persist_gossip().await; });
 		} else {

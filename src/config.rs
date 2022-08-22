@@ -50,7 +50,7 @@ pub(crate) fn db_announcement_table_creation_query() -> &'static str {
 		short_channel_id character varying(255) NOT NULL UNIQUE,
 		block_height integer,
 		chain_hash character varying(255),
-		announcement_signed text,
+		announcement_signed BYTEA,
 		seen timestamp NOT NULL DEFAULT NOW()
 	)"
 }
@@ -70,7 +70,7 @@ pub(crate) fn db_channel_update_table_creation_query() -> &'static str {
 		fee_base_msat integer,
 		fee_proportional_millionths integer,
 		htlc_maximum_msat bigint,
-		blob_signed text,
+		blob_signed BYTEA,
 		seen timestamp NOT NULL DEFAULT NOW()
 	)"
 }

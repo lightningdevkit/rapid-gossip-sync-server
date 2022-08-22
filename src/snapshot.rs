@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::sync::Arc;
@@ -22,10 +23,11 @@ impl Snapshotter {
 		let snapshot_sync_day_factors = [1, 2, 3, 4, 5, 6, 7, 14, 21, u64::MAX];
 		let round_day_seconds = config::SNAPSHOT_CALCULATION_INTERVAL as u64;
 
-		let snapshot_directory = "./res/snapshots";
-		let symlink_directory = "./res/symlinks";
-		fs::create_dir_all(&snapshot_directory).expect("Failed to create snapshot directory");
-		fs::create_dir_all(&symlink_directory).expect("Failed to create symlink directory");
+		let pending_snapshot_directory = "./res/snapshots_pending";
+		let pending_symlink_directory = "./res/symlinks_pending";
+		let finalized_snapshot_directory = "./res/snapshots";
+		let finalized_symlink_directory = "./res/symlinks";
+		let relative_symlink_to_snapshot_path = "../snapshots";
 
 		// this is gonna be a never-ending background job
 		loop {
@@ -50,6 +52,18 @@ impl Snapshotter {
 			// The snapshots, unlike dynamic updates, should account for all intermediate
 			// channel updates
 			//
+
+
+			// purge and recreate the pending directories
+			if fs::metadata(&pending_snapshot_directory).is_ok(){
+				fs::remove_dir_all(&pending_snapshot_directory).expect("Failed to remove pending snapshot directory.");
+			}
+			if fs::metadata(&pending_symlink_directory).is_ok(){
+				fs::remove_dir_all(&pending_symlink_directory).expect("Failed to remove pending symlink directory.");
+			}
+			fs::create_dir_all(&pending_snapshot_directory).expect("Failed to create pending snapshot directory");
+			fs::create_dir_all(&pending_symlink_directory).expect("Failed to create pending symlink directory");
+
 			let mut snapshot_sync_timestamps: Vec<(u64, u64)> = Vec::new();
 			for factor in &snapshot_sync_day_factors {
 				// basically timestamp - day_seconds * factor
@@ -57,74 +71,52 @@ impl Snapshotter {
 				snapshot_sync_timestamps.push((factor.clone(), timestamp));
 			};
 
-			for (days, current_last_sync_timestamp) in &snapshot_sync_timestamps {
+			let mut snapshot_filenames_by_day_range: HashMap<u64, String> = HashMap::with_capacity(10);
+
+			for (day_range, current_last_sync_timestamp) in &snapshot_sync_timestamps {
 				let network_graph_clone = self.network_graph.clone();
 				{
-					println!("Calculating {}-day snapshot", days);
+					println!("Calculating {}-day snapshot", day_range);
 					// calculate the snapshot
 					let snapshot = super::serialize_delta(network_graph_clone, current_last_sync_timestamp.clone() as u32, true).await;
 
 					// persist the snapshot and update the symlink
-					let snapshot_filename = format!("snapshot__calculated-at:{}__range:{}-days__previous-sync:{}.lngossip", filename_timestamp, days, current_last_sync_timestamp);
-					let snapshot_path = format!("{}/{}", snapshot_directory, snapshot_filename);
-					println!("Persisting {}-day snapshot: {} ({} messages, {} announcements, {} updates ({} full, {} incremental))", days, snapshot_filename, snapshot.message_count, snapshot.announcement_count, snapshot.update_count, snapshot.update_count_full, snapshot.update_count_incremental);
+					let snapshot_filename = format!("snapshot__calculated-at:{}__range:{}-days__previous-sync:{}.lngossip", filename_timestamp, day_range, current_last_sync_timestamp);
+					let snapshot_path = format!("{}/{}", pending_snapshot_directory, snapshot_filename);
+					println!("Persisting {}-day snapshot: {} ({} messages, {} announcements, {} updates ({} full, {} incremental))", day_range, snapshot_filename, snapshot.message_count, snapshot.announcement_count, snapshot.update_count, snapshot.update_count_full, snapshot.update_count_incremental);
 					fs::write(&snapshot_path, snapshot.data).unwrap();
-					// with the file persister, a canonical snapshot path can be determined
-					let canonical_snapshot_path = fs::canonicalize(&snapshot_path).unwrap();
-
-					// symlinks require intermediate days to also be filled
-					// for most days, the only delta is 0
-					let mut symlink_gap_days = vec![0];
-					if [14, 21].contains(days) {
-						symlink_gap_days.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
-					}
-					// TODO: create symlinks for days 22 through 100 pointing to the full sync
-					for current_day_gap in symlink_gap_days {
-						println!("Creating symlink for {}-day-delta with {}-day gap (or emulated {}-day-delta)", days, current_day_gap, days - current_day_gap);
-						let canonical_last_sync_timestamp = Self::round_down_to_nearest_multiple(current_last_sync_timestamp.clone(), round_day_seconds).saturating_sub(round_day_seconds * current_day_gap);
-						let symlink_path = format!("{}/{}.bin", symlink_directory, canonical_last_sync_timestamp);
-
-						if let Ok(metadata) = fs::symlink_metadata(&symlink_path) {
-							println!("Symlink metadata: {:#?}", metadata);
-							// symlink exists
-							if let Ok(previous_snapshot_path) = fs::canonicalize(&symlink_path) {
-								println!("Removing symlinked file: {:?}", previous_snapshot_path);
-								fs::remove_file(previous_snapshot_path).expect("Failed to remove symlinked file.");
-							}
-							println!("Removing symlink: {:?}", symlink_path);
-							fs::remove_file(&symlink_path).unwrap();
-						}
-						println!("Recreating symlink: {} -> {}", symlink_path, snapshot_path);
-						symlink(&canonical_snapshot_path, &symlink_path).unwrap();
-					}
-
-					// remove the old snapshots for the given time interval
-					let other_snapshots = fs::read_dir(snapshot_directory).unwrap();
-					for entry_result in other_snapshots {
-						if entry_result.is_err() {
-							continue;
-						};
-						let entry = entry_result.as_ref().unwrap();
-						if entry.file_type().is_err() {
-							continue;
-						};
-						let file_type = entry.file_type().unwrap();
-						if !file_type.is_file() {
-							continue;
-						}
-						let file_name_result = entry.file_name().into_string();
-						if file_name_result.is_err() {
-							continue;
-						}
-						let file_name = file_name_result.unwrap();
-						let substring = format!("range:{}-days", days);
-						if file_name.starts_with("snapshot__") && file_name.contains(&substring) && file_name != snapshot_filename {
-							println!("Removing expired {}-day snapshot: {}", days, file_name);
-							fs::remove_file(entry.path()).unwrap();
-						}
-					}
+					snapshot_filenames_by_day_range.insert(day_range.clone(), snapshot_filename);
 				}
 			}
+
+			for i in 1..10_001u64 {
+				// let's create symlinks
+
+				// first, determine which snapshot range should be referenced
+				// find min(x) in snapshot_sync_day_factors where x >= i
+				let referenced_day_range = snapshot_sync_day_factors.iter().find(|x| {
+					x >= &&i
+				}).unwrap().clone();
+
+				let snapshot_filename = snapshot_filenames_by_day_range.get(&referenced_day_range).unwrap();
+				let simulated_last_sync_timestamp = timestamp_seen.saturating_sub(round_day_seconds.saturating_mul(i));
+				let relative_snapshot_path = format!("{}/{}", relative_symlink_to_snapshot_path, snapshot_filename);
+				let canonical_last_sync_timestamp = Self::round_down_to_nearest_multiple(simulated_last_sync_timestamp, round_day_seconds);
+				let symlink_path = format!("{}/{}.bin", pending_symlink_directory, canonical_last_sync_timestamp);
+
+				println!("Symlinking: {} -> {} ({} -> {}", i, referenced_day_range, symlink_path, relative_snapshot_path);
+				symlink(&relative_snapshot_path, &symlink_path).unwrap();
+			}
+
+			if fs::metadata(&finalized_snapshot_directory).is_ok(){
+				fs::remove_dir_all(&finalized_snapshot_directory).expect("Failed to remove finalized snapshot directory.");
+			}
+			if fs::metadata(&finalized_symlink_directory).is_ok(){
+				fs::remove_dir_all(&finalized_symlink_directory).expect("Failed to remove pending symlink directory.");
+			}
+			fs::rename(&pending_snapshot_directory, &finalized_snapshot_directory).expect("Failed to finalize snapshot directory.");
+			fs::rename(&pending_symlink_directory, &finalized_symlink_directory).expect("Failed to finalize symlink directory.");
+
 
 			let remainder = timestamp_seen % round_day_seconds;
 			let time_until_next_day = round_day_seconds - remainder;

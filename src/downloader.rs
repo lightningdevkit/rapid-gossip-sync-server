@@ -57,16 +57,19 @@ impl RoutingMessageHandler for GossipRouter {
 	}
 
 	fn handle_channel_announcement(&self, msg: &ChannelAnnouncement) -> Result<bool, LightningError> {
-		let mut counter = self.counter.write().unwrap();
+		let native_result = self.native_router.handle_channel_announcement(msg);
+		let output_value;
+		{
+			let mut counter = self.counter.write().unwrap();
+			output_value = native_result.map_err(|error| {
+				if error.err.contains("didn't match on-chain script") {
+					counter.channel_announcements_with_mismatched_scripts += 1;
+				}
+				error
+			})?;
+			counter.channel_announcements += 1;
+		}
 
-		let output_value = self.native_router.handle_channel_announcement(msg).map_err(|error| {
-			if error.err.contains("didn't match on-chain script") {
-				counter.channel_announcements_with_mismatched_scripts += 1;
-			}
-			error
-		})?;
-
-		counter.channel_announcements += 1;
 		let gossip_message = GossipMessage::ChannelAnnouncement(msg.clone());
 		if let Err(err) = self.sender.try_send(gossip_message) {
 			let gossip_message = match err { TrySendError::Full(msg)|TrySendError::Closed(msg) => msg };
@@ -81,8 +84,7 @@ impl RoutingMessageHandler for GossipRouter {
 	fn handle_channel_update(&self, msg: &ChannelUpdate) -> Result<bool, LightningError> {
 		let output_value = self.native_router.handle_channel_update(msg)?;
 
-		let mut counter = self.counter.write().unwrap();
-		counter.channel_updates += 1;
+		self.counter.write().unwrap().channel_updates += 1;
 		let gossip_message = GossipMessage::ChannelUpdate(msg.clone());
 
 		if let Err(err) = self.sender.try_send(gossip_message) {

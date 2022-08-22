@@ -1,0 +1,92 @@
+name: Cross-platform build verification
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - "*"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ ubuntu-latest ]
+        toolchain:
+          - stable
+          - 1.48.0
+          - beta
+        include:
+          - toolchain: stable
+            build-net-tokio: true
+            build-no-std: true
+          - toolchain: stable
+            platform: macos-latest
+            build-net-tokio: true
+            build-no-std: true
+          - toolchain: beta
+            platform: macos-latest
+            build-net-tokio: true
+            build-no-std: true
+          - toolchain: stable
+            platform: windows-latest
+            build-net-tokio: true
+            build-no-std: true
+          - toolchain: beta
+            platform: windows-latest
+            build-net-tokio: true
+            build-no-std: true
+          - toolchain: beta
+            build-net-tokio: true
+            build-no-std: true
+          - toolchain: 1.41.1
+            build-no-std: false
+            test-log-variants: true
+          - toolchain: 1.45.2
+            build-net-old-tokio: true
+            build-net-tokio: true
+            build-no-std: false
+            coverage: true
+          - toolchain: 1.47.0
+            build-no-std: true
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v3
+      - name: Install Rust ${{ matrix.toolchain }} toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          override: true
+          profile: minimal
+      - name: Pin dependencies
+        run: |
+          cargo update -p tokio-postgres --precise "0.7.5" --verbose
+          cargo update -p postgres-types --precise "0.2.3" --verbose
+          cargo update -p tokio --precise "1.14.1" --verbose
+          cargo update -p serde --precise "1.0.142" --verbose
+          cargo update -p cpufeatures --precise "0.2.2" --verbose # https://github.com/RustCrypto/utils/issues/795
+      - name: Build on Rust ${{ matrix.toolchain }}
+        run: |
+          cargo build --verbose --color always
+
+  linting:
+    runs-on: ubuntu-latest
+    env:
+      TOOLCHAIN: 1.47.0
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v3
+      - name: Install Rust ${{ env.TOOLCHAIN }} toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ env.TOOLCHAIN }}
+          override: true
+          profile: minimal
+      - name: Install clippy
+        run: |
+          rustup component add clippy
+      - name: Run default clippy linting
+        run: |
+          cargo clippy -- -Aclippy::erasing_op -Aclippy::never_loop -Aclippy::if_same_then_else -Dclippy::try_err

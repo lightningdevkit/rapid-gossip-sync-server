@@ -73,7 +73,7 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 		let channel_iterator = read_only_graph.channels().into_iter();
 		channel_iterator
 			.filter(|c| c.1.announcement_message.is_some())
-			.map(|c| hex_utils::hex_str(&c.1.announcement_message.clone().unwrap().contents.short_channel_id.to_be_bytes()))
+			.map(|c| hex_utils::hex_str(&c.1.announcement_message.as_ref().unwrap().contents.short_channel_id.to_be_bytes()))
 			.collect::<Vec<String>>()
 	};
 
@@ -150,8 +150,6 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 			panic!("Channel direction must be binary!")
 		};
 		update_delta.last_update_before_seen = Some(unsigned_channel_update);
-
-
 	}
 
 	println!("Processed reference rows (delta size: {}): {:?}", delta_set.len(), start.elapsed());
@@ -190,12 +188,12 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 
 		let scid = unsigned_channel_update.short_channel_id;
 		if scid != previous_scid {
-			previous_scid = scid.clone();
+			previous_scid = scid;
 			previously_seen_directions = (false, false);
 		}
 
 		// get the write configuration for this particular channel's directional details
-		let current_channel_delta = delta_set.entry(scid.clone()).or_insert(ChannelDelta::default());
+		let current_channel_delta = delta_set.entry(scid).or_insert(ChannelDelta::default());
 		let update_delta = if direction == 0 {
 			(*current_channel_delta).updates.0.get_or_insert(DirectedUpdateDelta::default())
 		} else if direction == 1 {

@@ -114,7 +114,7 @@ impl GossipPersister {
 					let chain_hash_hex = hex_utils::hex_str(chain_hash);
 
 					// start with the type prefix, which is already known a priori
-					let mut announcement_signed = Vec::new(); // vec![1, 0];
+					let mut announcement_signed = Vec::new();
 					announcement.write(&mut announcement_signed).unwrap();
 
 					let result = client
@@ -156,7 +156,7 @@ impl GossipPersister {
 					let htlc_maximum_msat = update.contents.htlc_maximum_msat as i64;
 
 					// start with the type prefix, which is already known a priori
-					let mut update_signed = Vec::new(); // vec![1, 2];
+					let mut update_signed = Vec::new();
 					update.write(&mut update_signed).unwrap();
 
 					let result = client

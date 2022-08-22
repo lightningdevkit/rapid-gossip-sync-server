@@ -12,45 +12,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ ubuntu-latest ]
         toolchain:
           - stable
           - 1.48.0
           - beta
-        include:
-          - toolchain: stable
-            build-net-tokio: true
-            build-no-std: true
-          - toolchain: stable
-            platform: macos-latest
-            build-net-tokio: true
-            build-no-std: true
-          - toolchain: beta
-            platform: macos-latest
-            build-net-tokio: true
-            build-no-std: true
-          - toolchain: stable
-            platform: windows-latest
-            build-net-tokio: true
-            build-no-std: true
-          - toolchain: beta
-            platform: windows-latest
-            build-net-tokio: true
-            build-no-std: true
-          - toolchain: beta
-            build-net-tokio: true
-            build-no-std: true
-          - toolchain: 1.41.1
-            build-no-std: false
-            test-log-variants: true
-          - toolchain: 1.45.2
-            build-net-old-tokio: true
-            build-net-tokio: true
-            build-no-std: false
-            coverage: true
-          - toolchain: 1.47.0
-            build-no-std: true
-    runs-on: ${{ matrix.platform }}
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout source code
         uses: actions/checkout@v3

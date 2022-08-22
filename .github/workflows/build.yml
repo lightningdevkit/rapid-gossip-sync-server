@@ -17,6 +17,9 @@ jobs:
           - 1.48.0
           - beta
         pinning: [true, false]
+        exclude:
+          - toolchain: 1.48.0
+            pinning: false
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source code

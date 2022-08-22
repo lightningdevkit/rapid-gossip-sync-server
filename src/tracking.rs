@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use bitcoin::hashes::hex::ToHex;
 use bitcoin::secp256k1::{PublicKey, SecretKey};
@@ -14,10 +14,10 @@ use tokio::sync::mpsc;
 
 use crate::{config, TestLogger};
 use crate::downloader::{GossipCounter, GossipRouter};
-use crate::types::{DetectedGossipMessage, GossipChainAccess, GossipMessage, GossipPeerManager};
+use crate::types::{GossipChainAccess, GossipMessage, GossipPeerManager};
 use crate::verifier::ChainVerifier;
 
-pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGossipMessage>, network_graph: Arc<NetworkGraph<Arc<TestLogger>>>) {
+pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessage>, network_graph: Arc<NetworkGraph<Arc<TestLogger>>>) {
 	let mut key = [0; 32];
 	let mut random_data = [0; 32];
 	thread_rng().fill_bytes(&mut key);
@@ -94,7 +94,6 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 			let sleep = tokio::time::sleep(Duration::from_secs(5));
 			sleep.await;
 
-			let current_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 			let router_clone = Arc::clone(&local_router);
 
 			{
@@ -143,13 +142,7 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 
 			if needs_to_notify_persister {
 				needs_to_notify_persister = false;
-				let sender = local_persistence_sender.clone();
-				tokio::spawn(async move {
-					let _ = sender.send(DetectedGossipMessage {
-						timestamp_seen: current_timestamp as u32,
-						message: GossipMessage::InitialSyncComplete,
-					}).await;
-				});
+				local_persistence_sender.send(GossipMessage::InitialSyncComplete).await.unwrap();
 			}
 		}
 	});

@@ -4,7 +4,6 @@ use std::sync::Arc;
 use bitcoin::{BlockHash, TxOut};
 use bitcoin::blockdata::block::Block;
 use bitcoin::hashes::Hash;
-use futures::executor;
 use lightning::chain;
 use lightning::chain::AccessError;
 use lightning_block_sync::BlockSource;
@@ -29,7 +28,7 @@ impl ChainVerifier {
 
 	fn retrieve_block(&self, block_height: u32) -> Result<Block, AccessError> {
 		let rest_client = self.rest_client.clone();
-		executor::block_on(async move {
+		tokio::task::block_in_place(move || { tokio::runtime::Handle::current().block_on(async move {
 			let block_hash_result = rest_client.request_resource::<BinaryResponse, RestBinaryResponse>(&format!("blockhashbyheight/{}.bin", block_height)).await;
 			let block_hash: Vec<u8> = block_hash_result.map_err(|error| {
 				eprintln!("Could't find block hash at height {}: {}", block_height, error.to_string());
@@ -43,7 +42,7 @@ impl ChainVerifier {
 				AccessError::UnknownChain
 			})?;
 			Ok(block)
-		})
+		}) })
 	}
 }
 

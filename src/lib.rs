@@ -76,7 +76,6 @@ impl RapidSyncProcessor {
 			NetworkGraph::new(genesis_block(Network::Bitcoin).header.block_hash(), arc_logger)
 		};
 		let arc_network_graph = Arc::new(network_graph);
-		let (_sync_termination_sender, _sync_termination_receiver) = mpsc::channel::<()>(1);
 		Self {
 			network_graph: arc_network_graph,
 			initial_sync_complete: Arc::new(AtomicBool::new(initial_sync_complete)),
@@ -88,27 +87,14 @@ impl RapidSyncProcessor {
 		let (sync_completion_sender, mut sync_completion_receiver) = mpsc::channel::<()>(1);
 		let initial_sync_complete = self.initial_sync_complete.clone();
 
-		let network_graph = self.network_graph.clone();
-		let snapshotter = Snapshotter::new(network_graph.clone());
-
 		if config::DOWNLOAD_NEW_GOSSIP {
+			let (mut persister, persistence_sender) =
+				GossipPersister::new(sync_completion_sender, Arc::clone(&self.network_graph));
 
-			let mut persister = GossipPersister::new(sync_completion_sender, self.network_graph.clone());
-
-			let persistence_sender = persister.gossip_persistence_sender.clone();
 			println!("Starting gossip download");
-			let download_future = tracking::download_gossip(persistence_sender, network_graph.clone());
-			tokio::spawn(async move {
-				// initiate the whole download stuff in the background
-				download_future.await;
-			});
+			tokio::spawn(tracking::download_gossip(persistence_sender, Arc::clone(&self.network_graph)));
 			println!("Starting gossip db persistence listener");
-			tokio::spawn(async move {
-				// initiate persistence of the gossip data
-				let persistence_future = persister.persist_gossip();
-				persistence_future.await;
-			});
-
+			tokio::spawn(async move { persister.persist_gossip().await; });
 		} else {
 			sync_completion_sender.send(()).await.unwrap();
 		}
@@ -122,7 +108,7 @@ impl RapidSyncProcessor {
 			println!("Initial sync complete!");
 
 			// start the gossip snapshotting service
-			snapshotter.snapshot_gossip().await;
+			Snapshotter::new(Arc::clone(&self.network_graph)).snapshot_gossip().await;
 		}
 	}
 

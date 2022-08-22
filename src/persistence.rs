@@ -11,22 +11,20 @@ use crate::{config, hex_utils, TestLogger};
 use crate::types::GossipMessage;
 
 pub(crate) struct GossipPersister {
-	pub(crate) gossip_persistence_sender: mpsc::Sender<GossipMessage>,
 	gossip_persistence_receiver: mpsc::Receiver<GossipMessage>,
 	server_sync_completion_sender: mpsc::Sender<()>,
 	network_graph: Arc<NetworkGraph<Arc<TestLogger>>>,
 }
 
 impl GossipPersister {
-	pub fn new(server_sync_completion_sender: mpsc::Sender<()>, network_graph: Arc<NetworkGraph<Arc<TestLogger>>>) -> Self {
+	pub fn new(server_sync_completion_sender: mpsc::Sender<()>, network_graph: Arc<NetworkGraph<Arc<TestLogger>>>) -> (Self, mpsc::Sender<GossipMessage>) {
 		let (gossip_persistence_sender, gossip_persistence_receiver) =
 			mpsc::channel::<GossipMessage>(100);
-		GossipPersister {
-			gossip_persistence_sender,
+		(GossipPersister {
 			gossip_persistence_receiver,
 			server_sync_completion_sender,
 			network_graph
-		}
+		}, gossip_persistence_sender)
 	}
 
 	pub(crate) async fn persist_gossip(&mut self) {

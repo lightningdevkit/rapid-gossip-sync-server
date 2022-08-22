@@ -4,7 +4,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bitcoin::hashes::hex::ToHex;
 use bitcoin::secp256k1::{PublicKey, SecretKey};
-use futures::executor;
 use lightning;
 use lightning::ln::peer_handler::{
 	ErroringMessageHandler, IgnoringMessageHandler, MessageHandler, PeerManager,
@@ -67,7 +66,7 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 	let mut connected_peer_count = 0;
 
 	for current_peer in peers {
-		let initial_connection_succeeded = monitor_peer_connection(current_peer, Arc::clone(&arc_peer_handler));
+		let initial_connection_succeeded = connect_peer(current_peer, Arc::clone(&arc_peer_handler)).await;
 		if initial_connection_succeeded {
 			connected_peer_count += 1;
 		}
@@ -156,28 +155,33 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 	});
 }
 
-fn monitor_peer_connection(current_peer: (PublicKey, SocketAddr), peer_manager: GossipPeerManager) -> bool {
-	let peer_manager_clone = Arc::clone(&peer_manager);
-	eprintln!("Connecting to peer {}@{}…", current_peer.0.to_hex(), current_peer.1.to_string());
-	let connection = executor::block_on(async move {
-		lightning_net_tokio::connect_outbound(
-			peer_manager_clone,
-			current_peer.0,
-			current_peer.1,
-		).await
-	});
-	let mut initial_connection_succeeded = false;
+async fn connect_peer(current_peer: (PublicKey, SocketAddr), peer_manager: GossipPeerManager) -> bool {
+	eprintln!("Connecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
+	let connection = lightning_net_tokio::connect_outbound(
+		Arc::clone(&peer_manager),
+		current_peer.0,
+		current_peer.1,
+	).await;
 	if let Some(disconnection_future) = connection {
 		eprintln!("Connected to peer {}@{}!", current_peer.0.to_hex(), current_peer.1.to_string());
-		initial_connection_succeeded = true;
-		let peer_manager_clone = Arc::clone(&peer_manager);
 		tokio::spawn(async move {
 			disconnection_future.await;
-			eprintln!("Disconnected from peer {}@{}", current_peer.0.to_hex(), current_peer.1.to_string());
-			monitor_peer_connection(current_peer.clone(), peer_manager_clone);
+			loop {
+				eprintln!("Reconnecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
+				if let Some(disconnection_future) = lightning_net_tokio::connect_outbound(
+					Arc::clone(&peer_manager),
+					current_peer.0,
+					current_peer.1,
+				).await {
+					disconnection_future.await;
+				} else {
+					tokio::time::sleep(Duration::from_secs(10)).await;
+				}
+			}
 		});
+		true
 	} else {
-		eprintln!("Failed to connect to peer {}@{}", current_peer.0.to_hex(), current_peer.1.to_string())
-	};
-	initial_connection_succeeded
+		eprintln!("Failed to connect to peer {}@{}", current_peer.0.to_hex(), current_peer.1.to_string());
+		false
+	}
 }

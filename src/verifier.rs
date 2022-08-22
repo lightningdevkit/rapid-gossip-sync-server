@@ -1,5 +1,4 @@
 use std::convert::TryInto;
-use std::sync::Arc;
 
 use bitcoin::{BlockHash, TxOut};
 use bitcoin::blockdata::block::Block;
@@ -13,30 +12,30 @@ use lightning_block_sync::rest::RestClient;
 use crate::config;
 
 pub(crate) struct ChainVerifier {
-	rest_client: Arc<RestClient>,
+	rest_client: RestClient,
 }
 
 struct RestBinaryResponse(Vec<u8>);
 
 impl ChainVerifier {
 	pub(crate) fn new() -> Self {
-		let rest_client = RestClient::new(config::bitcoin_rest_endpoint()).unwrap();
 		ChainVerifier {
-			rest_client: Arc::new(rest_client),
+			rest_client: RestClient::new(config::bitcoin_rest_endpoint()).unwrap(),
 		}
 	}
 
 	fn retrieve_block(&self, block_height: u32) -> Result<Block, AccessError> {
-		let rest_client = self.rest_client.clone();
 		tokio::task::block_in_place(move || { tokio::runtime::Handle::current().block_on(async move {
-			let block_hash_result = rest_client.request_resource::<BinaryResponse, RestBinaryResponse>(&format!("blockhashbyheight/{}.bin", block_height)).await;
+			let uri = format!("blockhashbyheight/{}.bin", block_height);
+			let block_hash_result =
+				self.rest_client.request_resource::<BinaryResponse, RestBinaryResponse>(&uri).await;
 			let block_hash: Vec<u8> = block_hash_result.map_err(|error| {
 				eprintln!("Could't find block hash at height {}: {}", block_height, error.to_string());
 				AccessError::UnknownChain
 			})?.0;
 			let block_hash = BlockHash::from_slice(&block_hash).unwrap();
 
-			let block_result = rest_client.get_block(&block_hash).await;
+			let block_result = self.rest_client.get_block(&block_hash).await;
 			let block = block_result.map_err(|error| {
 				eprintln!("Couldn't retrieve block {}: {:?} ({})", block_height, error, block_hash);
 				AccessError::UnknownChain

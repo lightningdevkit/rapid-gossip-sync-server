@@ -104,8 +104,8 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<DetectedGos
 				let new_message_count = total_message_count - previous_announcement_count - previous_update_count;
 
 				let was_previously_caught_up_with_gossip = is_caught_up_with_gossip;
-				// TODO: when connected to multiple peers, the message count never seems to stabilize
-				is_caught_up_with_gossip = counter.channel_announcements == previous_announcement_count && counter.channel_updates == previous_update_count && previous_announcement_count > 0 && previous_update_count > 0;
+				// TODO: make new message threshold (20) adjust based on connected peer count
+				is_caught_up_with_gossip = new_message_count < 20 && previous_announcement_count > 0 && previous_update_count > 0;
 				if new_message_count > 0 {
 					latest_new_gossip_time = Instant::now();
 				}

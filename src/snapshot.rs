@@ -117,7 +117,6 @@ impl Snapshotter {
 			fs::rename(&pending_snapshot_directory, &finalized_snapshot_directory).expect("Failed to finalize snapshot directory.");
 			fs::rename(&pending_symlink_directory, &finalized_symlink_directory).expect("Failed to finalize symlink directory.");
 
-
 			let remainder = timestamp_seen % round_day_seconds;
 			let time_until_next_day = round_day_seconds - remainder;
 

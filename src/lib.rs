@@ -27,7 +27,7 @@ use crate::lookup::DeltaSet;
 use crate::persistence::GossipPersister;
 use crate::serialization::UpdateSerializationMechanism;
 use crate::snapshot::Snapshotter;
-use crate::types::{GossipChainAccess, TestLogger};
+use crate::types::TestLogger;
 
 mod downloader;
 mod types;

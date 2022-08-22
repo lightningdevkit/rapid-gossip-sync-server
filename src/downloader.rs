@@ -7,8 +7,9 @@ use lightning::util::events::{MessageSendEvent, MessageSendEventsProvider};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 
-use crate::{GossipChainAccess, TestLogger};
-use crate::types::GossipMessage;
+use crate::TestLogger;
+use crate::types::{GossipMessage, GossipChainAccess};
+use crate::verifier::ChainVerifier;
 
 pub(crate) struct GossipCounter {
 	pub(crate) channel_announcements: u64,
@@ -29,9 +30,20 @@ impl GossipCounter {
 }
 
 pub(crate) struct GossipRouter {
-	pub(crate) native_router: Arc<P2PGossipSync<Arc<NetworkGraph<Arc<TestLogger>>>, GossipChainAccess, Arc<TestLogger>>>,
+	native_router: P2PGossipSync<Arc<NetworkGraph<Arc<TestLogger>>>, GossipChainAccess, Arc<TestLogger>>,
 	pub(crate) counter: RwLock<GossipCounter>,
-	pub(crate) sender: mpsc::Sender<GossipMessage>,
+	sender: mpsc::Sender<GossipMessage>,
+}
+
+impl GossipRouter {
+	pub(crate) fn new(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, sender: mpsc::Sender<GossipMessage>) -> Self {
+		Self {
+			native_router: P2PGossipSync::new(network_graph, Some(Arc::new(ChainVerifier::new())),
+				Arc::new(TestLogger::new())),
+			counter: RwLock::new(GossipCounter::new()),
+			sender
+		}
+	}
 }
 
 impl MessageSendEventsProvider for GossipRouter {

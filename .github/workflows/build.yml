@@ -16,6 +16,7 @@ jobs:
           - stable
           - 1.48.0
           - beta
+        pinning: [true, false]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source code
@@ -27,6 +28,7 @@ jobs:
           override: true
           profile: minimal
       - name: Pin dependencies
+        if: ${{ matrix.pinning }}
         run: |
           cargo update -p tokio-postgres --precise "0.7.5" --verbose
           cargo update -p postgres-types --precise "0.2.3" --verbose

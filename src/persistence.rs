@@ -1,5 +1,5 @@
 use std::fs::OpenOptions;
-use std::io::BufWriter;
+use std::io::{BufWriter, Write};
 use std::sync::Arc;
 use std::time::Instant;
 use lightning::routing::gossip::NetworkGraph;
@@ -87,7 +87,7 @@ impl GossipPersister {
 		let mut persistence_log_threshold = 10000;
 		let mut i = 0u32;
 		let mut server_sync_completion_sent = false;
-		let mut latest_graph_cache_time: Option<Instant> = None;
+		let mut latest_graph_cache_time = Instant::now();
 		// TODO: it would be nice to have some sort of timeout here so after 10 seconds of
 		// inactivity, some sort of message could be broadcast signaling the activation of request
 		// processing
@@ -98,15 +98,10 @@ impl GossipPersister {
 				println!("Persisting gossip message #{}", i);
 			}
 
-			if let Some(last_cache_time) = latest_graph_cache_time {
-				// has it been ten minutes? Just cache it
-				if last_cache_time.elapsed().as_secs() >= 600 {
-					self.persist_network_graph();
-					latest_graph_cache_time = Some(Instant::now());
-				}
-			} else {
-				// initialize graph cache timer
-				latest_graph_cache_time = Some(Instant::now());
+			// has it been ten minutes? Just cache it
+			if latest_graph_cache_time.elapsed().as_secs() >= 600 {
+				self.persist_network_graph();
+				latest_graph_cache_time = Instant::now();
 			}
 
 			match &gossip_message {
@@ -122,21 +117,6 @@ impl GossipPersister {
 						server_sync_completion_sent = true;
 						self.server_sync_completion_sender.send(()).await.unwrap();
 						println!("Server has been notified of persistence completion.");
-					}
-
-					// now, cache the persisted network graph
-					// also persist the network graph here
-					let mut too_soon = false;
-					if let Some(latest_graph_cache_time) = latest_graph_cache_time {
-						let time_since_last_cached = latest_graph_cache_time.elapsed().as_secs();
-						// don't cache more frequently than every 2 minutes
-						too_soon = time_since_last_cached < 120;
-					}
-					if too_soon {
-						println!("Network graph has been cached too recently.");
-					}else {
-						latest_graph_cache_time = Some(Instant::now());
-						self.persist_network_graph();
 					}
 				}
 				GossipMessage::ChannelAnnouncement(announcement) => {
@@ -246,6 +226,7 @@ impl GossipPersister {
 		self.network_graph.remove_stale_channels();
 		let mut writer = BufWriter::new(file);
 		self.network_graph.write(&mut writer).unwrap();
+		writer.flush().unwrap();
 		println!("Cached network graph!");
 	}
 }

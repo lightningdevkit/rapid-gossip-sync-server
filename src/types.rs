@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::ops::Deref;
 
 use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate};
 use lightning::ln::peer_handler::{ErroringMessageHandler, IgnoringMessageHandler, PeerManager};
@@ -8,7 +9,7 @@ use crate::downloader::GossipRouter;
 use crate::verifier::ChainVerifier;
 
 pub(crate) type GossipChainAccess = Arc<ChainVerifier>;
-pub(crate) type GossipPeerManager = Arc<PeerManager<lightning_net_tokio::SocketDescriptor, Arc<ErroringMessageHandler>, Arc<GossipRouter>, Arc<TestLogger>, Arc<IgnoringMessageHandler>>>;
+pub(crate) type GossipPeerManager = Arc<PeerManager<lightning_net_tokio::SocketDescriptor, ErroringMessageHandler, Arc<GossipRouter>, TestLogger, IgnoringMessageHandler>>;
 
 #[derive(Debug)]
 pub(crate) enum GossipMessage {
@@ -17,7 +18,12 @@ pub(crate) enum GossipMessage {
 	InitialSyncComplete,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct TestLogger {}
+impl Deref for TestLogger {
+	type Target = Self;
+	fn deref(&self) -> &Self { self }
+}
 
 impl TestLogger {
 	pub(crate) fn new() -> TestLogger {

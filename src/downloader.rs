@@ -7,8 +7,9 @@ use lightning::util::events::{MessageSendEvent, MessageSendEventsProvider};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 
-use crate::{GossipChainAccess, TestLogger};
-use crate::types::GossipMessage;
+use crate::TestLogger;
+use crate::types::{GossipMessage, GossipChainAccess};
+use crate::verifier::ChainVerifier;
 
 pub(crate) struct GossipCounter {
 	pub(crate) channel_announcements: u64,
@@ -29,9 +30,19 @@ impl GossipCounter {
 }
 
 pub(crate) struct GossipRouter {
-	pub(crate) native_router: Arc<P2PGossipSync<Arc<NetworkGraph<Arc<TestLogger>>>, GossipChainAccess, Arc<TestLogger>>>,
+	native_router: P2PGossipSync<Arc<NetworkGraph<TestLogger>>, GossipChainAccess, TestLogger>,
 	pub(crate) counter: RwLock<GossipCounter>,
-	pub(crate) sender: mpsc::Sender<GossipMessage>,
+	sender: mpsc::Sender<GossipMessage>,
+}
+
+impl GossipRouter {
+	pub(crate) fn new(network_graph: Arc<NetworkGraph<TestLogger>>, sender: mpsc::Sender<GossipMessage>) -> Self {
+		Self {
+			native_router: P2PGossipSync::new(network_graph, Some(Arc::new(ChainVerifier::new())), TestLogger::new()),
+			counter: RwLock::new(GossipCounter::new()),
+			sender
+		}
+	}
 }
 
 impl MessageSendEventsProvider for GossipRouter {
@@ -49,11 +60,9 @@ impl RoutingMessageHandler for GossipRouter {
 		let mut counter = self.counter.write().unwrap();
 
 		let output_value = self.native_router.handle_channel_announcement(msg).map_err(|error| {
-			let error_string = format!("{:?}", error);
-			if error_string.contains("announced on an unknown chain"){
-				return error;
+			if error.err.contains("didn't match on-chain script") {
+				counter.channel_announcements_with_mismatched_scripts += 1;
 			}
-			counter.channel_announcements_with_mismatched_scripts += 1;
 			error
 		})?;
 

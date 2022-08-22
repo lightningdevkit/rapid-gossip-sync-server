@@ -27,7 +27,7 @@ use crate::lookup::DeltaSet;
 use crate::persistence::GossipPersister;
 use crate::serialization::UpdateSerializationMechanism;
 use crate::snapshot::Snapshotter;
-use crate::types::{GossipChainAccess, TestLogger};
+use crate::types::TestLogger;
 
 mod downloader;
 mod types;
@@ -41,7 +41,7 @@ mod hex_utils;
 mod verifier;
 
 pub struct RapidSyncProcessor {
-	network_graph: Arc<NetworkGraph<Arc<TestLogger>>>,
+	network_graph: Arc<NetworkGraph<TestLogger>>,
 	pub initial_sync_complete: Arc<AtomicBool>,
 }
 
@@ -58,11 +58,10 @@ impl RapidSyncProcessor {
 	pub fn new() -> Self {
 		let logger = TestLogger::new();
 		let mut initial_sync_complete = false;
-		let arc_logger = Arc::new(logger);
 		let network_graph = if let Ok(file) = File::open(&config::network_graph_cache_path()) {
 			println!("Initializing from cached network graph…");
 			let mut buffered_reader = BufReader::new(file);
-			let network_graph_result = NetworkGraph::read(&mut buffered_reader, Arc::clone(&arc_logger));
+			let network_graph_result = NetworkGraph::read(&mut buffered_reader, logger);
 			if let Ok(network_graph) = network_graph_result {
 				initial_sync_complete = true;
 				network_graph.remove_stale_channels();
@@ -70,13 +69,12 @@ impl RapidSyncProcessor {
 				network_graph
 			} else {
 				println!("Initialization from cached network graph failed: {}", network_graph_result.err().unwrap());
-				NetworkGraph::new(genesis_block(Network::Bitcoin).header.block_hash(), arc_logger)
+				NetworkGraph::new(genesis_block(Network::Bitcoin).header.block_hash(), logger)
 			}
 		} else {
-			NetworkGraph::new(genesis_block(Network::Bitcoin).header.block_hash(), arc_logger)
+			NetworkGraph::new(genesis_block(Network::Bitcoin).header.block_hash(), logger)
 		};
 		let arc_network_graph = Arc::new(network_graph);
-		let (_sync_termination_sender, _sync_termination_receiver) = mpsc::channel::<()>(1);
 		Self {
 			network_graph: arc_network_graph,
 			initial_sync_complete: Arc::new(AtomicBool::new(initial_sync_complete)),
@@ -88,27 +86,14 @@ impl RapidSyncProcessor {
 		let (sync_completion_sender, mut sync_completion_receiver) = mpsc::channel::<()>(1);
 		let initial_sync_complete = self.initial_sync_complete.clone();
 
-		let network_graph = self.network_graph.clone();
-		let snapshotter = Snapshotter::new(network_graph.clone());
-
 		if config::DOWNLOAD_NEW_GOSSIP {
+			let (mut persister, persistence_sender) =
+				GossipPersister::new(sync_completion_sender, Arc::clone(&self.network_graph));
 
-			let mut persister = GossipPersister::new(sync_completion_sender, self.network_graph.clone());
-
-			let persistence_sender = persister.gossip_persistence_sender.clone();
 			println!("Starting gossip download");
-			let download_future = tracking::download_gossip(persistence_sender, network_graph.clone());
-			tokio::spawn(async move {
-				// initiate the whole download stuff in the background
-				download_future.await;
-			});
+			tokio::spawn(tracking::download_gossip(persistence_sender, Arc::clone(&self.network_graph)));
 			println!("Starting gossip db persistence listener");
-			tokio::spawn(async move {
-				// initiate persistence of the gossip data
-				let persistence_future = persister.persist_gossip();
-				persistence_future.await;
-			});
-
+			tokio::spawn(async move { persister.persist_gossip().await; });
 		} else {
 			sync_completion_sender.send(()).await.unwrap();
 		}
@@ -122,7 +107,7 @@ impl RapidSyncProcessor {
 			println!("Initial sync complete!");
 
 			// start the gossip snapshotting service
-			snapshotter.snapshot_gossip().await;
+			Snapshotter::new(Arc::clone(&self.network_graph)).snapshot_gossip().await;
 		}
 	}
 
@@ -131,7 +116,7 @@ impl RapidSyncProcessor {
 	}
 }
 
-async fn serialize_delta(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, last_sync_timestamp: u32, consider_intermediate_updates: bool) -> SerializedResponse {
+async fn serialize_delta(network_graph: Arc<NetworkGraph<TestLogger>>, last_sync_timestamp: u32, consider_intermediate_updates: bool) -> SerializedResponse {
 	let (client, connection) = lookup::connect_to_db().await;
 
 	tokio::spawn(async move {

@@ -9,11 +9,11 @@ use lightning::routing::gossip::NetworkGraph;
 use crate::{config, TestLogger};
 
 pub(crate) struct Snapshotter {
-	network_graph: Arc<NetworkGraph<Arc<TestLogger>>>,
+	network_graph: Arc<NetworkGraph<TestLogger>>,
 }
 
 impl Snapshotter {
-	pub fn new(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>) -> Self {
+	pub fn new(network_graph: Arc<NetworkGraph<TestLogger>>) -> Self {
 		Self { network_graph }
 	}
 
@@ -116,7 +116,6 @@ impl Snapshotter {
 			}
 			fs::rename(&pending_snapshot_directory, &finalized_snapshot_directory).expect("Failed to finalize snapshot directory.");
 			fs::rename(&pending_symlink_directory, &finalized_symlink_directory).expect("Failed to finalize symlink directory.");
-
 
 			let remainder = timestamp_seen % round_day_seconds;
 			let time_until_next_day = round_day_seconds - remainder;

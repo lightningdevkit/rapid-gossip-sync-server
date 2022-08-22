@@ -89,19 +89,30 @@ impl Snapshotter {
 				}
 			}
 
-			for i in 1..10_001u64 {
+			for i in 0..10_001u64 {
 				// let's create symlinks
 
 				// first, determine which snapshot range should be referenced
-				// find min(x) in snapshot_sync_day_factors where x >= i
-				let referenced_day_range = snapshot_sync_day_factors.iter().find(|x| {
-					x >= &&i
-				}).unwrap().clone();
+				let referenced_day_range = if i == 0 {
+					// special-case 0 to always refer to a full/initial sync
+					u64::MAX
+				} else {
+					// find min(x) in snapshot_sync_day_factors where x >= i
+					snapshot_sync_day_factors.iter().find(|x| {
+						x >= &&i
+					}).unwrap().clone()
+				};
 
 				let snapshot_filename = snapshot_filenames_by_day_range.get(&referenced_day_range).unwrap();
-				let simulated_last_sync_timestamp = timestamp_seen.saturating_sub(round_day_seconds.saturating_mul(i));
 				let relative_snapshot_path = format!("{}/{}", relative_symlink_to_snapshot_path, snapshot_filename);
-				let canonical_last_sync_timestamp = Self::round_down_to_nearest_multiple(simulated_last_sync_timestamp, round_day_seconds);
+
+				let canonical_last_sync_timestamp = if i == 0 {
+					// special-case 0 to always refer to a full/initial sync
+					0
+				} else {
+					let simulated_last_sync_timestamp = timestamp_seen.saturating_sub(round_day_seconds.saturating_mul(i));
+					Self::round_down_to_nearest_multiple(simulated_last_sync_timestamp, round_day_seconds)
+				};
 				let symlink_path = format!("{}/{}.bin", pending_symlink_directory, canonical_last_sync_timestamp);
 
 				println!("Symlinking: {} -> {} ({} -> {}", i, referenced_day_range, symlink_path, relative_snapshot_path);

@@ -9,11 +9,11 @@ use lightning::routing::gossip::NetworkGraph;
 use crate::{config, TestLogger};
 
 pub(crate) struct Snapshotter {
-	network_graph: Arc<NetworkGraph<Arc<TestLogger>>>,
+	network_graph: Arc<NetworkGraph<TestLogger>>,
 }
 
 impl Snapshotter {
-	pub fn new(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>) -> Self {
+	pub fn new(network_graph: Arc<NetworkGraph<TestLogger>>) -> Self {
 		Self { network_graph }
 	}
 

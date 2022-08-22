@@ -30,16 +30,15 @@ impl GossipCounter {
 }
 
 pub(crate) struct GossipRouter {
-	native_router: P2PGossipSync<Arc<NetworkGraph<Arc<TestLogger>>>, GossipChainAccess, Arc<TestLogger>>,
+	native_router: P2PGossipSync<Arc<NetworkGraph<TestLogger>>, GossipChainAccess, TestLogger>,
 	pub(crate) counter: RwLock<GossipCounter>,
 	sender: mpsc::Sender<GossipMessage>,
 }
 
 impl GossipRouter {
-	pub(crate) fn new(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, sender: mpsc::Sender<GossipMessage>) -> Self {
+	pub(crate) fn new(network_graph: Arc<NetworkGraph<TestLogger>>, sender: mpsc::Sender<GossipMessage>) -> Self {
 		Self {
-			native_router: P2PGossipSync::new(network_graph, Some(Arc::new(ChainVerifier::new())),
-				Arc::new(TestLogger::new())),
+			native_router: P2PGossipSync::new(network_graph, Some(Arc::new(ChainVerifier::new())), TestLogger::new()),
 			counter: RwLock::new(GossipCounter::new()),
 			sender
 		}

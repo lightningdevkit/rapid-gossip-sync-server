@@ -41,7 +41,7 @@ mod hex_utils;
 mod verifier;
 
 pub struct RapidSyncProcessor {
-	network_graph: Arc<NetworkGraph<Arc<TestLogger>>>,
+	network_graph: Arc<NetworkGraph<TestLogger>>,
 	pub initial_sync_complete: Arc<AtomicBool>,
 }
 
@@ -58,11 +58,10 @@ impl RapidSyncProcessor {
 	pub fn new() -> Self {
 		let logger = TestLogger::new();
 		let mut initial_sync_complete = false;
-		let arc_logger = Arc::new(logger);
 		let network_graph = if let Ok(file) = File::open(&config::network_graph_cache_path()) {
 			println!("Initializing from cached network graph…");
 			let mut buffered_reader = BufReader::new(file);
-			let network_graph_result = NetworkGraph::read(&mut buffered_reader, Arc::clone(&arc_logger));
+			let network_graph_result = NetworkGraph::read(&mut buffered_reader, logger);
 			if let Ok(network_graph) = network_graph_result {
 				initial_sync_complete = true;
 				network_graph.remove_stale_channels();
@@ -70,10 +69,10 @@ impl RapidSyncProcessor {
 				network_graph
 			} else {
 				println!("Initialization from cached network graph failed: {}", network_graph_result.err().unwrap());
-				NetworkGraph::new(genesis_block(Network::Bitcoin).header.block_hash(), arc_logger)
+				NetworkGraph::new(genesis_block(Network::Bitcoin).header.block_hash(), logger)
 			}
 		} else {
-			NetworkGraph::new(genesis_block(Network::Bitcoin).header.block_hash(), arc_logger)
+			NetworkGraph::new(genesis_block(Network::Bitcoin).header.block_hash(), logger)
 		};
 		let arc_network_graph = Arc::new(network_graph);
 		Self {
@@ -117,7 +116,7 @@ impl RapidSyncProcessor {
 	}
 }
 
-async fn serialize_delta(network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, last_sync_timestamp: u32, consider_intermediate_updates: bool) -> SerializedResponse {
+async fn serialize_delta(network_graph: Arc<NetworkGraph<TestLogger>>, last_sync_timestamp: u32, consider_intermediate_updates: bool) -> SerializedResponse {
 	let (client, connection) = lookup::connect_to_db().await;
 
 	tokio::spawn(async move {

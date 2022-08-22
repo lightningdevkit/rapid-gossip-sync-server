@@ -64,7 +64,7 @@ pub(super) async fn connect_to_db() -> (Client, Connection<Socket, NoTlsStream>)
 /// whether they had been seen before.
 /// Also include all announcements for which the first update was announced
 /// after `last_syc_timestamp`
-pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, network_graph: Arc<NetworkGraph<Arc<TestLogger>>>, client: &Client, last_sync_timestamp: u32) {
+pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, network_graph: Arc<NetworkGraph<TestLogger>>, client: &Client, last_sync_timestamp: u32) {
 	let last_sync_timestamp_object = SystemTime::UNIX_EPOCH.add(Duration::from_secs(last_sync_timestamp as u64));
 	println!("Obtaining channel ids from network graph");
 	let channel_ids = {

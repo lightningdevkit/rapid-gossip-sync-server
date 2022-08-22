@@ -10,15 +10,11 @@ use crate::verifier::ChainVerifier;
 pub(crate) type GossipChainAccess = Arc<ChainVerifier>;
 pub(crate) type GossipPeerManager = Arc<PeerManager<lightning_net_tokio::SocketDescriptor, Arc<ErroringMessageHandler>, Arc<GossipRouter>, Arc<TestLogger>, Arc<IgnoringMessageHandler>>>;
 
+#[derive(Debug)]
 pub(crate) enum GossipMessage {
 	ChannelAnnouncement(ChannelAnnouncement),
 	ChannelUpdate(ChannelUpdate),
 	InitialSyncComplete,
-}
-
-pub(crate) struct DetectedGossipMessage {
-	pub(crate) timestamp_seen: u32,
-	pub(crate) message: GossipMessage,
 }
 
 pub(crate) struct TestLogger {}

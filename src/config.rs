@@ -30,7 +30,7 @@ pub(crate) fn db_connection_config() -> Config {
 pub(crate) fn bitcoin_rest_endpoint() -> HttpEndpoint {
 	let host = env::var("BITCOIN_REST_DOMAIN").unwrap_or("127.0.0.1".to_string());
 	let port = env::var("BITCOIN_REST_PORT")
-		.unwrap_or("80".to_string())
+		.unwrap_or("8332".to_string())
 		.parse::<u16>()
 		.expect("BITCOIN_REST_PORT env variable must be a u16.");
 	let path = env::var("BITCOIN_REST_PATH").unwrap_or("/rest/".to_string());

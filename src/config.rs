@@ -15,13 +15,13 @@ pub(crate) fn network_graph_cache_path() -> &'static str {
 
 pub(crate) fn db_connection_config() -> Config {
 	let mut config = Config::new();
-	let host = env::var("RUST_LN_SYNC_DB_HOST").unwrap_or("localhost".to_string());
-	let user = env::var("RUST_LN_SYNC_DB_USER").unwrap_or("alice".to_string());
-	let db = env::var("RUST_LN_SYNC_DB_NAME").unwrap_or("ln_graph_sync".to_string());
+	let host = env::var("RAPID_GOSSIP_SYNC_SERVER_DB_HOST").unwrap_or("localhost".to_string());
+	let user = env::var("RAPID_GOSSIP_SYNC_SERVER_DB_USER").unwrap_or("alice".to_string());
+	let db = env::var("RAPID_GOSSIP_SYNC_SERVER_DB_NAME").unwrap_or("ln_graph_sync".to_string());
 	config.host(&host);
 	config.user(&user);
 	config.dbname(&db);
-	if let Ok(password) = env::var("RUST_LN_SYNC_DB_PASSWORD") {
+	if let Ok(password) = env::var("RAPID_GOSSIP_SYNC_SERVER_DB_PASSWORD") {
 		config.password(&password);
 	}
 	config

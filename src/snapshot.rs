@@ -32,9 +32,9 @@ impl Snapshotter {
 		// this is gonna be a never-ending background job
 		loop {
 			// 1. get the current timestamp
-			let timestamp_seen = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-			let filename_timestamp = Self::round_down_to_nearest_multiple(timestamp_seen, round_day_seconds);
-			println!("Capturing snapshots at {} for: {}", timestamp_seen, filename_timestamp);
+			let snapshot_generation_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+			let reference_timestamp = Self::round_down_to_nearest_multiple(snapshot_generation_timestamp, round_day_seconds);
+			println!("Capturing snapshots at {} for: {}", snapshot_generation_timestamp, reference_timestamp);
 
 			// 2. sleep until the next round 24 hours
 			// 3. refresh all snapshots
@@ -51,8 +51,6 @@ impl Snapshotter {
 			// 6 (daily) + 3 (weekly) + 1 (total) = 10 cached snapshots
 			// The snapshots, unlike dynamic updates, should account for all intermediate
 			// channel updates
-			//
-
 
 			// purge and recreate the pending directories
 			if fs::metadata(&pending_snapshot_directory).is_ok(){
@@ -67,7 +65,7 @@ impl Snapshotter {
 			let mut snapshot_sync_timestamps: Vec<(u64, u64)> = Vec::new();
 			for factor in &snapshot_sync_day_factors {
 				// basically timestamp - day_seconds * factor
-				let timestamp = timestamp_seen.saturating_sub(round_day_seconds.saturating_mul(factor.clone()));
+				let timestamp = reference_timestamp.saturating_sub(round_day_seconds.saturating_mul(factor.clone()));
 				snapshot_sync_timestamps.push((factor.clone(), timestamp));
 			};
 
@@ -81,7 +79,7 @@ impl Snapshotter {
 					let snapshot = super::serialize_delta(network_graph_clone, current_last_sync_timestamp.clone() as u32, true).await;
 
 					// persist the snapshot and update the symlink
-					let snapshot_filename = format!("snapshot__calculated-at:{}__range:{}-days__previous-sync:{}.lngossip", filename_timestamp, day_range, current_last_sync_timestamp);
+					let snapshot_filename = format!("snapshot__calculated-at:{}__range:{}-days__previous-sync:{}.lngossip", reference_timestamp, day_range, current_last_sync_timestamp);
 					let snapshot_path = format!("{}/{}", pending_snapshot_directory, snapshot_filename);
 					println!("Persisting {}-day snapshot: {} ({} messages, {} announcements, {} updates ({} full, {} incremental))", day_range, snapshot_filename, snapshot.message_count, snapshot.announcement_count, snapshot.update_count, snapshot.update_count_full, snapshot.update_count_incremental);
 					fs::write(&snapshot_path, snapshot.data).unwrap();
@@ -110,8 +108,7 @@ impl Snapshotter {
 					// special-case 0 to always refer to a full/initial sync
 					0
 				} else {
-					let simulated_last_sync_timestamp = timestamp_seen.saturating_sub(round_day_seconds.saturating_mul(i));
-					Self::round_down_to_nearest_multiple(simulated_last_sync_timestamp, round_day_seconds)
+					reference_timestamp.saturating_sub(round_day_seconds.saturating_mul(i))
 				};
 				let symlink_path = format!("{}/{}.bin", pending_symlink_directory, canonical_last_sync_timestamp);
 
@@ -128,7 +125,9 @@ impl Snapshotter {
 			fs::rename(&pending_snapshot_directory, &finalized_snapshot_directory).expect("Failed to finalize snapshot directory.");
 			fs::rename(&pending_symlink_directory, &finalized_symlink_directory).expect("Failed to finalize symlink directory.");
 
-			let remainder = timestamp_seen % round_day_seconds;
+			// constructing the snapshots may have taken a while
+			let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+			let remainder = current_time % round_day_seconds;
 			let time_until_next_day = round_day_seconds - remainder;
 
 			println!("Sleeping until next snapshot capture: {}s", time_until_next_day);

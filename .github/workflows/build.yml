@@ -36,7 +36,6 @@ jobs:
           cargo update -p tokio-postgres --precise "0.7.5" --verbose
           cargo update -p postgres-types --precise "0.2.3" --verbose
           cargo update -p tokio --precise "1.14.1" --verbose
-          cargo update -p cpufeatures --precise "0.2.2" --verbose # https://github.com/RustCrypto/utils/issues/795
       - name: Build on Rust ${{ matrix.toolchain }}
         run: |
           cargo build --verbose --color always

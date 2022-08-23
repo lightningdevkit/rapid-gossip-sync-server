@@ -15,7 +15,6 @@ pub(crate) type GossipPeerManager = Arc<PeerManager<lightning_net_tokio::SocketD
 pub(crate) enum GossipMessage {
 	ChannelAnnouncement(ChannelAnnouncement),
 	ChannelUpdate(ChannelUpdate),
-	InitialSyncComplete,
 }
 
 #[derive(Clone, Copy)]

@@ -16,7 +16,9 @@ use crate::{config, TestLogger};
 use crate::downloader::GossipRouter;
 use crate::types::{GossipMessage, GossipPeerManager};
 
-pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessage>, network_graph: Arc<NetworkGraph<TestLogger>>) {
+pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessage>,
+		completion_sender: mpsc::Sender<()>,
+		network_graph: Arc<NetworkGraph<TestLogger>>) {
 	let mut key = [0; 32];
 	let mut random_data = [0; 32];
 	thread_rng().fill_bytes(&mut key);
@@ -114,7 +116,7 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessa
 
 			if needs_to_notify_persister {
 				needs_to_notify_persister = false;
-				persistence_sender.send(GossipMessage::InitialSyncComplete).await.unwrap();
+				completion_sender.send(()).await.unwrap();
 			}
 		}
 	});

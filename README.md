@@ -19,7 +19,7 @@ can be made by setting environment variables, whose usage is as follows:
 | RAPID_GOSSIP_SYNC_SERVER_DB_PASSWORD | _None_        | Password to access Postgres                                                                                |
 | RAPID_GOSSIP_SYNC_SERVER_DB_NAME     | ln_graph_sync | Name of the database to be used for gossip storage                                                         |
 | BITCOIN_REST_DOMAIN                  | 127.0.0.1     | Domain of the [bitcoind REST server](https://github.com/bitcoin/bitcoin/blob/master/doc/REST-interface.md) |
-| BITCOIN_REST_PORT                    | 80            | HTTP port of the bitcoind REST server                                                                      |
+| BITCOIN_REST_PORT                    | 8332          | HTTP port of the bitcoind REST server                                                                      |
 | BITCOIN_REST_PATH                    | /rest/        | Path infix to access the bitcoind REST endpoints                                                           |
 
 Notably, one property needs to be modified in code, namely the `ln_peers()` method. It specifies how

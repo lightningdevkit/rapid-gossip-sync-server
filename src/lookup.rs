@@ -10,7 +10,7 @@ use lightning::util::ser::Readable;
 use tokio_postgres::{Client, Connection, NoTls, Socket};
 use tokio_postgres::tls::NoTlsStream;
 
-use crate::{config, hex_utils, TestLogger};
+use crate::{config, TestLogger};
 use crate::serialization::MutatedProperties;
 
 /// The delta set needs to be a BTreeMap so the keys are sorted.
@@ -73,8 +73,8 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 		let channel_iterator = read_only_graph.channels().into_iter();
 		channel_iterator
 			.filter(|c| c.1.announcement_message.is_some())
-			.map(|c| hex_utils::hex_str(&c.1.announcement_message.as_ref().unwrap().contents.short_channel_id.to_be_bytes()))
-			.collect::<Vec<String>>()
+			.map(|c| c.1.announcement_message.as_ref().unwrap().contents.short_channel_id as i64)
+			.collect::<Vec<_>>()
 	};
 
 	println!("Obtaining corresponding database entries");
@@ -135,19 +135,17 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 		last_seen_update_ids.push(update_id);
 		non_intermediate_ids.insert(update_id);
 
-		let direction: i32 = current_reference.get("direction");
+		let direction: bool = current_reference.get("direction");
 		let blob: Vec<u8> = current_reference.get("blob_signed");
 		let mut readable = Cursor::new(blob);
 		let unsigned_channel_update = ChannelUpdate::read(&mut readable).unwrap().contents;
 		let scid = unsigned_channel_update.short_channel_id;
 
 		let current_channel_delta = delta_set.entry(scid).or_insert(ChannelDelta::default());
-		let mut update_delta = if direction == 0 {
+		let mut update_delta = if !direction {
 			(*current_channel_delta).updates.0.get_or_insert(DirectedUpdateDelta::default())
-		} else if direction == 1 {
-			(*current_channel_delta).updates.1.get_or_insert(DirectedUpdateDelta::default())
 		} else {
-			panic!("Channel direction must be binary!")
+			(*current_channel_delta).updates.1.get_or_insert(DirectedUpdateDelta::default())
 		};
 		update_delta.last_update_before_seen = Some(unsigned_channel_update);
 	}
@@ -179,7 +177,7 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 		}
 		intermediate_update_count += 1;
 
-		let direction: i32 = intermediate_update.get("direction");
+		let direction: bool = intermediate_update.get("direction");
 		let current_seen_timestamp_object: SystemTime = intermediate_update.get("seen");
 		let current_seen_timestamp: u32 = current_seen_timestamp_object.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u32;
 		let blob: Vec<u8> = intermediate_update.get("blob_signed");
@@ -194,23 +192,21 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 
 		// get the write configuration for this particular channel's directional details
 		let current_channel_delta = delta_set.entry(scid).or_insert(ChannelDelta::default());
-		let update_delta = if direction == 0 {
+		let update_delta = if !direction {
 			(*current_channel_delta).updates.0.get_or_insert(DirectedUpdateDelta::default())
-		} else if direction == 1 {
-			(*current_channel_delta).updates.1.get_or_insert(DirectedUpdateDelta::default())
 		} else {
-			panic!("Channel direction must be binary!")
+			(*current_channel_delta).updates.1.get_or_insert(DirectedUpdateDelta::default())
 		};
 
 		{
 			// handle the latest deltas
-			if direction == 0 && !previously_seen_directions.0 {
+			if !direction && !previously_seen_directions.0 {
 				previously_seen_directions.0 = true;
 				update_delta.latest_update_after_seen = Some(UpdateDelta {
 					seen: current_seen_timestamp,
 					update: unsigned_channel_update.clone(),
 				});
-			} else if direction == 1 && !previously_seen_directions.1 {
+			} else if direction && !previously_seen_directions.1 {
 				previously_seen_directions.1 = true;
 				update_delta.latest_update_after_seen = Some(UpdateDelta {
 					seen: current_seen_timestamp,

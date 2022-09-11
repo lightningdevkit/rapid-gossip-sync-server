@@ -109,8 +109,7 @@ impl GossipPersister {
 
 			match &gossip_message {
 				GossipMessage::ChannelAnnouncement(announcement) => {
-					let scid = announcement.contents.short_channel_id;
-					let scid_hex = hex_utils::hex_str(&scid.to_be_bytes());
+					let scid = announcement.contents.short_channel_id as i64;
 					// scid is 8 bytes
 					// block height is the first three bytes
 					// to obtain block height, shift scid right by 5 bytes (40 bits)
@@ -126,7 +125,7 @@ impl GossipPersister {
 							block_height, \
 							announcement_signed \
 						) VALUES ($1, $2, $3) ON CONFLICT (short_channel_id) DO NOTHING", &[
-							&scid_hex,
+							&scid,
 							&block_height,
 							&announcement_signed
 						]).await;
@@ -135,7 +134,7 @@ impl GossipPersister {
 					}
 				}
 				GossipMessage::ChannelUpdate(update) => {
-					let scid = update.contents.short_channel_id;
+					let scid = update.contents.short_channel_id as i64;
 					let scid_hex = hex_utils::hex_str(&scid.to_be_bytes());
 
 					let timestamp = update.contents.timestamp as i64;
@@ -173,10 +172,10 @@ impl GossipPersister {
 							blob_signed \
 						) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)  ON CONFLICT (composite_index) DO NOTHING", &[
 							&composite_index,
-							&scid_hex,
+							&scid,
 							&timestamp,
 							&channel_flags,
-							&direction,
+							&(direction == 1),
 							&disable,
 							&cltv_expiry_delta,
 							&htlc_minimum_msat,

@@ -36,10 +36,12 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessa
 	let message_handler = MessageHandler {
 		chan_handler: ErroringMessageHandler::new(),
 		route_handler: Arc::clone(&router),
+		onion_message_handler: IgnoringMessageHandler {},
 	};
 	let peer_handler = Arc::new(PeerManager::new(
 		message_handler,
 		our_node_secret,
+		0xdeadbeef,
 		&random_data,
 		TestLogger::new(),
 		IgnoringMessageHandler {},

@@ -1,6 +1,7 @@
 use std::sync::{Arc, RwLock};
 
 use bitcoin::secp256k1::PublicKey;
+use lightning::ln::features::{InitFeatures, NodeFeatures};
 use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, Init, LightningError, NodeAnnouncement, QueryChannelRange, QueryShortChannelIds, ReplyChannelRange, ReplyShortChannelIdsEnd, RoutingMessageHandler};
 use lightning::routing::gossip::{NetworkGraph, P2PGossipSync};
 use lightning::util::events::{MessageSendEvent, MessageSendEventsProvider};
@@ -97,12 +98,12 @@ impl RoutingMessageHandler for GossipRouter {
 		Ok(output_value)
 	}
 
-	fn get_next_channel_announcements(&self, starting_point: u64, batch_amount: u8) -> Vec<(ChannelAnnouncement, Option<ChannelUpdate>, Option<ChannelUpdate>)> {
-		self.native_router.get_next_channel_announcements(starting_point, batch_amount)
+	fn get_next_channel_announcement(&self, starting_point: u64) -> Option<(ChannelAnnouncement, Option<ChannelUpdate>, Option<ChannelUpdate>)> {
+		self.native_router.get_next_channel_announcement(starting_point)
 	}
 
-	fn get_next_node_announcements(&self, starting_point: Option<&PublicKey>, batch_amount: u8) -> Vec<NodeAnnouncement> {
-		self.native_router.get_next_node_announcements(starting_point, batch_amount)
+	fn get_next_node_announcement(&self, starting_point: Option<&PublicKey>) -> Option<NodeAnnouncement> {
+		self.native_router.get_next_node_announcement(starting_point)
 	}
 
 	fn peer_connected(&self, their_node_id: &PublicKey, init: &Init) {
@@ -123,5 +124,13 @@ impl RoutingMessageHandler for GossipRouter {
 
 	fn handle_query_short_channel_ids(&self, their_node_id: &PublicKey, msg: QueryShortChannelIds) -> Result<(), LightningError> {
 		self.native_router.handle_query_short_channel_ids(their_node_id, msg)
+	}
+
+	fn provided_init_features(&self, their_node_id: &PublicKey) -> InitFeatures {
+		self.native_router.provided_init_features(their_node_id)
+	}
+
+	fn provided_node_features(&self) -> NodeFeatures {
+		self.native_router.provided_node_features()
 	}
 }

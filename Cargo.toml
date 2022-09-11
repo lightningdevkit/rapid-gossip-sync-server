@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2018"
 
 [dependencies]
-bitcoin = "0.28.1"
-lightning = { version = "0.0.110" }
-lightning-block-sync = { version = "0.0.110", features=["rest-client"] }
-lightning-net-tokio = { version = "0.0.110" }
+bitcoin = "0.29"
+lightning = { version = "0.0.111" }
+lightning-block-sync = { version = "0.0.111", features=["rest-client"] }
+lightning-net-tokio = { version = "0.0.111" }
 tokio = { version = "1.14.1", features = ["full"] }
 tokio-postgres = { version="0.7.5" }
 futures = "0.3"

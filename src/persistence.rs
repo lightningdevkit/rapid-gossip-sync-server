@@ -27,7 +27,7 @@ impl GossipPersister {
 
 	pub(crate) async fn persist_gossip(&mut self) {
 		let connection_config = config::db_connection_config();
-		let (client, connection) =
+		let (mut client, connection) =
 			connection_config.connect(NoTls).await.unwrap();
 
 		tokio::spawn(async move {
@@ -43,6 +43,11 @@ impl GossipPersister {
 				.await;
 			if let Err(initialization_error) = initialization {
 				panic!("db init error: {}", initialization_error);
+			}
+
+			let cur_schema = client.query("SELECT db_schema FROM config WHERE id = $1", &[&1]).await.unwrap();
+			if !cur_schema.is_empty() {
+				config::upgrade_db(cur_schema[0].get(0), &mut client).await;
 			}
 
 			let initialization = client

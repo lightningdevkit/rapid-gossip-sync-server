@@ -84,6 +84,13 @@ pub(crate) fn db_index_creation_query() -> &'static str {
 	"
 }
 
+pub(crate) async fn upgrade_db(schema: i32, client: &mut tokio_postgres::Client) {
+	match schema {
+		SCHEMA_VERSION => {},
+		_ => panic!("Unknown schema in db: {}, we support up to {}", schema, SCHEMA_VERSION),
+	}
+}
+
 /// EDIT ME
 pub(crate) fn ln_peers() -> Vec<(PublicKey, SocketAddr)> {
 	vec![

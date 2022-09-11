@@ -5,7 +5,7 @@ use lightning_block_sync::http::HttpEndpoint;
 use tokio_postgres::Config;
 use crate::hex_utils;
 
-pub(crate) const SCHEMA_VERSION: i32 = 1;
+pub(crate) const SCHEMA_VERSION: i32 = 2;
 pub(crate) const SNAPSHOT_CALCULATION_INTERVAL: u32 = 3600 * 24; // every 24 hours, in seconds
 pub(crate) const DOWNLOAD_NEW_GOSSIP: bool = true;
 
@@ -49,7 +49,6 @@ pub(crate) fn db_announcement_table_creation_query() -> &'static str {
 		id SERIAL PRIMARY KEY,
 		short_channel_id character varying(255) NOT NULL UNIQUE,
 		block_height integer,
-		chain_hash character varying(255),
 		announcement_signed BYTEA,
 		seen timestamp NOT NULL DEFAULT NOW()
 	)"
@@ -59,7 +58,6 @@ pub(crate) fn db_channel_update_table_creation_query() -> &'static str {
 	"CREATE TABLE IF NOT EXISTS channel_updates (
 		id SERIAL PRIMARY KEY,
 		composite_index character varying(255) UNIQUE,
-		chain_hash character varying(255),
 		short_channel_id character varying(255),
 		timestamp bigint,
 		channel_flags integer,
@@ -85,9 +83,15 @@ pub(crate) fn db_index_creation_query() -> &'static str {
 }
 
 pub(crate) async fn upgrade_db(schema: i32, client: &mut tokio_postgres::Client) {
-	match schema {
-		SCHEMA_VERSION => {},
-		_ => panic!("Unknown schema in db: {}, we support up to {}", schema, SCHEMA_VERSION),
+	if schema == 1 {
+		let tx = client.transaction().await.unwrap();
+		tx.execute("ALTER TABLE channel_updates DROP COLUMN chain_hash", &[]).await.unwrap();
+		tx.execute("ALTER TABLE channel_announcements DROP COLUMN chain_hash", &[]).await.unwrap();
+		tx.execute("UPDATE config SET db_schema = 2 WHERE id = 1", &[]).await.unwrap();
+		tx.commit().await.unwrap();
+	}
+	if schema <= 1 || schema > SCHEMA_VERSION {
+		panic!("Unknown schema in db: {}, we support up to {}", schema, SCHEMA_VERSION);
 	}
 }
 

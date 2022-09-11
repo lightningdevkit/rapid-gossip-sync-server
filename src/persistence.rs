@@ -115,8 +115,6 @@ impl GossipPersister {
 					// block height is the first three bytes
 					// to obtain block height, shift scid right by 5 bytes (40 bits)
 					let block_height = (scid >> 5 * 8) as i32;
-					let chain_hash = announcement.contents.chain_hash.as_ref();
-					let chain_hash_hex = hex_utils::hex_str(chain_hash);
 
 					// start with the type prefix, which is already known a priori
 					let mut announcement_signed = Vec::new();
@@ -126,12 +124,10 @@ impl GossipPersister {
 						.execute("INSERT INTO channel_announcements (\
 							short_channel_id, \
 							block_height, \
-							chain_hash, \
 							announcement_signed \
-						) VALUES ($1, $2, $3, $4) ON CONFLICT (short_channel_id) DO NOTHING", &[
+						) VALUES ($1, $2, $3) ON CONFLICT (short_channel_id) DO NOTHING", &[
 							&scid_hex,
 							&block_height,
-							&chain_hash_hex,
 							&announcement_signed
 						]).await;
 					if result.is_err() {
@@ -141,9 +137,6 @@ impl GossipPersister {
 				GossipMessage::ChannelUpdate(update) => {
 					let scid = update.contents.short_channel_id;
 					let scid_hex = hex_utils::hex_str(&scid.to_be_bytes());
-
-					let chain_hash = update.contents.chain_hash.as_ref();
-					let chain_hash_hex = hex_utils::hex_str(chain_hash);
 
 					let timestamp = update.contents.timestamp as i64;
 
@@ -167,7 +160,6 @@ impl GossipPersister {
 					let result = client
 						.execute("INSERT INTO channel_updates (\
 							composite_index, \
-							chain_hash, \
 							short_channel_id, \
 							timestamp, \
 							channel_flags, \
@@ -179,9 +171,8 @@ impl GossipPersister {
 							fee_proportional_millionths, \
 							htlc_maximum_msat, \
 							blob_signed \
-						) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)  ON CONFLICT (composite_index) DO NOTHING", &[
+						) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)  ON CONFLICT (composite_index) DO NOTHING", &[
 							&composite_index,
-							&chain_hash_hex,
 							&scid_hex,
 							&timestamp,
 							&channel_flags,

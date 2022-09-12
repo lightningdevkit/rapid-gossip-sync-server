@@ -21,13 +21,14 @@ pub fn to_vec(hex: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-#[inline]
-pub fn hex_str(value: &[u8]) -> String {
-    let mut res = String::with_capacity(64);
-    for v in value {
-        res += &format!("{:02x}", v);
-    }
-    res
+pub fn to_composite_index(scid: i64, timestamp: i64, direction: bool) -> String {
+	let scid_be = scid.to_be_bytes();
+	let res = format!("{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}:{}:{}",
+		scid_be[0], scid_be[1], scid_be[2], scid_be[3],
+		scid_be[4], scid_be[5], scid_be[6], scid_be[7],
+		timestamp, direction as u8);
+	assert_eq!(res.len(), 29); // Our SQL Type requires len of 29
+	res
 }
 
 pub fn to_compressed_pubkey(hex: &str) -> Option<PublicKey> {

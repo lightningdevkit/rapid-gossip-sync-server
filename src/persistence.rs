@@ -135,15 +135,13 @@ impl GossipPersister {
 				}
 				GossipMessage::ChannelUpdate(update) => {
 					let scid = update.contents.short_channel_id as i64;
-					let scid_hex = hex_utils::hex_str(&scid.to_be_bytes());
 
 					let timestamp = update.contents.timestamp as i64;
 
-					let channel_flags = update.contents.flags as i32;
-					let direction = channel_flags & 1;
-					let disable = (channel_flags & 2) > 0;
+					let direction = (update.contents.flags & 1) == 1;
+					let disable = (update.contents.flags & 2) > 0;
 
-					let composite_index = format!("{}:{}:{}", scid_hex, timestamp, direction);
+					let composite_index = hex_utils::to_composite_index(scid, timestamp, direction);
 
 					let cltv_expiry_delta = update.contents.cltv_expiry_delta as i32;
 					let htlc_minimum_msat = update.contents.htlc_minimum_msat as i64;
@@ -174,8 +172,8 @@ impl GossipPersister {
 							&composite_index,
 							&scid,
 							&timestamp,
-							&channel_flags,
-							&(direction == 1),
+							&(update.contents.flags as i32),
+							&direction,
 							&disable,
 							&cltv_expiry_delta,
 							&htlc_minimum_msat,

@@ -11,7 +11,7 @@ use crate::hex_utils;
 
 use futures::stream::{FuturesUnordered, StreamExt};
 
-pub(crate) const SCHEMA_VERSION: i32 = 6;
+pub(crate) const SCHEMA_VERSION: i32 = 7;
 pub(crate) const SNAPSHOT_CALCULATION_INTERVAL: u32 = 3600 * 24; // every 24 hours, in seconds
 pub(crate) const DOWNLOAD_NEW_GOSSIP: bool = true;
 
@@ -60,21 +60,19 @@ pub(crate) fn db_announcement_table_creation_query() -> &'static str {
 }
 
 pub(crate) fn db_channel_update_table_creation_query() -> &'static str {
-	// We'll run out of room in composite index at block 8,388,608 or in the year 2286
 	"CREATE TABLE IF NOT EXISTS channel_updates (
 		id SERIAL PRIMARY KEY,
-		composite_index character(29) UNIQUE,
 		short_channel_id bigint NOT NULL,
-		timestamp bigint,
-		channel_flags smallint,
+		timestamp bigint NOT NULL,
+		channel_flags smallint NOT NULL,
 		direction boolean NOT NULL,
-		disable boolean,
-		cltv_expiry_delta integer,
-		htlc_minimum_msat bigint,
-		fee_base_msat integer,
-		fee_proportional_millionths integer,
-		htlc_maximum_msat bigint,
-		blob_signed BYTEA,
+		disable boolean NOT NULL,
+		cltv_expiry_delta integer NOT NULL,
+		htlc_minimum_msat bigint NOT NULL,
+		fee_base_msat integer NOT NULL,
+		fee_proportional_millionths integer NOT NULL,
+		htlc_maximum_msat bigint NOT NULL,
+		blob_signed BYTEA NOT NULL,
 		seen timestamp NOT NULL DEFAULT NOW()
 	)"
 }
@@ -87,6 +85,7 @@ pub(crate) fn db_index_creation_query() -> &'static str {
 	CREATE INDEX IF NOT EXISTS channel_updates_seen ON channel_updates(seen);
 	CREATE INDEX IF NOT EXISTS channel_updates_scid_seen ON channel_updates(short_channel_id, seen);
 	CREATE INDEX IF NOT EXISTS channel_updates_scid_dir_seen ON channel_updates(short_channel_id ASC, direction ASC, seen DESC);
+	CREATE UNIQUE INDEX IF NOT EXISTS channel_updates_key ON channel_updates (short_channel_id, direction, timestamp);
 	"
 }
 
@@ -173,6 +172,22 @@ pub(crate) async fn upgrade_db(schema: i32, client: &mut tokio_postgres::Client)
 		tx.execute("ALTER TABLE channel_updates ALTER channel_flags SET DATA TYPE smallint", &[]).await.unwrap();
 		tx.execute("ALTER TABLE channel_announcements DROP COLUMN block_height", &[]).await.unwrap();
 		tx.execute("UPDATE config SET db_schema = 6 WHERE id = 1", &[]).await.unwrap();
+		tx.commit().await.unwrap();
+	}
+	if schema >= 1 && schema <= 6 {
+		let tx = client.transaction().await.unwrap();
+		tx.execute("ALTER TABLE channel_updates DROP COLUMN composite_index", &[]).await.unwrap();
+		tx.execute("ALTER TABLE channel_updates ALTER timestamp SET NOT NULL", &[]).await.unwrap();
+		tx.execute("ALTER TABLE channel_updates ALTER channel_flags SET NOT NULL", &[]).await.unwrap();
+		tx.execute("ALTER TABLE channel_updates ALTER disable SET NOT NULL", &[]).await.unwrap();
+		tx.execute("ALTER TABLE channel_updates ALTER cltv_expiry_delta SET NOT NULL", &[]).await.unwrap();
+		tx.execute("ALTER TABLE channel_updates ALTER htlc_minimum_msat SET NOT NULL", &[]).await.unwrap();
+		tx.execute("ALTER TABLE channel_updates ALTER fee_base_msat SET NOT NULL", &[]).await.unwrap();
+		tx.execute("ALTER TABLE channel_updates ALTER fee_proportional_millionths SET NOT NULL", &[]).await.unwrap();
+		tx.execute("ALTER TABLE channel_updates ALTER htlc_maximum_msat SET NOT NULL", &[]).await.unwrap();
+		tx.execute("ALTER TABLE channel_updates ALTER blob_signed SET NOT NULL", &[]).await.unwrap();
+		tx.execute("CREATE UNIQUE INDEX channel_updates_key ON channel_updates (short_channel_id, direction, timestamp)", &[]).await.unwrap();
+		tx.execute("UPDATE config SET db_schema = 7 WHERE id = 1", &[]).await.unwrap();
 		tx.commit().await.unwrap();
 	}
 	if schema <= 1 || schema > SCHEMA_VERSION {

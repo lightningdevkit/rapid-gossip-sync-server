@@ -7,7 +7,7 @@ use lightning::util::ser::Writeable;
 use tokio::sync::mpsc;
 use tokio_postgres::NoTls;
 
-use crate::{config, hex_utils, TestLogger};
+use crate::{config, TestLogger};
 use crate::types::GossipMessage;
 
 pub(crate) struct GossipPersister {
@@ -135,8 +135,6 @@ impl GossipPersister {
 					let direction = (update.contents.flags & 1) == 1;
 					let disable = (update.contents.flags & 2) > 0;
 
-					let composite_index = hex_utils::to_composite_index(scid, timestamp, direction);
-
 					let cltv_expiry_delta = update.contents.cltv_expiry_delta as i32;
 					let htlc_minimum_msat = update.contents.htlc_minimum_msat as i64;
 					let fee_base_msat = update.contents.fee_base_msat as i32;
@@ -150,7 +148,6 @@ impl GossipPersister {
 
 					let result = client
 						.execute("INSERT INTO channel_updates (\
-							composite_index, \
 							short_channel_id, \
 							timestamp, \
 							channel_flags, \
@@ -162,8 +159,7 @@ impl GossipPersister {
 							fee_proportional_millionths, \
 							htlc_maximum_msat, \
 							blob_signed \
-						) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)  ON CONFLICT (composite_index) DO NOTHING", &[
-							&composite_index,
+						) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)  ON CONFLICT DO NOTHING", &[
 							&scid,
 							&timestamp,
 							&(update.contents.flags as i16),

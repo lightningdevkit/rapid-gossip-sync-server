@@ -110,10 +110,6 @@ impl GossipPersister {
 			match &gossip_message {
 				GossipMessage::ChannelAnnouncement(announcement) => {
 					let scid = announcement.contents.short_channel_id as i64;
-					// scid is 8 bytes
-					// block height is the first three bytes
-					// to obtain block height, shift scid right by 5 bytes (40 bits)
-					let block_height = (scid >> 5 * 8) as i32;
 
 					// start with the type prefix, which is already known a priori
 					let mut announcement_signed = Vec::new();
@@ -122,11 +118,9 @@ impl GossipPersister {
 					let result = client
 						.execute("INSERT INTO channel_announcements (\
 							short_channel_id, \
-							block_height, \
 							announcement_signed \
-						) VALUES ($1, $2, $3) ON CONFLICT (short_channel_id) DO NOTHING", &[
+						) VALUES ($1, $2) ON CONFLICT (short_channel_id) DO NOTHING", &[
 							&scid,
-							&block_height,
 							&announcement_signed
 						]).await;
 					if result.is_err() {
@@ -172,7 +166,7 @@ impl GossipPersister {
 							&composite_index,
 							&scid,
 							&timestamp,
-							&(update.contents.flags as i32),
+							&(update.contents.flags as i16),
 							&direction,
 							&disable,
 							&cltv_expiry_delta,

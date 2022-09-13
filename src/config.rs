@@ -11,7 +11,7 @@ use crate::hex_utils;
 
 use futures::stream::{FuturesUnordered, StreamExt};
 
-pub(crate) const SCHEMA_VERSION: i32 = 5;
+pub(crate) const SCHEMA_VERSION: i32 = 6;
 pub(crate) const SNAPSHOT_CALCULATION_INTERVAL: u32 = 3600 * 24; // every 24 hours, in seconds
 pub(crate) const DOWNLOAD_NEW_GOSSIP: bool = true;
 
@@ -54,7 +54,6 @@ pub(crate) fn db_announcement_table_creation_query() -> &'static str {
 	"CREATE TABLE IF NOT EXISTS channel_announcements (
 		id SERIAL PRIMARY KEY,
 		short_channel_id bigint NOT NULL UNIQUE,
-		block_height integer,
 		announcement_signed BYTEA,
 		seen timestamp NOT NULL DEFAULT NOW()
 	)"
@@ -67,7 +66,7 @@ pub(crate) fn db_channel_update_table_creation_query() -> &'static str {
 		composite_index character(29) UNIQUE,
 		short_channel_id bigint NOT NULL,
 		timestamp bigint,
-		channel_flags integer,
+		channel_flags smallint,
 		direction boolean NOT NULL,
 		disable boolean,
 		cltv_expiry_delta integer,
@@ -165,6 +164,13 @@ pub(crate) async fn upgrade_db(schema: i32, client: &mut tokio_postgres::Client)
 		let tx = client.transaction().await.unwrap();
 		tx.execute("ALTER TABLE channel_updates ALTER composite_index SET DATA TYPE character(29)", &[]).await.unwrap();
 		tx.execute("UPDATE config SET db_schema = 5 WHERE id = 1", &[]).await.unwrap();
+		tx.commit().await.unwrap();
+	}
+	if schema >= 1 && schema <= 5 {
+		let tx = client.transaction().await.unwrap();
+		tx.execute("ALTER TABLE channel_updates ALTER channel_flags SET DATA TYPE smallint", &[]).await.unwrap();
+		tx.execute("ALTER TABLE channel_announcements DROP COLUMN block_height", &[]).await.unwrap();
+		tx.execute("UPDATE config SET db_schema = 6 WHERE id = 1", &[]).await.unwrap();
 		tx.commit().await.unwrap();
 	}
 	if schema <= 1 || schema > SCHEMA_VERSION {

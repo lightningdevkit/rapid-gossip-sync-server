@@ -2,6 +2,7 @@ use std::cmp::max;
 use std::collections::HashMap;
 
 use bitcoin::BlockHash;
+use bitcoin::hashes::Hash;
 use lightning::ln::msgs::{UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::util::ser::{BigSize, Writeable};
 
@@ -93,7 +94,7 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 		announcements: vec![],
 		updates: vec![],
 		full_update_defaults: Default::default(),
-		chain_hash: Default::default(),
+		chain_hash: BlockHash::all_zeros(),
 		latest_seen: 0,
 	};
 

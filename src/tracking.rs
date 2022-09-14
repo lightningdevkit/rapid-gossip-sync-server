@@ -1,3 +1,5 @@
+use std::collections::hash_map::RandomState;
+use std::hash::{BuildHasher, Hasher};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -9,7 +11,6 @@ use lightning::ln::peer_handler::{
 	ErroringMessageHandler, IgnoringMessageHandler, MessageHandler, PeerManager,
 };
 use lightning::routing::gossip::NetworkGraph;
-use rand::{Rng, thread_rng};
 use tokio::sync::mpsc;
 
 use crate::{config, TestLogger};
@@ -19,21 +20,28 @@ use crate::types::{GossipMessage, GossipPeerManager};
 pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessage>,
 		completion_sender: mpsc::Sender<()>,
 		network_graph: Arc<NetworkGraph<TestLogger>>) {
-	let mut key = [0; 32];
-	let mut random_data = [0; 32];
-	thread_rng().fill_bytes(&mut key);
-	thread_rng().fill_bytes(&mut random_data);
-	let our_node_secret = SecretKey::from_slice(&key).unwrap();
+	let mut key = [42; 32];
+	let mut random_data = [43; 32];
+	// Get something psuedo-random from std.
+	let mut key_hasher = RandomState::new().build_hasher();
+	key_hasher.write_u8(1);
+	key[0..8].copy_from_slice(&key_hasher.finish().to_ne_bytes());
+	let mut rand_hasher = RandomState::new().build_hasher();
+	rand_hasher.write_u8(2);
+	random_data[0..8].copy_from_slice(&rand_hasher.finish().to_ne_bytes());
 
+	let our_node_secret = SecretKey::from_slice(&key).unwrap();
 	let router = Arc::new(GossipRouter::new(network_graph, persistence_sender.clone()));
 
 	let message_handler = MessageHandler {
 		chan_handler: ErroringMessageHandler::new(),
 		route_handler: Arc::clone(&router),
+		onion_message_handler: IgnoringMessageHandler {},
 	};
 	let peer_handler = Arc::new(PeerManager::new(
 		message_handler,
 		our_node_secret,
+		0xdeadbeef,
 		&random_data,
 		TestLogger::new(),
 		IgnoringMessageHandler {},

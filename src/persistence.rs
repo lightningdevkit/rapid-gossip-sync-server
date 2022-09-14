@@ -7,7 +7,7 @@ use lightning::util::ser::Writeable;
 use tokio::sync::mpsc;
 use tokio_postgres::NoTls;
 
-use crate::{config, hex_utils, TestLogger};
+use crate::{config, TestLogger};
 use crate::types::GossipMessage;
 
 pub(crate) struct GossipPersister {
@@ -27,7 +27,7 @@ impl GossipPersister {
 
 	pub(crate) async fn persist_gossip(&mut self) {
 		let connection_config = config::db_connection_config();
-		let (client, connection) =
+		let (mut client, connection) =
 			connection_config.connect(NoTls).await.unwrap();
 
 		tokio::spawn(async move {
@@ -43,6 +43,11 @@ impl GossipPersister {
 				.await;
 			if let Err(initialization_error) = initialization {
 				panic!("db init error: {}", initialization_error);
+			}
+
+			let cur_schema = client.query("SELECT db_schema FROM config WHERE id = $1", &[&1]).await.unwrap();
+			if !cur_schema.is_empty() {
+				config::upgrade_db(cur_schema[0].get(0), &mut client).await;
 			}
 
 			let initialization = client
@@ -104,14 +109,7 @@ impl GossipPersister {
 
 			match &gossip_message {
 				GossipMessage::ChannelAnnouncement(announcement) => {
-					let scid = announcement.contents.short_channel_id;
-					let scid_hex = hex_utils::hex_str(&scid.to_be_bytes());
-					// scid is 8 bytes
-					// block height is the first three bytes
-					// to obtain block height, shift scid right by 5 bytes (40 bits)
-					let block_height = (scid >> 5 * 8) as i32;
-					let chain_hash = announcement.contents.chain_hash.as_ref();
-					let chain_hash_hex = hex_utils::hex_str(chain_hash);
+					let scid = announcement.contents.short_channel_id as i64;
 
 					// start with the type prefix, which is already known a priori
 					let mut announcement_signed = Vec::new();
@@ -120,13 +118,9 @@ impl GossipPersister {
 					let result = client
 						.execute("INSERT INTO channel_announcements (\
 							short_channel_id, \
-							block_height, \
-							chain_hash, \
 							announcement_signed \
-						) VALUES ($1, $2, $3, $4) ON CONFLICT (short_channel_id) DO NOTHING", &[
-							&scid_hex,
-							&block_height,
-							&chain_hash_hex,
+						) VALUES ($1, $2) ON CONFLICT (short_channel_id) DO NOTHING", &[
+							&scid,
 							&announcement_signed
 						]).await;
 					if result.is_err() {
@@ -134,19 +128,12 @@ impl GossipPersister {
 					}
 				}
 				GossipMessage::ChannelUpdate(update) => {
-					let scid = update.contents.short_channel_id;
-					let scid_hex = hex_utils::hex_str(&scid.to_be_bytes());
-
-					let chain_hash = update.contents.chain_hash.as_ref();
-					let chain_hash_hex = hex_utils::hex_str(chain_hash);
+					let scid = update.contents.short_channel_id as i64;
 
 					let timestamp = update.contents.timestamp as i64;
 
-					let channel_flags = update.contents.flags as i32;
-					let direction = channel_flags & 1;
-					let disable = (channel_flags & 2) > 0;
-
-					let composite_index = format!("{}:{}:{}", scid_hex, timestamp, direction);
+					let direction = (update.contents.flags & 1) == 1;
+					let disable = (update.contents.flags & 2) > 0;
 
 					let cltv_expiry_delta = update.contents.cltv_expiry_delta as i32;
 					let htlc_minimum_msat = update.contents.htlc_minimum_msat as i64;
@@ -161,8 +148,6 @@ impl GossipPersister {
 
 					let result = client
 						.execute("INSERT INTO channel_updates (\
-							composite_index, \
-							chain_hash, \
 							short_channel_id, \
 							timestamp, \
 							channel_flags, \
@@ -174,12 +159,10 @@ impl GossipPersister {
 							fee_proportional_millionths, \
 							htlc_maximum_msat, \
 							blob_signed \
-						) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)  ON CONFLICT (composite_index) DO NOTHING", &[
-							&composite_index,
-							&chain_hash_hex,
-							&scid_hex,
+						) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)  ON CONFLICT DO NOTHING", &[
+							&scid,
 							&timestamp,
-							&channel_flags,
+							&(update.contents.flags as i16),
 							&direction,
 							&disable,
 							&cltv_expiry_delta,

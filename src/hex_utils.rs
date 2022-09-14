@@ -21,15 +21,6 @@ pub fn to_vec(hex: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-#[inline]
-pub fn hex_str(value: &[u8]) -> String {
-    let mut res = String::with_capacity(64);
-    for v in value {
-        res += &format!("{:02x}", v);
-    }
-    res
-}
-
 pub fn to_compressed_pubkey(hex: &str) -> Option<PublicKey> {
     let data = match to_vec(&hex[0..33 * 2]) {
         Some(bytes) => bytes,

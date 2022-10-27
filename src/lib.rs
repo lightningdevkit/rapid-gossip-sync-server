@@ -106,6 +106,8 @@ impl RapidSyncProcessor {
 async fn serialize_delta(network_graph: Arc<NetworkGraph<TestLogger>>, last_sync_timestamp: u32, consider_intermediate_updates: bool) -> SerializedResponse {
 	let (client, connection) = lookup::connect_to_db().await;
 
+	network_graph.remove_stale_channels_and_tracking();
+
 	tokio::spawn(async move {
 		if let Err(e) = connection.await {
 			panic!("connection error: {}", e);

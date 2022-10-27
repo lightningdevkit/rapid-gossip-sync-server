@@ -189,7 +189,7 @@ impl GossipPersister {
 			.truncate(true)
 			.open(&cache_path)
 			.unwrap();
-		self.network_graph.remove_stale_channels();
+		self.network_graph.remove_stale_channels_and_tracking();
 		let mut writer = BufWriter::new(file);
 		self.network_graph.write(&mut writer).unwrap();
 		writer.flush().unwrap();

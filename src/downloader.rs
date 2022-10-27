@@ -106,7 +106,7 @@ impl RoutingMessageHandler for GossipRouter {
 		self.native_router.get_next_node_announcement(starting_point)
 	}
 
-	fn peer_connected(&self, their_node_id: &PublicKey, init: &Init) {
+	fn peer_connected(&self, their_node_id: &PublicKey, init: &Init) -> Result<(), ()> {
 		self.native_router.peer_connected(their_node_id, init)
 	}
 

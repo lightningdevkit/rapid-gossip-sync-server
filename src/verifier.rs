@@ -5,7 +5,7 @@ use bitcoin::blockdata::block::Block;
 use bitcoin::hashes::Hash;
 use lightning::chain;
 use lightning::chain::AccessError;
-use lightning_block_sync::BlockSource;
+use lightning_block_sync::{BlockData, BlockSource};
 use lightning_block_sync::http::BinaryResponse;
 use lightning_block_sync::rest::RestClient;
 
@@ -36,11 +36,16 @@ impl ChainVerifier {
 			let block_hash = BlockHash::from_slice(&block_hash).unwrap();
 
 			let block_result = self.rest_client.get_block(&block_hash).await;
-			let block = block_result.map_err(|error| {
-				eprintln!("Couldn't retrieve block {}: {:?} ({})", block_height, error, block_hash);
-				AccessError::UnknownChain
-			})?;
-			Ok(block)
+			match block_result {
+				Ok(BlockData::FullBlock(block)) => {
+					Ok(block)
+				},
+				Ok(_) => unreachable!(),
+				Err(error) => {
+					eprintln!("Couldn't retrieve block {}: {:?} ({})", block_height, error, block_hash);
+					Err(AccessError::UnknownChain)
+				}
+			}
 		}) })
 	}
 }

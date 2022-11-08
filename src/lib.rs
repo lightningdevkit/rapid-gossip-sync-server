@@ -60,7 +60,7 @@ impl RapidSyncProcessor {
 			let mut buffered_reader = BufReader::new(file);
 			let network_graph_result = NetworkGraph::read(&mut buffered_reader, logger);
 			if let Ok(network_graph) = network_graph_result {
-				network_graph.remove_stale_channels();
+				network_graph.remove_stale_channels_and_tracking();
 				println!("Initialized from cached network graph!");
 				network_graph
 			} else {
@@ -105,6 +105,8 @@ impl RapidSyncProcessor {
 
 async fn serialize_delta(network_graph: Arc<NetworkGraph<TestLogger>>, last_sync_timestamp: u32, consider_intermediate_updates: bool) -> SerializedResponse {
 	let (client, connection) = lookup::connect_to_db().await;
+
+	network_graph.remove_stale_channels_and_tracking();
 
 	tokio::spawn(async move {
 		if let Err(e) = connection.await {

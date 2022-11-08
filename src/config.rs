@@ -200,6 +200,13 @@ pub(crate) async fn upgrade_db(schema: i32, client: &mut tokio_postgres::Client)
 	if schema <= 1 || schema > SCHEMA_VERSION {
 		panic!("Unknown schema in db: {}, we support up to {}", schema, SCHEMA_VERSION);
 	}
+	// PostgreSQL (at least v13, but likely later versions as well) handles insert-only tables
+	// *very* poorly. After some number of inserts, it refuses to rely on indexes, assuming them to
+	// be possibly-stale, until a VACUUM happens. Thus, we set the vacuum factor really low here,
+	// pushing PostgreSQL to vacuum often.
+	// See https://www.cybertec-postgresql.com/en/postgresql-autovacuum-insert-only-tables/
+	let _ = client.execute("ALTER TABLE channel_updates SET ( autovacuum_vacuum_insert_scale_factor = 0.005 );", &[]).await;
+	let _ = client.execute("ALTER TABLE channel_announcements SET ( autovacuum_vacuum_insert_scale_factor = 0.005 );", &[]).await;
 }
 
 /// EDIT ME

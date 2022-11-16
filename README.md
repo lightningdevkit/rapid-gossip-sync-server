@@ -21,6 +21,7 @@ can be made by setting environment variables, whose usage is as follows:
 | BITCOIN_REST_DOMAIN                  | 127.0.0.1     | Domain of the [bitcoind REST server](https://github.com/bitcoin/bitcoin/blob/master/doc/REST-interface.md) |
 | BITCOIN_REST_PORT                    | 8332          | HTTP port of the bitcoind REST server                                                                      |
 | BITCOIN_REST_PATH                    | /rest/        | Path infix to access the bitcoind REST endpoints                                                           |
+| SNAPSHOT_CALCULATION_INTERVAL_SECS   | 86400         | Interval between snapshots, denominated in seconds                                                         |
 
 Notably, one property needs to be modified in code, namely the `ln_peers()` method. It specifies how
 many and which peers to use for retrieving gossip.

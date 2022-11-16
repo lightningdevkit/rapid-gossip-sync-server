@@ -201,7 +201,7 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<TestLogger>>, last_sync
 	serialization_details.chain_hash.write(&mut prefixed_output).unwrap();
 	// always write the latest seen timestamp
 	let latest_seen_timestamp = serialization_details.latest_seen;
-	let overflow_seconds = latest_seen_timestamp % config::SNAPSHOT_CALCULATION_INTERVAL;
+	let overflow_seconds = latest_seen_timestamp % config::snapshot_calculation_interval();
 	let serialized_seen_timestamp = latest_seen_timestamp.saturating_sub(overflow_seconds);
 	serialized_seen_timestamp.write(&mut prefixed_output).unwrap();
 

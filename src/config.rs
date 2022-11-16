@@ -12,8 +12,14 @@ use crate::hex_utils;
 use futures::stream::{FuturesUnordered, StreamExt};
 
 pub(crate) const SCHEMA_VERSION: i32 = 8;
-pub(crate) const SNAPSHOT_CALCULATION_INTERVAL: u32 = 3600 * 24; // every 24 hours, in seconds
 pub(crate) const DOWNLOAD_NEW_GOSSIP: bool = true;
+
+pub(crate) fn snapshot_calculation_interval() -> u32 {
+	match env::var("SNAPSHOT_CALCULATION_INTERVAL_SECS") {
+		Ok(interval) => {interval.parse().unwrap()}
+		Err(_) => {3600 * 24}
+	}
+}
 
 pub(crate) fn network_graph_cache_path() -> &'static str {
 	"./res/network_graph.bin"

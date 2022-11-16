@@ -21,7 +21,7 @@ impl Snapshotter {
 		println!("Initiating snapshotting service");
 
 		let snapshot_sync_day_factors = [1, 2, 3, 4, 5, 6, 7, 14, 21, u64::MAX];
-		let round_day_seconds = config::SNAPSHOT_CALCULATION_INTERVAL as u64;
+		let round_day_seconds = config::snapshot_calculation_interval() as u64;
 
 		let pending_snapshot_directory = "./res/snapshots_pending";
 		let pending_symlink_directory = "./res/symlinks_pending";

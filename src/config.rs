@@ -19,12 +19,13 @@ pub(crate) const SNAPSHOT_CALCULATION_INTERVAL: u32 = 3600 * 24; // every 24 hou
 pub(crate) const DOWNLOAD_NEW_GOSSIP: bool = true;
 
 pub(crate) fn network() -> Network {
-	let network = env::var("RAPID_GOSSIP_SYNC_SERVER_NETWORK").unwrap_or("Bitcoin".to_string());
+	let network = env::var("RAPID_GOSSIP_SYNC_SERVER_NETWORK").unwrap_or("bitcoin".to_string()).to_lowercase();
 	match network.as_str() {
-		"Bitcoin" => Network::Bitcoin,
-		"Testnet" => Network::Testnet,
-		"Signet" => Network::Signet,
-		"Regtest" => Network::Regtest,
+		"mainnet" => Network::Bitcoin,
+		"bitcoin" => Network::Bitcoin,
+		"testnet" => Network::Testnet,
+		"signet" => Network::Signet,
+		"regtest" => Network::Regtest,
 		_ => panic!("Invalid network"),
 	}
 }

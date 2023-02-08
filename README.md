@@ -12,18 +12,16 @@ These are the components it's comprised of.
 A config file where the Postgres credentials and Lightning peers can be adjusted. Most adjustments
 can be made by setting environment variables, whose usage is as follows:
 
-| Name                                 | Default       | Description                                                                                                |
-|:-------------------------------------|:--------------|:-----------------------------------------------------------------------------------------------------------|
-| RAPID_GOSSIP_SYNC_SERVER_DB_HOST     | localhost     | Domain of the Postgres database                                                                            |
-| RAPID_GOSSIP_SYNC_SERVER_DB_USER     | alice         | Username to access Postgres                                                                                |
-| RAPID_GOSSIP_SYNC_SERVER_DB_PASSWORD | _None_        | Password to access Postgres                                                                                |
-| RAPID_GOSSIP_SYNC_SERVER_DB_NAME     | ln_graph_sync | Name of the database to be used for gossip storage                                                         |
-| BITCOIN_REST_DOMAIN                  | 127.0.0.1     | Domain of the [bitcoind REST server](https://github.com/bitcoin/bitcoin/blob/master/doc/REST-interface.md) |
-| BITCOIN_REST_PORT                    | 8332          | HTTP port of the bitcoind REST server                                                                      |
-| BITCOIN_REST_PATH                    | /rest/        | Path infix to access the bitcoind REST endpoints                                                           |
-
-Notably, one property needs to be modified in code, namely the `ln_peers()` method. It specifies how
-many and which peers to use for retrieving gossip.
+| Name                                 | Default             | Description                                                                                                |
+|:-------------------------------------|:--------------------|:-----------------------------------------------------------------------------------------------------------|
+| RAPID_GOSSIP_SYNC_SERVER_DB_HOST     | localhost           | Domain of the Postgres database                                                                            |
+| RAPID_GOSSIP_SYNC_SERVER_DB_USER     | alice               | Username to access Postgres                                                                                |
+| RAPID_GOSSIP_SYNC_SERVER_DB_PASSWORD | _None_              | Password to access Postgres                                                                                |
+| RAPID_GOSSIP_SYNC_SERVER_DB_NAME     | ln_graph_sync       | Name of the database to be used for gossip storage                                                         |
+| BITCOIN_REST_DOMAIN                  | 127.0.0.1           | Domain of the [bitcoind REST server](https://github.com/bitcoin/bitcoin/blob/master/doc/REST-interface.md) |
+| BITCOIN_REST_PORT                    | 8332                | HTTP port of the bitcoind REST server                                                                      |
+| BITCOIN_REST_PATH                    | /rest/              | Path infix to access the bitcoind REST endpoints                                                           |
+| LN_PEERS                             | _Wallet of Satoshi_ | Comma separated list of LN peers to use for retrieving gossip                                              |
 
 ### downloader
 

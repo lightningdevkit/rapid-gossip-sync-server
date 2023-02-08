@@ -50,6 +50,15 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessa
 	));
 	router.set_pm(Arc::clone(&peer_handler));
 
+	let ph_timer = Arc::clone(&peer_handler);
+	tokio::spawn(async move {
+		let mut intvl = tokio::time::interval(Duration::from_secs(10));
+		loop {
+			intvl.tick().await;
+			ph_timer.timer_tick_occurred();
+		}
+	});
+
 	println!("Connecting to Lightning peers...");
 	let peers = config::ln_peers();
 	let mut connected_peer_count = 0;

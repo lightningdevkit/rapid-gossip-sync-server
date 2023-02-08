@@ -5,6 +5,7 @@ use std::env;
 use std::io::Cursor;
 use std::net::{SocketAddr, ToSocketAddrs};
 
+use bitcoin::Network;
 use bitcoin::hashes::hex::FromHex;
 use bitcoin::secp256k1::PublicKey;
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -16,6 +17,17 @@ use tokio_postgres::Config;
 pub(crate) const SCHEMA_VERSION: i32 = 8;
 pub(crate) const SNAPSHOT_CALCULATION_INTERVAL: u32 = 3600 * 24; // every 24 hours, in seconds
 pub(crate) const DOWNLOAD_NEW_GOSSIP: bool = true;
+
+pub(crate) fn network() -> Network {
+	let network = env::var("RAPID_GOSSIP_SYNC_SERVER_NETWORK").unwrap_or("Bitcoin".to_string());
+	match network.as_str() {
+		"Bitcoin" => Network::Bitcoin,
+		"Testnet" => Network::Testnet,
+		"Signet" => Network::Signet,
+		"Regtest" => Network::Regtest,
+		_ => panic!("Invalid network"),
+	}
+}
 
 pub(crate) fn network_graph_cache_path() -> &'static str {
 	"./res/network_graph.bin"

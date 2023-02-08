@@ -1,15 +1,17 @@
+use crate::hex_utils;
+
 use std::convert::TryInto;
 use std::env;
-use std::net::SocketAddr;
 use std::io::Cursor;
+use std::net::{SocketAddr, ToSocketAddrs};
+
+use bitcoin::hashes::hex::FromHex;
 use bitcoin::secp256k1::PublicKey;
+use futures::stream::{FuturesUnordered, StreamExt};
 use lightning::ln::msgs::ChannelAnnouncement;
 use lightning::util::ser::Readable;
 use lightning_block_sync::http::HttpEndpoint;
 use tokio_postgres::Config;
-use crate::hex_utils;
-
-use futures::stream::{FuturesUnordered, StreamExt};
 
 pub(crate) const SCHEMA_VERSION: i32 = 8;
 pub(crate) const SNAPSHOT_CALCULATION_INTERVAL: u32 = 3600 * 24; // every 24 hours, in seconds
@@ -209,19 +211,54 @@ pub(crate) async fn upgrade_db(schema: i32, client: &mut tokio_postgres::Client)
 	let _ = client.execute("ALTER TABLE channel_announcements SET ( autovacuum_vacuum_insert_scale_factor = 0.005 );", &[]).await;
 }
 
-/// EDIT ME
 pub(crate) fn ln_peers() -> Vec<(PublicKey, SocketAddr)> {
-	vec![
-		// Bitfinex
-		// (hex_utils::to_compressed_pubkey("033d8656219478701227199cbd6f670335c8d408a92ae88b962c49d4dc0e83e025").unwrap(), "34.65.85.39:9735".parse().unwrap()),
+	const WALLET_OF_SATOSHI: &str = "035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226@170.75.163.209:9735";
+	let list = env::var("LN_PEERS").unwrap_or(WALLET_OF_SATOSHI.to_string());
+	let mut peers = Vec::new();
+	for peer_info in list.split(',') {
+		peers.push(resolve_peer_info(peer_info).expect("Invalid peer info in LN_PEERS"));
+	}
+	peers
+}
 
-		// Matt Corallo
-		// (hex_utils::to_compressed_pubkey("03db10aa09ff04d3568b0621750794063df401e6853c79a21a83e1a3f3b5bfb0c8").unwrap(), "69.59.18.80:9735".parse().unwrap())
+fn resolve_peer_info(peer_info: &str) -> Result<(PublicKey, SocketAddr), &str> {
+	let mut peer_info = peer_info.splitn(2, '@');
 
-		// River Financial
-		// (hex_utils::to_compressed_pubkey("03037dc08e9ac63b82581f79b662a4d0ceca8a8ca162b1af3551595b8f2d97b70a").unwrap(), "104.196.249.140:9735".parse().unwrap())
+	let pubkey = peer_info.next().ok_or("Invalid peer info. Should be formatted as: `pubkey@host:port`")?;
+	let pubkey = Vec::from_hex(pubkey).map_err(|_| "Invalid node pubkey")?;
+	let pubkey = PublicKey::from_slice(&pubkey).map_err(|_| "Invalid node pubkey")?;
 
-		// Wallet of Satoshi | 035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226@170.75.163.209:9735
-		(hex_utils::to_compressed_pubkey("035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226").unwrap(), "170.75.163.209:9735".parse().unwrap())
-	]
+	let socket_address = peer_info.next().ok_or("Invalid peer info. Should be formatted as: `pubkey@host:port`")?;
+	let socket_address = socket_address
+		.to_socket_addrs()
+		.map_err(|_| "Cannot resolve node address")?
+		.next()
+		.ok_or("Cannot resolve node address")?;
+
+	Ok((pubkey, socket_address))
+}
+
+#[cfg(test)]
+mod tests {
+	use super::resolve_peer_info;
+	use bitcoin::hashes::hex::ToHex;
+
+	#[test]
+	fn test_resolve_peer_info() {
+		let wallet_of_satoshi = "035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226@170.75.163.209:9735";
+		let (pubkey, socket_address) = resolve_peer_info(wallet_of_satoshi).unwrap();
+		assert_eq!(pubkey.serialize().to_hex(), "035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226");
+		assert_eq!(socket_address.to_string(), "170.75.163.209:9735");
+
+		let ipv6 = "033d8656219478701227199cbd6f670335c8d408a92ae88b962c49d4dc0e83e025@[2001:db8::1]:80";
+		let (pubkey, socket_address) = resolve_peer_info(ipv6).unwrap();
+		assert_eq!(pubkey.serialize().to_hex(), "033d8656219478701227199cbd6f670335c8d408a92ae88b962c49d4dc0e83e025");
+		assert_eq!(socket_address.to_string(), "[2001:db8::1]:80");
+
+		let localhost = "033d8656219478701227199cbd6f670335c8d408a92ae88b962c49d4dc0e83e025@localhost:9735";
+		let (pubkey, socket_address) = resolve_peer_info(localhost).unwrap();
+		assert_eq!(pubkey.serialize().to_hex(), "033d8656219478701227199cbd6f670335c8d408a92ae88b962c49d4dc0e83e025");
+		let socket_address = socket_address.to_string();
+		assert!(socket_address == "127.0.0.1:9735" || socket_address == "[::1]:9735");
+	}
 }

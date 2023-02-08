@@ -5,12 +5,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bitcoin::hashes::hex::ToHex;
-use bitcoin::secp256k1::{PublicKey, SecretKey};
+use bitcoin::secp256k1::PublicKey;
 use lightning;
 use lightning::ln::peer_handler::{
 	ErroringMessageHandler, IgnoringMessageHandler, MessageHandler, PeerManager,
 };
 use lightning::routing::gossip::NetworkGraph;
+use lightning::chain::keysinterface::KeysManager;
 use tokio::sync::mpsc;
 
 use crate::{config, TestLogger};
@@ -30,7 +31,8 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessa
 	rand_hasher.write_u8(2);
 	random_data[0..8].copy_from_slice(&rand_hasher.finish().to_ne_bytes());
 
-	let our_node_secret = SecretKey::from_slice(&key).unwrap();
+	let keys_manager = Arc::new(KeysManager::new(&key, 0xdeadbeef, 0xdeadbeef));
+
 	let router = Arc::new(GossipRouter::new(network_graph, persistence_sender.clone()));
 
 	let message_handler = MessageHandler {
@@ -40,12 +42,13 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessa
 	};
 	let peer_handler = Arc::new(PeerManager::new(
 		message_handler,
-		our_node_secret,
 		0xdeadbeef,
 		&random_data,
 		TestLogger::new(),
 		IgnoringMessageHandler {},
+		keys_manager,
 	));
+	router.set_pm(Arc::clone(&peer_handler));
 
 	println!("Connecting to Lightning peers...");
 	let peers = config::ln_peers();

@@ -16,6 +16,7 @@ pub(super) struct SerializationSet {
 	pub(super) chain_hash: BlockHash,
 }
 
+#[derive(Default)]
 pub(super) struct DefaultUpdateValues {
 	pub(super) cltv_expiry_delta: u16,
 	pub(super) htlc_minimum_msat: u64,
@@ -24,18 +25,9 @@ pub(super) struct DefaultUpdateValues {
 	pub(super) htlc_maximum_msat: u64,
 }
 
-impl Default for DefaultUpdateValues {
-	fn default() -> Self {
-		Self {
-			cltv_expiry_delta: 0,
-			htlc_minimum_msat: 0,
-			fee_base_msat: 0,
-			fee_proportional_millionths: 0,
-			htlc_maximum_msat: 0,
-		}
-	}
-}
 
+
+#[derive(Default)]
 pub(super) struct MutatedProperties {
 	pub(super) flags: bool,
 	pub(super) cltv_expiry_delta: bool,
@@ -45,18 +37,7 @@ pub(super) struct MutatedProperties {
 	pub(super) htlc_maximum_msat: bool,
 }
 
-impl Default for MutatedProperties {
-	fn default() -> Self {
-		Self {
-			flags: false,
-			cltv_expiry_delta: false,
-			htlc_minimum_msat: false,
-			fee_base_msat: false,
-			fee_proportional_millionths: false,
-			htlc_maximum_msat: false,
-		}
-	}
-}
+
 
 pub(super) struct UpdateSerialization {
 	pub(super) update: UnsignedChannelUpdate,

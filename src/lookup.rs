@@ -27,33 +27,23 @@ pub(super) struct UpdateDelta {
 	pub(super) update: UnsignedChannelUpdate,
 }
 
+#[derive(Default)]
 pub(super) struct DirectedUpdateDelta {
 	pub(super) last_update_before_seen: Option<UnsignedChannelUpdate>,
 	pub(super) mutated_properties: MutatedProperties,
 	pub(super) latest_update_after_seen: Option<UpdateDelta>,
 }
 
+#[derive(Default)]
 pub(super) struct ChannelDelta {
 	pub(super) announcement: Option<AnnouncementDelta>,
 	pub(super) updates: (Option<DirectedUpdateDelta>, Option<DirectedUpdateDelta>),
 	pub(super) first_update_seen: Option<u32>,
 }
 
-impl Default for ChannelDelta {
-	fn default() -> Self {
-		Self { announcement: None, updates: (None, None), first_update_seen: None }
-	}
-}
 
-impl Default for DirectedUpdateDelta {
-	fn default() -> Self {
-		Self {
-			last_update_before_seen: None,
-			mutated_properties: MutatedProperties::default(),
-			latest_update_after_seen: None,
-		}
-	}
-}
+
+
 
 pub(super) async fn connect_to_db() -> (Client, Connection<Socket, NoTlsStream>) {
 	let connection_config = config::db_connection_config();

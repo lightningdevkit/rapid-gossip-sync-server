@@ -30,7 +30,7 @@ impl ChainVerifier {
 			let block_hash_result =
 				self.rest_client.request_resource::<BinaryResponse, RestBinaryResponse>(&uri).await;
 			let block_hash: Vec<u8> = block_hash_result.map_err(|error| {
-				eprintln!("Could't find block hash at height {}: {}", block_height, error.to_string());
+				eprintln!("Could't find block hash at height {block_height}: {error}");
 				AccessError::UnknownChain
 			})?.0;
 			let block_hash = BlockHash::from_slice(&block_hash).unwrap();
@@ -58,11 +58,11 @@ impl chain::Access for ChainVerifier {
 
 		let block = self.retrieve_block(block_height)?;
 		let transaction = block.txdata.get(transaction_index as usize).ok_or_else(|| {
-			eprintln!("Transaction index {} out of bounds in block {} ({})", transaction_index, block_height, block.block_hash().to_string());
+			eprintln!("Transaction index {} out of bounds in block {} ({})", transaction_index, block_height, block.block_hash());
 			AccessError::UnknownTx
 		})?;
 		let output = transaction.output.get(output_index as usize).ok_or_else(|| {
-			eprintln!("Output index {} out of bounds in transaction {}", output_index, transaction.txid().to_string());
+			eprintln!("Output index {} out of bounds in transaction {}", output_index, transaction.txid());
 			AccessError::UnknownTx
 		})?;
 		Ok(output.clone())

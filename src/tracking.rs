@@ -131,18 +131,18 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessa
 }
 
 async fn connect_peer(current_peer: (PublicKey, SocketAddr), peer_manager: GossipPeerManager) -> bool {
-	eprintln!("Connecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
+	eprintln!("Connecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1);
 	let connection = lightning_net_tokio::connect_outbound(
 		Arc::clone(&peer_manager),
 		current_peer.0,
 		current_peer.1,
 	).await;
 	if let Some(disconnection_future) = connection {
-		eprintln!("Connected to peer {}@{}!", current_peer.0.to_hex(), current_peer.1.to_string());
+		eprintln!("Connected to peer {}@{}!", current_peer.0.to_hex(), current_peer.1);
 		tokio::spawn(async move {
 			disconnection_future.await;
 			loop {
-				eprintln!("Reconnecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
+				eprintln!("Reconnecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1);
 				if let Some(disconnection_future) = lightning_net_tokio::connect_outbound(
 					Arc::clone(&peer_manager),
 					current_peer.0,
@@ -156,7 +156,7 @@ async fn connect_peer(current_peer: (PublicKey, SocketAddr), peer_manager: Gossi
 		});
 		true
 	} else {
-		eprintln!("Failed to connect to peer {}@{}", current_peer.0.to_hex(), current_peer.1.to_string());
+		eprintln!("Failed to connect to peer {}@{}", current_peer.0.to_hex(), current_peer.1);
 		false
 	}
 }

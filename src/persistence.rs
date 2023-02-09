@@ -87,7 +87,7 @@ impl GossipPersister {
 		}
 
 		// print log statement every minute
-		let mut latest_persistence_log = Instant::now() - Duration::from_secs(60);
+		let mut latest_persistence_log = Instant::now().checked_sub(Duration::from_secs(60)).unwrap();
 		let mut i = 0u32;
 		let mut latest_graph_cache_time = Instant::now();
 		// TODO: it would be nice to have some sort of timeout here so after 10 seconds of

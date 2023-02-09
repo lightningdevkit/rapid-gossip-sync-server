@@ -60,8 +60,8 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 	let channel_ids = {
 		let read_only_graph = network_graph.read_only();
 		println!("Retrieved read-only network graph copy");
-		let channel_iterator = read_only_graph.channels().into_iter();
-		channel_iterator
+		read_only_graph.channels()
+			.iter()
 			.filter(|c| c.1.announcement_message.is_some())
 			.map(|c| c.1.announcement_message.as_ref().unwrap().contents.short_channel_id as i64)
 			.collect::<Vec<_>>()

@@ -125,7 +125,7 @@ pub(crate) async fn upgrade_db(schema: i32, client: &mut tokio_postgres::Client)
 				let index: String = row.get("composite_index");
 				let tx_ref = &tx;
 				updates.push(async move {
-					let mut index_iter = index.split(":");
+					let mut index_iter = index.split(':');
 					let scid_hex = index_iter.next().unwrap();
 					index_iter.next().unwrap();
 					let direction_str = index_iter.next().unwrap();

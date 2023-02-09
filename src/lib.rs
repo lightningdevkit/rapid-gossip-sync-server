@@ -55,7 +55,7 @@ impl RapidSyncProcessor {
 	pub fn new() -> Self {
 		let network = config::network();
 		let logger = TestLogger::new();
-		let network_graph = if let Ok(file) = File::open(&config::network_graph_cache_path()) {
+		let network_graph = if let Ok(file) = File::open(config::network_graph_cache_path()) {
 			println!("Initializing from cached network graph…");
 			let mut buffered_reader = BufReader::new(file);
 			let network_graph_result = NetworkGraph::read(&mut buffered_reader, logger);

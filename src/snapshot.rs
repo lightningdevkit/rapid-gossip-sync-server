@@ -53,14 +53,14 @@ impl Snapshotter {
 			// channel updates
 
 			// purge and recreate the pending directories
-			if fs::metadata(&pending_snapshot_directory).is_ok(){
-				fs::remove_dir_all(&pending_snapshot_directory).expect("Failed to remove pending snapshot directory.");
+			if fs::metadata(pending_snapshot_directory).is_ok(){
+				fs::remove_dir_all(pending_snapshot_directory).expect("Failed to remove pending snapshot directory.");
 			}
-			if fs::metadata(&pending_symlink_directory).is_ok(){
-				fs::remove_dir_all(&pending_symlink_directory).expect("Failed to remove pending symlink directory.");
+			if fs::metadata(pending_symlink_directory).is_ok(){
+				fs::remove_dir_all(pending_symlink_directory).expect("Failed to remove pending symlink directory.");
 			}
-			fs::create_dir_all(&pending_snapshot_directory).expect("Failed to create pending snapshot directory");
-			fs::create_dir_all(&pending_symlink_directory).expect("Failed to create pending symlink directory");
+			fs::create_dir_all(pending_snapshot_directory).expect("Failed to create pending snapshot directory");
+			fs::create_dir_all(pending_symlink_directory).expect("Failed to create pending symlink directory");
 
 			let mut snapshot_sync_timestamps: Vec<(u64, u64)> = Vec::new();
 			for factor in &snapshot_sync_day_factors {
@@ -116,14 +116,14 @@ impl Snapshotter {
 				symlink(&relative_snapshot_path, &symlink_path).unwrap();
 			}
 
-			if fs::metadata(&finalized_snapshot_directory).is_ok(){
-				fs::remove_dir_all(&finalized_snapshot_directory).expect("Failed to remove finalized snapshot directory.");
+			if fs::metadata(finalized_snapshot_directory).is_ok(){
+				fs::remove_dir_all(finalized_snapshot_directory).expect("Failed to remove finalized snapshot directory.");
 			}
-			if fs::metadata(&finalized_symlink_directory).is_ok(){
-				fs::remove_dir_all(&finalized_symlink_directory).expect("Failed to remove pending symlink directory.");
+			if fs::metadata(finalized_symlink_directory).is_ok(){
+				fs::remove_dir_all(finalized_symlink_directory).expect("Failed to remove pending symlink directory.");
 			}
-			fs::rename(&pending_snapshot_directory, &finalized_snapshot_directory).expect("Failed to finalize snapshot directory.");
-			fs::rename(&pending_symlink_directory, &finalized_symlink_directory).expect("Failed to finalize symlink directory.");
+			fs::rename(pending_snapshot_directory, finalized_snapshot_directory).expect("Failed to finalize snapshot directory.");
+			fs::rename(pending_symlink_directory, finalized_symlink_directory).expect("Failed to finalize symlink directory.");
 
 			// constructing the snapshots may have taken a while
 			let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();

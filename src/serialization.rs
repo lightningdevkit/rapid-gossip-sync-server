@@ -294,7 +294,7 @@ pub(super) fn serialize_stripped_channel_update(update: &UpdateSerialization, de
 }
 
 pub(super) fn find_most_common_histogram_entry_with_default<T: Copy>(histogram: HashMap<T, usize>, default: T) -> T {
-	let most_frequent_entry = histogram.iter().max_by(|a, b| a.1.cmp(&b.1));
+	let most_frequent_entry = histogram.iter().max_by(|a, b| a.1.cmp(b.1));
 	if let Some(entry_details) = most_frequent_entry {
 		// .0 is the value
 		// .1 is the frequency

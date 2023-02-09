@@ -16,7 +16,6 @@ use std::io::BufReader;
 use std::sync::Arc;
 
 use bitcoin::blockdata::constants::genesis_block;
-use bitcoin::Network;
 use bitcoin::secp256k1::PublicKey;
 use lightning::routing::gossip::NetworkGraph;
 use lightning::util::ser::{ReadableArgs, Writeable};
@@ -54,6 +53,7 @@ pub struct SerializedResponse {
 
 impl RapidSyncProcessor {
 	pub fn new() -> Self {
+		let network = config::network();
 		let logger = TestLogger::new();
 		let network_graph = if let Ok(file) = File::open(&config::network_graph_cache_path()) {
 			println!("Initializing from cached network graph…");
@@ -65,10 +65,10 @@ impl RapidSyncProcessor {
 				network_graph
 			} else {
 				println!("Initialization from cached network graph failed: {}", network_graph_result.err().unwrap());
-				NetworkGraph::new(genesis_block(Network::Bitcoin).header.block_hash(), logger)
+				NetworkGraph::new(genesis_block(network).header.block_hash(), logger)
 			}
 		} else {
-			NetworkGraph::new(genesis_block(Network::Bitcoin).header.block_hash(), logger)
+			NetworkGraph::new(genesis_block(network).header.block_hash(), logger)
 		};
 		let arc_network_graph = Arc::new(network_graph);
 		Self {

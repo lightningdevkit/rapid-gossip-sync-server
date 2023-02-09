@@ -103,7 +103,7 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 		let channel_announcement_delta = channel_delta.announcement.as_ref().unwrap();
 		if !chain_hash_set {
 			chain_hash_set = true;
-			serialization_set.chain_hash = channel_announcement_delta.announcement.chain_hash.clone();
+			serialization_set.chain_hash = channel_announcement_delta.announcement.chain_hash;
 		}
 
 		let current_announcement_seen = channel_announcement_delta.seen;

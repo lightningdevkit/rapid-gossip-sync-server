@@ -65,8 +65,8 @@ impl Snapshotter {
 			let mut snapshot_sync_timestamps: Vec<(u64, u64)> = Vec::new();
 			for factor in &snapshot_sync_day_factors {
 				// basically timestamp - day_seconds * factor
-				let timestamp = reference_timestamp.saturating_sub(round_day_seconds.saturating_mul(factor.clone()));
-				snapshot_sync_timestamps.push((factor.clone(), timestamp));
+				let timestamp = reference_timestamp.saturating_sub(round_day_seconds.saturating_mul(*factor));
+				snapshot_sync_timestamps.push((*factor, timestamp));
 			};
 
 			let mut snapshot_filenames_by_day_range: HashMap<u64, String> = HashMap::with_capacity(10);
@@ -76,14 +76,14 @@ impl Snapshotter {
 				{
 					println!("Calculating {day_range}-day snapshot");
 					// calculate the snapshot
-					let snapshot = super::serialize_delta(network_graph_clone, current_last_sync_timestamp.clone() as u32, true).await;
+					let snapshot = super::serialize_delta(network_graph_clone, *current_last_sync_timestamp as u32, true).await;
 
 					// persist the snapshot and update the symlink
 					let snapshot_filename = format!("snapshot__calculated-at:{reference_timestamp}__range:{day_range}-days__previous-sync:{current_last_sync_timestamp}.lngossip");
 					let snapshot_path = format!("{pending_snapshot_directory}/{snapshot_filename}");
 					println!("Persisting {}-day snapshot: {} ({} messages, {} announcements, {} updates ({} full, {} incremental))", day_range, snapshot_filename, snapshot.message_count, snapshot.announcement_count, snapshot.update_count, snapshot.update_count_full, snapshot.update_count_incremental);
 					fs::write(&snapshot_path, snapshot.data).unwrap();
-					snapshot_filenames_by_day_range.insert(day_range.clone(), snapshot_filename);
+					snapshot_filenames_by_day_range.insert(*day_range, snapshot_filename);
 				}
 			}
 
@@ -96,9 +96,9 @@ impl Snapshotter {
 					u64::MAX
 				} else {
 					// find min(x) in snapshot_sync_day_factors where x >= i
-					snapshot_sync_day_factors.iter().find(|x| {
+					*snapshot_sync_day_factors.iter().find(|x| {
 						x >= &&i
-					}).unwrap().clone()
+					}).unwrap()
 				};
 
 				let snapshot_filename = snapshot_filenames_by_day_range.get(&referenced_day_range).unwrap();

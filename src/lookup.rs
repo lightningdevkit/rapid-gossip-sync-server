@@ -161,7 +161,7 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 		intermediate_update_prefix = "DISTINCT ON (short_channel_id, direction)";
 	}
 
-	let query_string = format!("SELECT {} id, direction, blob_signed, seen FROM channel_updates WHERE seen >= $1 ORDER BY short_channel_id ASC, direction ASC, seen DESC", intermediate_update_prefix);
+	let query_string = format!("SELECT {intermediate_update_prefix} id, direction, blob_signed, seen FROM channel_updates WHERE seen >= $1 ORDER BY short_channel_id ASC, direction ASC, seen DESC");
 	let intermediate_updates = client.query(&query_string, &[&last_sync_timestamp_object]).await.unwrap();
 	println!("Fetched intermediate rows ({}): {:?}", intermediate_updates.len(), start.elapsed());
 

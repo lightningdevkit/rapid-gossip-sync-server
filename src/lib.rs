@@ -214,7 +214,7 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<TestLogger>>, last_sync
 
 	prefixed_output.append(&mut output);
 
-	println!("duplicated node ids: {}", duplicate_node_ids);
+	println!("duplicated node ids: {duplicate_node_ids}");
 	println!("latest seen timestamp: {:?}", serialization_details.latest_seen);
 
 	SerializedResponse {

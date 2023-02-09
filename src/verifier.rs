@@ -26,7 +26,7 @@ impl ChainVerifier {
 
 	fn retrieve_block(&self, block_height: u32) -> Result<Block, AccessError> {
 		tokio::task::block_in_place(move || { tokio::runtime::Handle::current().block_on(async move {
-			let uri = format!("blockhashbyheight/{}.bin", block_height);
+			let uri = format!("blockhashbyheight/{block_height}.bin");
 			let block_hash_result =
 				self.rest_client.request_resource::<BinaryResponse, RestBinaryResponse>(&uri).await;
 			let block_hash: Vec<u8> = block_hash_result.map_err(|error| {
@@ -42,7 +42,7 @@ impl ChainVerifier {
 				},
 				Ok(_) => unreachable!(),
 				Err(error) => {
-					eprintln!("Couldn't retrieve block {}: {:?} ({})", block_height, error, block_hash);
+					eprintln!("Couldn't retrieve block {block_height}: {error:?} ({block_hash})");
 					Err(AccessError::UnknownChain)
 				}
 			}

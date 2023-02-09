@@ -62,7 +62,7 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessa
 		panic!("Failed to connect to any peer.");
 	}
 
-	println!("Connected to {} Lightning peers!", connected_peer_count);
+	println!("Connected to {connected_peer_count} Lightning peers!");
 
 	tokio::spawn(async move {
 		let mut previous_announcement_count = 0u64;

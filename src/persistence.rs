@@ -97,7 +97,7 @@ impl GossipPersister {
 			i += 1; // count the persisted gossip messages
 
 			if latest_persistence_log.elapsed().as_secs() >= 60 {
-				println!("Persisting gossip message #{}", i);
+				println!("Persisting gossip message #{i}");
 				latest_persistence_log = Instant::now();
 			}
 

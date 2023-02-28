@@ -161,9 +161,8 @@ async fn connect_peer(current_peer: (PublicKey, SocketAddr), peer_manager: Gossi
 					current_peer.1,
 				).await {
 					disconnection_future.await;
-				} else {
-					tokio::time::sleep(Duration::from_secs(10)).await;
 				}
+				tokio::time::sleep(Duration::from_secs(10)).await;
 			}
 		});
 		true

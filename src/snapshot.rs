@@ -116,6 +116,10 @@ impl Snapshotter {
 				symlink(&relative_snapshot_path, &symlink_path).unwrap();
 			}
 
+			let update_time_path = format!("{}/update_time.txt", pending_symlink_directory);
+			let update_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+			fs::write(&update_time_path, format!("{}", update_time)).unwrap();
+
 			if fs::metadata(&finalized_snapshot_directory).is_ok(){
 				fs::remove_dir_all(&finalized_snapshot_directory).expect("Failed to remove finalized snapshot directory.");
 			}

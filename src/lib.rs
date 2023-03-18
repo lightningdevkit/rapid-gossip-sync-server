@@ -15,9 +15,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
 
-use bitcoin::blockdata::constants::genesis_block;
-use bitcoin::secp256k1::PublicKey;
-use lightning::routing::gossip::NetworkGraph;
+use lightning::routing::gossip::{NetworkGraph, NodeId};
 use lightning::util::ser::{ReadableArgs, Writeable};
 use tokio::sync::mpsc;
 use crate::lookup::DeltaSet;
@@ -60,15 +58,14 @@ impl RapidSyncProcessor {
 			let mut buffered_reader = BufReader::new(file);
 			let network_graph_result = NetworkGraph::read(&mut buffered_reader, logger);
 			if let Ok(network_graph) = network_graph_result {
-				network_graph.remove_stale_channels_and_tracking();
 				println!("Initialized from cached network graph!");
 				network_graph
 			} else {
 				println!("Initialization from cached network graph failed: {}", network_graph_result.err().unwrap());
-				NetworkGraph::new(genesis_block(network).header.block_hash(), logger)
+				NetworkGraph::new(network, logger)
 			}
 		} else {
-			NetworkGraph::new(genesis_block(network).header.block_hash(), logger)
+			NetworkGraph::new(network, logger)
 		};
 		let arc_network_graph = Arc::new(network_graph);
 		Self {
@@ -120,21 +117,20 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<TestLogger>>, last_sync
 	// chain hash only necessary if either channel announcements or non-incremental updates are present
 	// for announcement-free incremental-only updates, chain hash can be skipped
 
-	let mut node_id_set: HashSet<[u8; 33]> = HashSet::new();
-	let mut node_id_indices: HashMap<[u8; 33], usize> = HashMap::new();
-	let mut node_ids: Vec<PublicKey> = Vec::new();
+	let mut node_id_set: HashSet<NodeId> = HashSet::new();
+	let mut node_id_indices: HashMap<NodeId, usize> = HashMap::new();
+	let mut node_ids: Vec<NodeId> = Vec::new();
 	let mut duplicate_node_ids: i32 = 0;
 
-	let mut get_node_id_index = |node_id: PublicKey| {
-		let serialized_node_id = node_id.serialize();
-		if node_id_set.insert(serialized_node_id) {
+	let mut get_node_id_index = |node_id: NodeId| {
+		if node_id_set.insert(node_id) {
 			node_ids.push(node_id);
 			let index = node_ids.len() - 1;
-			node_id_indices.insert(serialized_node_id, index);
+			node_id_indices.insert(node_id, index);
 			return index;
 		}
 		duplicate_node_ids += 1;
-		node_id_indices[&serialized_node_id]
+		node_id_indices[&node_id]
 	};
 
 	let mut delta_set = DeltaSet::new();

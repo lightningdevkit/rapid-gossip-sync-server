@@ -1,0 +1,77 @@
+version: "3"
+
+services:
+  rgs_server:
+    build:
+      context: '$PWD'
+      dockerfile: '$PWD/docker/Dockerfile.rgs'
+    volumes:
+      - '$PWD:/usr/src/app:cached'
+    links:
+      - postgres
+      - bitcoin-core
+    depends_on:
+      - postgres
+    environment:
+      - RAPID_GOSSIP_SYNC_SERVER_DB_HOST=postgres
+      - RAPID_GOSSIP_SYNC_SERVER_DB_USER=lightning-rgs
+      - RAPID_GOSSIP_SYNC_SERVER_DB_PASSWORD=docker
+      - RAPID_GOSSIP_SYNC_SERVER_DB_NAME=ln_graph_sync
+      - BITCOIN_REST_DOMAIN=bitcoin-core
+      - BITCOIN_REST_PORT=8332
+      - BITCOIN_REST_PATH=/rest/
+    command: 'cargo run'
+
+  postgres:
+    image: 'postgres:12-alpine'
+    ports:
+      - 5432:5432
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=lightning-rgs
+      - POSTGRES_PASSWORD=docker
+      - POSTGRES_DB=ln_graph_sync
+
+  bitcoin-core:
+    container_name: bitcoin-core
+    image: ruimarinho/bitcoin-core:alpine
+    restart: always
+    ports:
+      - "0.0.0.0:8332:8332"
+      - "0.0.0.0:8333:8333"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - .bitcoin:/home/bitcoin/.bitcoin
+    command:
+      - "-printtoconsole"
+      - "-rpcallowip=0.0.0.0/0"
+      - "-rpcbind=0.0.0.0"
+      - "-rpcuser=vault"
+      - "-rpcpassword=vault"
+      - "-rpcport=8332"
+      - "-rest"
+
+  # Comment Out Below for Testnet. You'll also need to change BITCOIN_REST_PORT to 18332
+  # bitcoin-core:
+  #   container_name: bitcoin-core
+  #   image: ruimarinho/bitcoin-core:alpine
+  #   restart: always
+  #   ports:
+  #     - "0.0.0.0:18332:18332"
+  #     - "0.0.0.0:18332:18333"
+  #   volumes:
+  #     - /etc/localtime:/etc/localtime:ro
+  #     - .bitcoin:/home/bitcoin/.bitcoin
+  #   command:
+  #     - "-printtoconsole"
+  #     - "-testnet"
+  #     - "-rpcallowip=0.0.0.0/0"
+  #     - "-rpcbind=0.0.0.0"
+  #     - "-rpcuser=vault"
+  #     - "-rpcpassword=vault"
+  #     - "-rpcport=18332"
+  #     - "-rest"
+
+volumes:
+  postgres: null

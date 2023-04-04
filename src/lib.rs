@@ -36,6 +36,12 @@ mod config;
 mod hex_utils;
 mod verifier;
 
+/// The purpose of this prefix is to identify the serialization format, should other rapid gossip
+/// sync formats arise in the future.
+///
+/// The fourth byte is the protocol version in case our format gets updated.
+const GOSSIP_PREFIX: [u8; 4] = [76, 68, 75, 1];
+
 pub struct RapidSyncProcessor {
 	network_graph: Arc<NetworkGraph<TestLogger>>,
 }
@@ -98,6 +104,37 @@ impl RapidSyncProcessor {
 		// start the gossip snapshotting service
 		Snapshotter::new(Arc::clone(&self.network_graph)).snapshot_gossip().await;
 	}
+}
+
+/// This method generates a no-op blob that can be used as a delta where none exists.
+///
+/// The primary purpose of this method is the scenario of a client retrieving and processing a
+/// given snapshot, and then immediately retrieving the would-be next snapshot at the timestamp
+/// indicated by the one that was just processed.
+/// Previously, there would not be a new snapshot to be processed for that particular timestamp yet,
+/// and the server would return a 404 error.
+///
+/// In principle, this method could also be used to address another unfortunately all too common
+/// pitfall: requesting snapshots from intermediate timestamps, i. e. those that are not multiples
+/// of our granularity constant. Note that for that purpose, this method could be very dangerous,
+/// because if consumed, the `timestamp` value calculated here will overwrite the timestamp that
+/// the client previously had, which could result in duplicated or omitted gossip down the line.
+fn serialize_empty_blob(current_timestamp: u64) -> Vec<u8> {
+	let mut blob = GOSSIP_PREFIX.to_vec();
+
+	let network = config::network();
+	let genesis_block = bitcoin::blockdata::constants::genesis_block(network);
+	let chain_hash = genesis_block.block_hash();
+	chain_hash.write(&mut blob).unwrap();
+
+	let blob_timestamp = Snapshotter::round_down_to_nearest_multiple(current_timestamp, config::SNAPSHOT_CALCULATION_INTERVAL as u64) as u32;
+	blob_timestamp.write(&mut blob).unwrap();
+
+	0u32.write(&mut blob).unwrap(); // node count
+	0u32.write(&mut blob).unwrap(); // announcement count
+	0u32.write(&mut blob).unwrap(); // update count
+
+	blob
 }
 
 async fn serialize_delta(network_graph: Arc<NetworkGraph<TestLogger>>, last_sync_timestamp: u32, consider_intermediate_updates: bool) -> SerializedResponse {
@@ -191,7 +228,7 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<TestLogger>>, last_sync
 	// some stats
 	let message_count = announcement_count + update_count;
 
-	let mut prefixed_output = vec![76, 68, 75, 1];
+	let mut prefixed_output = GOSSIP_PREFIX.to_vec();
 
 	// always write the chain hash
 	serialization_details.chain_hash.write(&mut prefixed_output).unwrap();

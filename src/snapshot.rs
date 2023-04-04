@@ -87,8 +87,20 @@ impl Snapshotter {
 				}
 			}
 
+			{
+				// create dummy symlink
+				let dummy_filename = "empty_delta.lngossip";
+				let dummy_snapshot = super::serialize_empty_blob(reference_timestamp);
+				let dummy_snapshot_path = format!("{}/{}", pending_snapshot_directory, dummy_filename);
+				fs::write(&dummy_snapshot_path, dummy_snapshot).unwrap();
+
+				let dummy_symlink_path = format!("{}/{}.bin", pending_symlink_directory, reference_timestamp);
+				println!("Symlinking dummy: {} -> {}", dummy_symlink_path, dummy_snapshot_path);
+				symlink(&dummy_snapshot_path, &dummy_symlink_path).unwrap();
+			}
+
 			for i in 0..10_001u64 {
-				// let's create symlinks
+				// let's create non-dummy-symlinks
 
 				// first, determine which snapshot range should be referenced
 				let referenced_day_range = if i == 0 {
@@ -141,7 +153,7 @@ impl Snapshotter {
 		}
 	}
 
-	fn round_down_to_nearest_multiple(number: u64, multiple: u64) -> u64 {
+	pub(super) fn round_down_to_nearest_multiple(number: u64, multiple: u64) -> u64 {
 		let round_multiple_delta = number % multiple;
 		number - round_multiple_delta
 	}

@@ -6,7 +6,6 @@ use std::time::{Duration, Instant};
 
 use bitcoin::hashes::hex::ToHex;
 use bitcoin::secp256k1::PublicKey;
-use lightning;
 use lightning::ln::peer_handler::{
 	ErroringMessageHandler, IgnoringMessageHandler, MessageHandler, PeerManager,
 };
@@ -18,7 +17,7 @@ use crate::{config, TestLogger};
 use crate::downloader::GossipRouter;
 use crate::types::{GossipMessage, GossipPeerManager};
 
-pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessage>,
+pub(crate) async fn download_gossip(persistence_sender: mpsc::UnboundedSender<GossipMessage>,
 		completion_sender: mpsc::Sender<()>,
 		network_graph: Arc<NetworkGraph<TestLogger>>) {
 	let mut key = [42; 32];
@@ -33,7 +32,7 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessa
 
 	let keys_manager = Arc::new(KeysManager::new(&key, 0xdeadbeef, 0xdeadbeef));
 
-	let router = Arc::new(GossipRouter::new(network_graph, persistence_sender.clone()));
+	let router = Arc::new(GossipRouter::new(network_graph, persistence_sender));
 
 	let message_handler = MessageHandler {
 		chan_handler: ErroringMessageHandler::new(),

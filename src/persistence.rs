@@ -11,14 +11,14 @@ use crate::{config, TestLogger};
 use crate::types::GossipMessage;
 
 pub(crate) struct GossipPersister {
-	gossip_persistence_receiver: mpsc::Receiver<GossipMessage>,
+	gossip_persistence_receiver: mpsc::UnboundedReceiver<GossipMessage>,
 	network_graph: Arc<NetworkGraph<TestLogger>>,
 }
 
 impl GossipPersister {
-	pub fn new(network_graph: Arc<NetworkGraph<TestLogger>>) -> (Self, mpsc::Sender<GossipMessage>) {
+	pub fn new(network_graph: Arc<NetworkGraph<TestLogger>>) -> (Self, mpsc::UnboundedSender<GossipMessage>) {
 		let (gossip_persistence_sender, gossip_persistence_receiver) =
-			mpsc::channel::<GossipMessage>(100);
+			mpsc::unbounded_channel::<GossipMessage>();
 		(GossipPersister {
 			gossip_persistence_receiver,
 			network_graph

@@ -6,7 +6,6 @@ use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, Init, LightningErr
 use lightning::routing::gossip::{NetworkGraph, NodeId, P2PGossipSync};
 use lightning::util::events::{MessageSendEvent, MessageSendEventsProvider};
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::error::TrySendError;
 
 use crate::TestLogger;
 use crate::types::{GossipMessage, GossipChainAccess, GossipPeerManager};
@@ -33,13 +32,13 @@ impl GossipCounter {
 pub(crate) struct GossipRouter {
 	native_router: P2PGossipSync<Arc<NetworkGraph<TestLogger>>, GossipChainAccess, TestLogger>,
 	pub(crate) counter: RwLock<GossipCounter>,
-	sender: mpsc::Sender<GossipMessage>,
+	sender: mpsc::UnboundedSender<GossipMessage>,
 	verifier: Arc<ChainVerifier>,
 	outbound_gossiper: Arc<P2PGossipSync<Arc<NetworkGraph<TestLogger>>, GossipChainAccess, TestLogger>>,
 }
 
 impl GossipRouter {
-	pub(crate) fn new(network_graph: Arc<NetworkGraph<TestLogger>>, sender: mpsc::Sender<GossipMessage>) -> Self {
+	pub(crate) fn new(network_graph: Arc<NetworkGraph<TestLogger>>, sender: mpsc::UnboundedSender<GossipMessage>) -> Self {
 		let outbound_gossiper = Arc::new(P2PGossipSync::new(Arc::clone(&network_graph), None, TestLogger::new()));
 		let verifier = Arc::new(ChainVerifier::new(Arc::clone(&network_graph), Arc::clone(&outbound_gossiper)));
 		Self {
@@ -56,17 +55,11 @@ impl GossipRouter {
 	}
 
 	fn new_channel_announcement(&self, msg: ChannelAnnouncement) {
-		{
-			let mut counter = self.counter.write().unwrap();
-			counter.channel_announcements += 1;
-		}
+		self.counter.write().unwrap().channel_announcements += 1;
 
 		let gossip_message = GossipMessage::ChannelAnnouncement(msg);
-		if let Err(err) = self.sender.try_send(gossip_message) {
-			let gossip_message = match err { TrySendError::Full(msg)|TrySendError::Closed(msg) => msg };
-			tokio::task::block_in_place(move || { tokio::runtime::Handle::current().block_on(async move {
-				self.sender.send(gossip_message).await.unwrap();
-			})});
+		if let Err(err) = self.sender.send(gossip_message) {
+			eprintln!("Error on sending new channel announcement: {:?}", err);
 		}
 	}
 
@@ -74,11 +67,8 @@ impl GossipRouter {
 		self.counter.write().unwrap().channel_updates += 1;
 		let gossip_message = GossipMessage::ChannelUpdate(msg);
 
-		if let Err(err) = self.sender.try_send(gossip_message) {
-			let gossip_message = match err { TrySendError::Full(msg)|TrySendError::Closed(msg) => msg };
-			tokio::task::block_in_place(move || { tokio::runtime::Handle::current().block_on(async move {
-				self.sender.send(gossip_message).await.unwrap();
-			})});
+		if let Err(err) = self.sender.send(gossip_message) {
+		    eprintln!("Error on sending new channel update: {:?}", err);
 		}
 	}
 }

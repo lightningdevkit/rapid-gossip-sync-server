@@ -95,8 +95,9 @@ impl Snapshotter {
 				fs::write(&dummy_snapshot_path, dummy_snapshot).unwrap();
 
 				let dummy_symlink_path = format!("{}/{}.bin", pending_symlink_directory, reference_timestamp);
-				println!("Symlinking dummy: {} -> {}", dummy_symlink_path, dummy_snapshot_path);
-				symlink(&dummy_snapshot_path, &dummy_symlink_path).unwrap();
+				let relative_dummy_snapshot_path = format!("{}/{}", relative_symlink_to_snapshot_path, dummy_filename);
+				println!("Symlinking dummy: {} -> {}", dummy_symlink_path, relative_dummy_snapshot_path);
+				symlink(&relative_dummy_snapshot_path, &dummy_symlink_path).unwrap();
 			}
 
 			for i in 0..10_001u64 {

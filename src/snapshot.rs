@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use lightning::routing::gossip::NetworkGraph;
 
 use crate::{config, TestLogger};
+use crate::config::cache_path;
 
 pub(crate) struct Snapshotter {
 	network_graph: Arc<NetworkGraph<TestLogger>>,
@@ -23,10 +24,10 @@ impl Snapshotter {
 		let snapshot_sync_day_factors = [1, 2, 3, 4, 5, 6, 7, 14, 21, u64::MAX];
 		let round_day_seconds = config::SNAPSHOT_CALCULATION_INTERVAL as u64;
 
-		let pending_snapshot_directory = "./res/snapshots_pending";
-		let pending_symlink_directory = "./res/symlinks_pending";
-		let finalized_snapshot_directory = "./res/snapshots";
-		let finalized_symlink_directory = "./res/symlinks";
+		let pending_snapshot_directory = format!("{}/snapshots_pending", cache_path());
+		let pending_symlink_directory = format!("{}/symlinks_pending", cache_path());
+		let finalized_snapshot_directory = format!("{}/snapshots", cache_path());
+		let finalized_symlink_directory = format!("{}/symlinks", cache_path());
 		let relative_symlink_to_snapshot_path = "../snapshots";
 
 		// this is gonna be a never-ending background job

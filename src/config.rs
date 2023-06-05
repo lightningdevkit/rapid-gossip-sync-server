@@ -30,8 +30,13 @@ pub(crate) fn network() -> Network {
 	}
 }
 
-pub(crate) fn network_graph_cache_path() -> &'static str {
-	"./res/network_graph.bin"
+pub(crate) fn network_graph_cache_path() -> String {
+	format!("{}/network_graph.bin", cache_path())
+}
+
+pub(crate) fn cache_path() -> String {
+	let path = env::var("RAPID_GOSSIP_SYNC_SERVER_CACHES_PATH").unwrap_or("./res".to_string()).to_lowercase();
+	path
 }
 
 pub(crate) fn db_connection_config() -> Config {

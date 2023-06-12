@@ -90,7 +90,7 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 		let current_seen_timestamp_object: SystemTime = current_announcement_row.get("seen");
 		let current_seen_timestamp: u32 = current_seen_timestamp_object.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u32;
 
-		let mut current_channel_delta = delta_set.entry(scid).or_insert(ChannelDelta::default());
+		let current_channel_delta = delta_set.entry(scid).or_insert(ChannelDelta::default());
 		(*current_channel_delta).announcement = Some(AnnouncementDelta {
 			announcement: unsigned_announcement,
 			seen: current_seen_timestamp,
@@ -111,7 +111,7 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 		let current_seen_timestamp_object: SystemTime = current_row.get("seen");
 		let current_seen_timestamp: u32 = current_seen_timestamp_object.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u32;
 
-		let mut current_channel_delta = delta_set.entry(scid).or_insert(ChannelDelta::default());
+		let current_channel_delta = delta_set.entry(scid).or_insert(ChannelDelta::default());
 		(*current_channel_delta).first_update_seen = Some(current_seen_timestamp);
 	}
 }
@@ -142,7 +142,7 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 		let scid = unsigned_channel_update.short_channel_id;
 
 		let current_channel_delta = delta_set.entry(scid).or_insert(ChannelDelta::default());
-		let mut update_delta = if !direction {
+		let update_delta = if !direction {
 			(*current_channel_delta).updates.0.get_or_insert(DirectedUpdateDelta::default())
 		} else {
 			(*current_channel_delta).updates.1.get_or_insert(DirectedUpdateDelta::default())

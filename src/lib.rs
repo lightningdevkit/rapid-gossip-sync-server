@@ -213,7 +213,7 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<TestLogger>>, last_sync
 			UpdateSerializationMechanism::Full => {
 				update_count_full += 1;
 			}
-			UpdateSerializationMechanism::Incremental(_) => {
+			UpdateSerializationMechanism::Incremental(_) | UpdateSerializationMechanism::Reminder => {
 				update_count_incremental += 1;
 			}
 		};

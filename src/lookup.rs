@@ -146,7 +146,7 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 	/// — From those updates, select distinct by (scid), ordered by seen ASC (to obtain the older one per direction)
 	let current_timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u32;
 	let reminder_threshold_timestamp = current_timestamp.saturating_sub(config::CHANNEL_REMINDER_AGE);
-	let mut channels_requiring_reminders: Vec<i64> = vec![];
+	let read_only_graph = network_graph.read_only();
 
 	let older_latest_directional_updates = client.query("
 		SELECT DISTINCT ON (short_channel_id) *
@@ -174,33 +174,19 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 			// way might be able to get away with not using this
 			(*current_channel_delta).requires_reminder = true;
 
-			// get the latest seen update in both directions for this channel
-			channels_requiring_reminders.push(scid as i64);
+			let current_channel_info = read_only_graph.channel(scid).unwrap();
+			if let Some(info) = current_channel_info.one_to_two.as_ref() {
+				let flags: u8 = if info.enabled { 0 } else { 2 };
+				let current_update = (*current_channel_delta).updates.0.get_or_insert(DirectedUpdateDelta::default());
+				current_update.serialization_update_flags = Some(flags);
+			}
+
+			if let Some(info) = current_channel_info.two_to_one.as_ref() {
+				let flags: u8 = if info.enabled { 1 } else { 3 };
+				let current_update = (*current_channel_delta).updates.1.get_or_insert(DirectedUpdateDelta::default());
+				current_update.serialization_update_flags = Some(flags);
+			}
 		}
-	}
-
-	println!("Fetching latest update data for channels requiring reminders");
-	let latest_reminder_updates = client.query("
-		SELECT DISTINCT ON (short_channel_id, direction) *
-		FROM channel_updates
-		WHERE short_channel_id = any($1)
-		ORDER BY short_channel_id ASC, direction ASC, seen DESC
-	", &[&channels_requiring_reminders]).await.unwrap();
-
-	for current_update in latest_reminder_updates {
-		let blob: Vec<u8> = current_update.get("blob_signed");
-		let mut readable = Cursor::new(blob);
-		let unsigned_update = ChannelUpdate::read(&mut readable).unwrap().contents;
-		let scid = unsigned_update.short_channel_id;
-		let direction: bool = current_update.get("direction");
-
-		let current_channel_delta = delta_set.entry(scid).or_insert(ChannelDelta::default());
-		let update_delta = if !direction {
-			(*current_channel_delta).updates.0.get_or_insert(DirectedUpdateDelta::default())
-		} else {
-			(*current_channel_delta).updates.1.get_or_insert(DirectedUpdateDelta::default())
-		};
-		update_delta.serialization_update_flags = Some(unsigned_update.flags);
 	}
 }
 

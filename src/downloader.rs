@@ -1,10 +1,10 @@
 use std::sync::{Arc, RwLock};
 
 use bitcoin::secp256k1::PublicKey;
+use lightning::events::{MessageSendEvent, MessageSendEventsProvider};
 use lightning::ln::features::{InitFeatures, NodeFeatures};
 use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, Init, LightningError, NodeAnnouncement, QueryChannelRange, QueryShortChannelIds, ReplyChannelRange, ReplyShortChannelIdsEnd, RoutingMessageHandler};
 use lightning::routing::gossip::{NetworkGraph, NodeId, P2PGossipSync};
-use lightning::util::events::{MessageSendEvent, MessageSendEventsProvider};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 
@@ -88,7 +88,7 @@ impl MessageSendEventsProvider for GossipRouter {
 		let gossip_evs = self.outbound_gossiper.get_and_clear_pending_msg_events();
 		for ev in gossip_evs {
 			match ev {
-				MessageSendEvent::BroadcastChannelAnnouncement { msg, update_msg: None } => {
+				MessageSendEvent::BroadcastChannelAnnouncement { msg, .. } => {
 					self.new_channel_announcement(msg);
 				},
 				MessageSendEvent::BroadcastNodeAnnouncement { .. } => {},

@@ -122,7 +122,7 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
                 SELECT DISTINCT ON (short_channel_id, direction) short_channel_id, seen
                 FROM channel_updates
                 WHERE short_channel_id = any($1)
-                ORDER BY seen ASC, short_channel_id ASC, direction ASC
+                ORDER BY short_channel_id ASC, direction ASC, seen ASC
             ) AS directional_last_seens
             ORDER BY short_channel_id ASC, seen DESC
         ", &[&channel_ids]).await.unwrap();

@@ -15,7 +15,7 @@ use lightning::util::ser::Readable;
 use lightning_block_sync::http::HttpEndpoint;
 use tokio_postgres::Config;
 
-pub(crate) const SCHEMA_VERSION: i32 = 8;
+pub(crate) const SCHEMA_VERSION: i32 = 9;
 pub(crate) const SNAPSHOT_CALCULATION_INTERVAL: u32 = 3600 * 24; // every 24 hours, in seconds
 /// If the last update in either direction was more than six days ago, we send a reminder
 /// That reminder may be either in the form of a channel announcement, or in the form of empty
@@ -104,10 +104,9 @@ pub(crate) fn db_channel_update_table_creation_query() -> &'static str {
 
 pub(crate) fn db_index_creation_query() -> &'static str {
 	"
-	CREATE INDEX IF NOT EXISTS channel_updates_seen ON channel_updates(seen, short_channel_id, direction) INCLUDE (id, blob_signed);
-	CREATE INDEX IF NOT EXISTS channel_updates_scid_seen ON channel_updates(short_channel_id, seen) INCLUDE (blob_signed);
 	CREATE INDEX IF NOT EXISTS channel_updates_seen_scid ON channel_updates(seen, short_channel_id);
 	CREATE INDEX IF NOT EXISTS channel_updates_scid_dir_seen ON channel_updates(short_channel_id ASC, direction ASC, seen DESC) INCLUDE (id, blob_signed);
+	CREATE INDEX IF NOT EXISTS channel_updates_scid_dir_seen_asc ON channel_updates(short_channel_id, direction, seen);
 	CREATE UNIQUE INDEX IF NOT EXISTS channel_updates_key ON channel_updates (short_channel_id, direction, timestamp);
 	"
 }
@@ -220,6 +219,13 @@ pub(crate) async fn upgrade_db(schema: i32, client: &mut tokio_postgres::Client)
 		tx.execute("DROP INDEX channel_updates_scid_seen", &[]).await.unwrap();
 		tx.execute("DROP INDEX channel_updates_scid_dir_seen", &[]).await.unwrap();
 		tx.execute("UPDATE config SET db_schema = 8 WHERE id = 1", &[]).await.unwrap();
+		tx.commit().await.unwrap();
+	}
+	if schema >= 1 && schema <= 8 {
+		let tx = client.transaction().await.unwrap();
+		tx.execute("DROP INDEX channel_updates_seen", &[]).await.unwrap();
+		tx.execute("DROP INDEX channel_updates_scid_seen", &[]).await.unwrap();
+		tx.execute("UPDATE config SET db_schema = 9 WHERE id = 1", &[]).await.unwrap();
 		tx.commit().await.unwrap();
 	}
 	if schema <= 1 || schema > SCHEMA_VERSION {

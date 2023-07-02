@@ -117,15 +117,15 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 		// here is where the channels whose first update in either direction occurred after
 		// `last_seen_timestamp` are added to the selection
 		let newer_oldest_directional_updates = client.query("
-		SELECT DISTINCT ON (short_channel_id) *
-		FROM (
-			SELECT DISTINCT ON (short_channel_id, direction) short_channel_id, seen
-			FROM channel_updates
-			WHERE short_channel_id = any($1)
-			ORDER BY seen ASC, short_channel_id ASC, direction ASC
-		) AS directional_last_seens
-		ORDER BY short_channel_id ASC, seen DESC
-	", &[&channel_ids]).await.unwrap();
+            SELECT DISTINCT ON (short_channel_id) *
+            FROM (
+                SELECT DISTINCT ON (short_channel_id, direction) short_channel_id, seen
+                FROM channel_updates
+                WHERE short_channel_id = any($1)
+                ORDER BY seen ASC, short_channel_id ASC, direction ASC
+            ) AS directional_last_seens
+            ORDER BY short_channel_id ASC, seen DESC
+        ", &[&channel_ids]).await.unwrap();
 
 		for current_row in newer_oldest_directional_updates {
 			let scid: i64 = current_row.get("short_channel_id");
@@ -153,15 +153,15 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 		let read_only_graph = network_graph.read_only();
 
 		let older_latest_directional_updates = client.query("
-		SELECT DISTINCT ON (short_channel_id) *
-		FROM (
-			SELECT DISTINCT ON (short_channel_id, direction) short_channel_id, seen
-			FROM channel_updates
-			WHERE short_channel_id = any($1)
-			ORDER BY short_channel_id ASC, direction ASC, seen DESC
-		) AS directional_last_seens
-		ORDER BY short_channel_id ASC, seen ASC
-	", &[&channel_ids]).await.unwrap();
+			SELECT DISTINCT ON (short_channel_id) *
+			FROM (
+				SELECT DISTINCT ON (short_channel_id, direction) short_channel_id, seen
+				FROM channel_updates
+				WHERE short_channel_id = any($1)
+				ORDER BY short_channel_id ASC, direction ASC, seen DESC
+			) AS directional_last_seens
+			ORDER BY short_channel_id ASC, seen ASC
+		", &[&channel_ids]).await.unwrap();
 
 		for current_row in older_latest_directional_updates {
 			let scid: i64 = current_row.get("short_channel_id");
@@ -208,7 +208,17 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 	// get the latest channel update in each direction prior to last_sync_timestamp, provided
 	// there was an update in either direction that happened after the last sync (to avoid
 	// collecting too many reference updates)
-	let reference_rows = client.query("SELECT DISTINCT ON (short_channel_id, direction) id, direction, blob_signed FROM channel_updates WHERE seen < $1 AND short_channel_id IN (SELECT short_channel_id FROM channel_updates WHERE seen >= $1 GROUP BY short_channel_id) ORDER BY short_channel_id ASC, direction ASC, seen DESC", &[&last_sync_timestamp_object]).await.unwrap();
+	let reference_rows = client.query("
+		SELECT DISTINCT ON (short_channel_id, direction) id, direction, blob_signed
+		FROM channel_updates
+		WHERE seen < $1 AND short_channel_id IN (
+			SELECT short_channel_id
+			FROM channel_updates
+			WHERE seen >= $1
+			GROUP BY short_channel_id
+		)
+		ORDER BY short_channel_id ASC, direction ASC, seen DESC
+		", &[&last_sync_timestamp_object]).await.unwrap();
 
 	println!("Fetched reference rows ({}): {:?}", reference_rows.len(), start.elapsed());
 
@@ -246,7 +256,12 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 		intermediate_update_prefix = "DISTINCT ON (short_channel_id, direction)";
 	}
 
-	let query_string = format!("SELECT {} id, direction, blob_signed, seen FROM channel_updates WHERE seen >= $1 ORDER BY short_channel_id ASC, direction ASC, seen DESC", intermediate_update_prefix);
+	let query_string = format!("
+		SELECT {} id, direction, blob_signed, seen
+		FROM channel_updates
+		WHERE seen >= $1
+		ORDER BY short_channel_id ASC, direction ASC, seen DESC
+		", intermediate_update_prefix);
 	let intermediate_updates = client.query(&query_string, &[&last_sync_timestamp_object]).await.unwrap();
 	println!("Fetched intermediate rows ({}): {:?}", intermediate_updates.len(), start.elapsed());
 

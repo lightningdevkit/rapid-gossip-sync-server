@@ -20,7 +20,7 @@ use tokio::sync::mpsc;
 use crate::lookup::DeltaSet;
 
 use crate::persistence::GossipPersister;
-use crate::serialization::UpdateSerializationMechanism;
+use crate::serialization::UpdateSerialization;
 use crate::snapshot::Snapshotter;
 use crate::types::TestLogger;
 
@@ -209,11 +209,11 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<TestLogger>>, last_sync
 	let mut update_count_full = 0;
 	let mut update_count_incremental = 0;
 	for current_update in serialization_details.updates {
-		match &current_update.mechanism {
-			UpdateSerializationMechanism::Full => {
+		match &current_update {
+			UpdateSerialization::Full(_) => {
 				update_count_full += 1;
 			}
-			UpdateSerializationMechanism::Incremental(_) | UpdateSerializationMechanism::Reminder => {
+			UpdateSerialization::Incremental(_, _) | UpdateSerialization::Reminder(_, _) => {
 				update_count_incremental += 1;
 			}
 		};
@@ -221,7 +221,7 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<TestLogger>>, last_sync
 		let mut stripped_update = serialization::serialize_stripped_channel_update(&current_update, &default_update_values, previous_update_scid);
 		output.append(&mut stripped_update);
 
-		previous_update_scid = current_update.update.short_channel_id;
+		previous_update_scid = current_update.scid();
 	}
 
 	// some stats

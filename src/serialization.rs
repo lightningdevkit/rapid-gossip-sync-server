@@ -79,6 +79,7 @@ impl MutatedProperties {
 pub(super) enum UpdateSerializationMechanism {
 	Full,
 	Incremental(MutatedProperties),
+	Reminder,
 }
 
 struct FullUpdateValueHistograms {
@@ -127,7 +128,7 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 
 		let current_announcement_seen = channel_announcement_delta.seen;
 		let is_new_announcement = current_announcement_seen >= last_sync_timestamp;
-		let is_newly_updated_announcement = if let Some(first_update_seen) = channel_delta.first_update_seen {
+		let is_newly_updated_announcement = if let Some(first_update_seen) = channel_delta.first_bidirectional_updates_seen {
 			first_update_seen >= last_sync_timestamp
 		} else {
 			false
@@ -176,8 +177,26 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 							mechanism: UpdateSerializationMechanism::Full,
 						});
 					}
+				} else if let Some(flags) = updates.serialization_update_flags {
+					// we need to insert a fake channel update where the only information
+					let fake_update = UnsignedChannelUpdate {
+						flags,
+						chain_hash: BlockHash::all_zeros(),
+						short_channel_id: 0,
+						cltv_expiry_delta: 0,
+						fee_base_msat: 0,
+						fee_proportional_millionths: 0,
+						htlc_maximum_msat: 0,
+						htlc_minimum_msat: 0,
+						timestamp: 0,
+						excess_data: Vec::with_capacity(0),
+					};
+					serialization_set.updates.push(UpdateSerialization {
+						update: fake_update,
+						mechanism: UpdateSerializationMechanism::Reminder
+					})
 				}
-			};
+			}
 		};
 
 		categorize_directed_update_serialization(direction_a_updates);
@@ -282,6 +301,11 @@ pub(super) fn serialize_stripped_channel_update(update: &UpdateSerialization, de
 				serialized_flags |= 0b_0000_0100;
 				latest_update.htlc_maximum_msat.write(&mut delta_serialization).unwrap();
 			}
+		},
+
+		UpdateSerializationMechanism::Reminder => {
+			// indicate that this update is incremental
+			serialized_flags |= 0b_1000_0000;
 		}
 	}
 	let scid_delta = BigSize(latest_update.short_channel_id - previous_scid);

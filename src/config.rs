@@ -16,6 +16,10 @@ use tokio_postgres::Config;
 
 pub(crate) const SCHEMA_VERSION: i32 = 8;
 pub(crate) const SNAPSHOT_CALCULATION_INTERVAL: u32 = 3600 * 24; // every 24 hours, in seconds
+/// If the last update in either direction was more than six days ago, we send a reminder
+/// That reminder may be either in the form of a channel announcement, or in the form of empty
+/// updates in both directions.
+pub(crate) const CHANNEL_REMINDER_AGE: u32 = 6 * 24 * 3600;
 pub(crate) const DOWNLOAD_NEW_GOSSIP: bool = true;
 
 pub(crate) fn network() -> Network {

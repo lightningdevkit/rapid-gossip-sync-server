@@ -119,7 +119,7 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 		let newer_oldest_directional_updates = client.query("
 		SELECT DISTINCT ON (short_channel_id) *
 		FROM (
-			SELECT DISTINCT ON (short_channel_id, direction) blob_signed
+			SELECT DISTINCT ON (short_channel_id, direction) short_channel_id, seen
 			FROM channel_updates
 			WHERE short_channel_id = any($1)
 			ORDER BY seen ASC, short_channel_id ASC, direction ASC
@@ -128,16 +128,13 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 	", &[&channel_ids]).await.unwrap();
 
 		for current_row in newer_oldest_directional_updates {
-			let blob: Vec<u8> = current_row.get("blob_signed");
-			let mut readable = Cursor::new(blob);
-			let unsigned_update = ChannelUpdate::read(&mut readable).unwrap().contents;
-			let scid = unsigned_update.short_channel_id;
+			let scid: i64 = current_row.get("short_channel_id");
 			let current_seen_timestamp_object: SystemTime = current_row.get("seen");
 			let current_seen_timestamp: u32 = current_seen_timestamp_object.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u32;
 
 			if current_seen_timestamp > last_sync_timestamp {
 				// the newer of the two oldest seen directional updates came after last sync timestamp
-				let current_channel_delta = delta_set.entry(scid).or_insert(ChannelDelta::default());
+				let current_channel_delta = delta_set.entry(scid as u64).or_insert(ChannelDelta::default());
 				// first time a channel was seen in both directions
 				(*current_channel_delta).first_bidirectional_updates_seen = Some(current_seen_timestamp);
 			}
@@ -158,7 +155,7 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 		let older_latest_directional_updates = client.query("
 		SELECT DISTINCT ON (short_channel_id) *
 		FROM (
-			SELECT DISTINCT ON (short_channel_id, direction) *
+			SELECT DISTINCT ON (short_channel_id, direction) short_channel_id, seen
 			FROM channel_updates
 			WHERE short_channel_id = any($1)
 			ORDER BY short_channel_id ASC, direction ASC, seen DESC
@@ -167,21 +164,18 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 	", &[&channel_ids]).await.unwrap();
 
 		for current_row in older_latest_directional_updates {
-			let blob: Vec<u8> = current_row.get("blob_signed");
-			let mut readable = Cursor::new(blob);
-			let unsigned_update = ChannelUpdate::read(&mut readable).unwrap().contents;
-			let scid = unsigned_update.short_channel_id;
+			let scid: i64 = current_row.get("short_channel_id");
 			let current_seen_timestamp_object: SystemTime = current_row.get("seen");
 			let current_seen_timestamp: u32 = current_seen_timestamp_object.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u32;
 
 			if current_seen_timestamp <= reminder_threshold_timestamp {
 				// annotate this channel as requiring that reminders be sent to the client
-				let current_channel_delta = delta_set.entry(scid).or_insert(ChannelDelta::default());
+				let current_channel_delta = delta_set.entry(scid as u64).or_insert(ChannelDelta::default());
 
 				// way might be able to get away with not using this
 				(*current_channel_delta).requires_reminder = true;
 
-				if let Some(current_channel_info) = read_only_graph.channel(scid) {
+				if let Some(current_channel_info) = read_only_graph.channel(scid as u64) {
 					if current_channel_info.one_to_two.is_none() || current_channel_info.two_to_one.is_none() {
 						// we don't send reminders if we don't have bidirectional update data
 						continue;

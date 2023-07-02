@@ -4,6 +4,7 @@ use std::convert::TryInto;
 use std::env;
 use std::io::Cursor;
 use std::net::{SocketAddr, ToSocketAddrs};
+use std::time::Duration;
 
 use bitcoin::Network;
 use bitcoin::hashes::hex::FromHex;
@@ -19,7 +20,7 @@ pub(crate) const SNAPSHOT_CALCULATION_INTERVAL: u32 = 3600 * 24; // every 24 hou
 /// If the last update in either direction was more than six days ago, we send a reminder
 /// That reminder may be either in the form of a channel announcement, or in the form of empty
 /// updates in both directions.
-pub(crate) const CHANNEL_REMINDER_AGE: u32 = 6 * 24 * 3600;
+pub(crate) const CHANNEL_REMINDER_AGE: Duration = Duration::from_secs(6 * 24 * 60 * 60);
 pub(crate) const DOWNLOAD_NEW_GOSSIP: bool = true;
 
 pub(crate) fn network() -> Network {

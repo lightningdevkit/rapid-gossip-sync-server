@@ -58,11 +58,6 @@ impl Default for MutatedProperties {
 	}
 }
 
-pub(super) struct UpdateSerialization {
-	pub(super) update: UnsignedChannelUpdate,
-	pub(super) mechanism: UpdateSerializationMechanism,
-}
-
 impl MutatedProperties {
 	/// Does not include flags because the flag byte is always sent in full
 	fn len(&self) -> u8 {
@@ -76,10 +71,27 @@ impl MutatedProperties {
 	}
 }
 
-pub(super) enum UpdateSerializationMechanism {
-	Full,
-	Incremental(MutatedProperties),
-	Reminder,
+pub(super) enum UpdateSerialization {
+	Full(UnsignedChannelUpdate),
+	Incremental(UnsignedChannelUpdate, MutatedProperties),
+	Reminder(u64, u8),
+}
+impl UpdateSerialization {
+	pub(super) fn scid(&self) -> u64 {
+		match self {
+			UpdateSerialization::Full(latest_update)|
+			UpdateSerialization::Incremental(latest_update, _) => latest_update.short_channel_id,
+			UpdateSerialization::Reminder(scid, _) => *scid,
+		}
+	}
+
+	fn flags(&self) -> u8 {
+		match self {
+			UpdateSerialization::Full(latest_update)|
+			UpdateSerialization::Incremental(latest_update, _) => latest_update.flags,
+			UpdateSerialization::Reminder(_, flags) => *flags,
+		}
+	}
 }
 
 struct FullUpdateValueHistograms {
@@ -117,7 +129,7 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 		*full_update_histograms.htlc_maximum_msat.entry(full_update.htlc_maximum_msat).or_insert(0) += 1;
 	};
 
-	for (_scid, channel_delta) in delta_set.into_iter() {
+	for (scid, channel_delta) in delta_set.into_iter() {
 
 		// any announcement chain hash is gonna be the same value. Just set it from the first one.
 		let channel_announcement_delta = channel_delta.announcement.as_ref().unwrap();
@@ -146,6 +158,7 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 			if let Some(updates) = directed_updates {
 				if let Some(latest_update_delta) = updates.latest_update_after_seen {
 					let latest_update = latest_update_delta.update;
+					assert_eq!(latest_update.short_channel_id, scid, "Update in DB had wrong SCID column");
 
 					// the returned seen timestamp should be the latest of all the returned
 					// announcements and latest updates
@@ -158,43 +171,19 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 							// serialize the update as a full update instead of as a change
 							// this way, the default values can be computed more efficiently
 							record_full_update_in_histograms(&latest_update);
-							serialization_set.updates.push(UpdateSerialization {
-								update: latest_update,
-								mechanism: UpdateSerializationMechanism::Full,
-							});
+							serialization_set.updates.push(UpdateSerialization::Full(latest_update));
 						} else if mutated_properties.len() > 0 || mutated_properties.flags {
 							// we don't count flags as mutated properties
-							serialization_set.updates.push(UpdateSerialization {
-								update: latest_update,
-								mechanism: UpdateSerializationMechanism::Incremental(mutated_properties),
-							});
+							serialization_set.updates.push(
+								UpdateSerialization::Incremental(latest_update, mutated_properties));
 						}
 					} else {
 						// serialize the full update
 						record_full_update_in_histograms(&latest_update);
-						serialization_set.updates.push(UpdateSerialization {
-							update: latest_update,
-							mechanism: UpdateSerializationMechanism::Full,
-						});
+						serialization_set.updates.push(UpdateSerialization::Full(latest_update));
 					}
 				} else if let Some(flags) = updates.serialization_update_flags {
-					// we need to insert a fake channel update where the only information
-					let fake_update = UnsignedChannelUpdate {
-						flags,
-						chain_hash: BlockHash::all_zeros(),
-						short_channel_id: 0,
-						cltv_expiry_delta: 0,
-						fee_base_msat: 0,
-						fee_proportional_millionths: 0,
-						htlc_maximum_msat: 0,
-						htlc_minimum_msat: 0,
-						timestamp: 0,
-						excess_data: Vec::with_capacity(0),
-					};
-					serialization_set.updates.push(UpdateSerialization {
-						update: fake_update,
-						mechanism: UpdateSerializationMechanism::Reminder
-					})
+					serialization_set.updates.push(UpdateSerialization::Reminder(scid, flags));
 				}
 			}
 		};
@@ -235,18 +224,17 @@ pub fn serialize_stripped_channel_announcement(announcement: &UnsignedChannelAnn
 }
 
 pub(super) fn serialize_stripped_channel_update(update: &UpdateSerialization, default_values: &DefaultUpdateValues, previous_scid: u64) -> Vec<u8> {
-	let latest_update = &update.update;
-	let mut serialized_flags = latest_update.flags;
+	let mut serialized_flags = update.flags();
 
-	if previous_scid > latest_update.short_channel_id {
+	if previous_scid > update.scid() {
 		panic!("unsorted scids!");
 	}
 
 	let mut delta_serialization = Vec::new();
 	let mut prefixed_serialization = Vec::new();
 
-	match &update.mechanism {
-		UpdateSerializationMechanism::Full => {
+	match update {
+		UpdateSerialization::Full(latest_update) => {
 			if latest_update.cltv_expiry_delta != default_values.cltv_expiry_delta {
 				serialized_flags |= 0b_0100_0000;
 				latest_update.cltv_expiry_delta.write(&mut delta_serialization).unwrap();
@@ -272,8 +260,7 @@ pub(super) fn serialize_stripped_channel_update(update: &UpdateSerialization, de
 				latest_update.htlc_maximum_msat.write(&mut delta_serialization).unwrap();
 			}
 		}
-
-		UpdateSerializationMechanism::Incremental(mutated_properties) => {
+		UpdateSerialization::Incremental(latest_update, mutated_properties) => {
 			// indicate that this update is incremental
 			serialized_flags |= 0b_1000_0000;
 
@@ -302,13 +289,12 @@ pub(super) fn serialize_stripped_channel_update(update: &UpdateSerialization, de
 				latest_update.htlc_maximum_msat.write(&mut delta_serialization).unwrap();
 			}
 		},
-
-		UpdateSerializationMechanism::Reminder => {
+		UpdateSerialization::Reminder(_, _) => {
 			// indicate that this update is incremental
 			serialized_flags |= 0b_1000_0000;
 		}
 	}
-	let scid_delta = BigSize(latest_update.short_channel_id - previous_scid);
+	let scid_delta = BigSize(update.scid() - previous_scid);
 	scid_delta.write(&mut prefixed_serialization).unwrap();
 
 	serialized_flags.write(&mut prefixed_serialization).unwrap();

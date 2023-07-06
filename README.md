@@ -19,6 +19,7 @@ can be made by setting environment variables, whose usage is as follows:
 | RAPID_GOSSIP_SYNC_SERVER_DB_PASSWORD | _None_              | Password to access Postgres                                                                                |
 | RAPID_GOSSIP_SYNC_SERVER_DB_NAME     | ln_graph_sync       | Name of the database to be used for gossip storage                                                         |
 | RAPID_GOSSIP_SYNC_SERVER_NETWORK     | mainnet             | Network to operate in. Possible values are mainnet, testnet, signet, regtest                               |
+| RAPID_GOSSIP_SYNC_CALC_INTERVAL      | 86400               | The interval in seconds that RGS creates a new snapshot                                                    |
 | BITCOIN_REST_DOMAIN                  | 127.0.0.1           | Domain of the [bitcoind REST server](https://github.com/bitcoin/bitcoin/blob/master/doc/REST-interface.md) |
 | BITCOIN_REST_PORT                    | 8332                | HTTP port of the bitcoind REST server                                                                      |
 | BITCOIN_REST_PATH                    | /rest/              | Path infix to access the bitcoind REST endpoints                                                           |
@@ -36,7 +37,7 @@ The module responsible for persisting all the downloaded graph data to Postgres.
 
 The snapshotting module is responsible for calculating and storing snapshots. It's started up
 as soon as the first full graph sync completes, and then keeps updating the snapshots at a
-24-hour-interval.
+configurable interval with a 24 hour default.
 
 ### lookup
 

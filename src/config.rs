@@ -15,13 +15,20 @@ use lightning::util::ser::Readable;
 use lightning_block_sync::http::HttpEndpoint;
 use tokio_postgres::Config;
 
-pub(crate) const SCHEMA_VERSION: i32 = 12;
+pub(crate) const SCHEMA_VERSION: i32 = 13;
 pub(crate) const SNAPSHOT_CALCULATION_INTERVAL: u32 = 3600 * 24; // every 24 hours, in seconds
 /// If the last update in either direction was more than six days ago, we send a reminder
 /// That reminder may be either in the form of a channel announcement, or in the form of empty
 /// updates in both directions.
 pub(crate) const CHANNEL_REMINDER_AGE: Duration = Duration::from_secs(6 * 24 * 60 * 60);
 pub(crate) const DOWNLOAD_NEW_GOSSIP: bool = true;
+
+pub(crate) fn calculate_interval() -> u32 {
+	let interval = env::var("RAPID_GOSSIP_SYNC_CALC_INTERVAL").unwrap_or("86400".to_string())
+		.parse::<u32>()
+		.expect("RAPID_GOSSIP_SYNC_CALC_INTERVAL env variable must be a u32.");
+	interval
+}
 
 pub(crate) fn network() -> Network {
 	let network = env::var("RAPID_GOSSIP_SYNC_SERVER_NETWORK").unwrap_or("bitcoin".to_string()).to_lowercase();

@@ -21,8 +21,9 @@ impl Snapshotter {
 	pub(crate) async fn snapshot_gossip(&self) {
 		println!("Initiating snapshotting service");
 
+		let calc_interval = config::calculate_interval();
 		let snapshot_sync_day_factors = [1, 2, 3, 4, 5, 6, 7, 14, 21, u64::MAX];
-		let round_day_seconds = config::SNAPSHOT_CALCULATION_INTERVAL as u64;
+		let round_day_seconds = calc_interval as u64;
 
 		let pending_snapshot_directory = format!("{}/snapshots_pending", cache_path());
 		let pending_symlink_directory = format!("{}/symlinks_pending", cache_path());
@@ -37,7 +38,7 @@ impl Snapshotter {
 			let reference_timestamp = Self::round_down_to_nearest_multiple(snapshot_generation_timestamp, round_day_seconds);
 			println!("Capturing snapshots at {} for: {}", snapshot_generation_timestamp, reference_timestamp);
 
-			// 2. sleep until the next round 24 hours
+			// 2. sleep until the next round interval
 			// 3. refresh all snapshots
 
 			// the stored snapshots should adhere to the following format

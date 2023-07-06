@@ -122,11 +122,12 @@ fn serialize_empty_blob(current_timestamp: u64) -> Vec<u8> {
 	let mut blob = GOSSIP_PREFIX.to_vec();
 
 	let network = config::network();
+	let calc_interval = config::calculate_interval();
 	let genesis_block = bitcoin::blockdata::constants::genesis_block(network);
 	let chain_hash = genesis_block.block_hash();
 	chain_hash.write(&mut blob).unwrap();
 
-	let blob_timestamp = Snapshotter::round_down_to_nearest_multiple(current_timestamp, config::SNAPSHOT_CALCULATION_INTERVAL as u64) as u32;
+	let blob_timestamp = Snapshotter::round_down_to_nearest_multiple(current_timestamp, calc_interval as u64) as u32;
 	blob_timestamp.write(&mut blob).unwrap();
 
 	0u32.write(&mut blob).unwrap(); // node count
@@ -148,6 +149,7 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<TestLogger>>, last_sync
 	});
 
 	let mut output: Vec<u8> = vec![];
+	let calc_interval = config::calculate_interval();
 
 	// set a flag if the chain hash is prepended
 	// chain hash only necessary if either channel announcements or non-incremental updates are present
@@ -233,7 +235,7 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<TestLogger>>, last_sync
 	serialization_details.chain_hash.write(&mut prefixed_output).unwrap();
 	// always write the latest seen timestamp
 	let latest_seen_timestamp = serialization_details.latest_seen;
-	let overflow_seconds = latest_seen_timestamp % config::SNAPSHOT_CALCULATION_INTERVAL;
+	let overflow_seconds = latest_seen_timestamp % calc_interval;
 	let serialized_seen_timestamp = latest_seen_timestamp.saturating_sub(overflow_seconds);
 	serialized_seen_timestamp.write(&mut prefixed_output).unwrap();
 

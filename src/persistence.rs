@@ -10,6 +10,8 @@ use tokio_postgres::NoTls;
 use crate::{config, TestLogger};
 use crate::types::GossipMessage;
 
+const POSTGRES_INSERT_TIMEOUT: Duration = Duration::from_secs(15);
+
 pub(crate) struct GossipPersister {
 	gossip_persistence_receiver: mpsc::Receiver<GossipMessage>,
 	network_graph: Arc<NetworkGraph<TestLogger>>,
@@ -115,17 +117,14 @@ impl GossipPersister {
 					let mut announcement_signed = Vec::new();
 					announcement.write(&mut announcement_signed).unwrap();
 
-					let result = client
+					tokio::time::timeout(POSTGRES_INSERT_TIMEOUT, client
 						.execute("INSERT INTO channel_announcements (\
 							short_channel_id, \
 							announcement_signed \
 						) VALUES ($1, $2) ON CONFLICT (short_channel_id) DO NOTHING", &[
 							&scid,
 							&announcement_signed
-						]).await;
-					if result.is_err() {
-						panic!("error: {}", result.err().unwrap());
-					}
+						])).await.unwrap().unwrap();
 				}
 				GossipMessage::ChannelUpdate(update) => {
 					let scid = update.contents.short_channel_id as i64;
@@ -146,7 +145,7 @@ impl GossipPersister {
 					let mut update_signed = Vec::new();
 					update.write(&mut update_signed).unwrap();
 
-					let result = client
+					tokio::time::timeout(POSTGRES_INSERT_TIMEOUT, client
 						.execute("INSERT INTO channel_updates (\
 							short_channel_id, \
 							timestamp, \
@@ -171,10 +170,7 @@ impl GossipPersister {
 							&fee_proportional_millionths,
 							&htlc_maximum_msat,
 							&update_signed
-						]).await;
-					if result.is_err() {
-						panic!("error: {}", result.err().unwrap());
-					}
+						])).await.unwrap().unwrap();
 				}
 			}
 		}

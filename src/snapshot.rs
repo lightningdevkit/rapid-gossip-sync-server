@@ -77,7 +77,7 @@ impl Snapshotter {
 				{
 					println!("Calculating {}-day snapshot", day_range);
 					// calculate the snapshot
-					let snapshot = super::serialize_delta(network_graph_clone, current_last_sync_timestamp.clone() as u32, true).await;
+					let snapshot = super::serialize_delta(network_graph_clone, current_last_sync_timestamp.clone() as u32).await;
 
 					// persist the snapshot and update the symlink
 					let snapshot_filename = format!("snapshot__calculated-at:{}__range:{}-days__previous-sync:{}.lngossip", reference_timestamp, day_range, current_last_sync_timestamp);

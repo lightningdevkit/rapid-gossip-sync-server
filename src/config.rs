@@ -104,6 +104,7 @@ pub(crate) fn db_channel_update_table_creation_query() -> &'static str {
 
 pub(crate) fn db_index_creation_query() -> &'static str {
 	"
+	CREATE INDEX IF NOT EXISTS channel_updates_seen_with_id_direction_blob ON channel_updates(seen) INCLUDE (id, direction, blob_signed);
 	CREATE INDEX IF NOT EXISTS channel_updates_seen_scid ON channel_updates(seen, short_channel_id);
 	CREATE INDEX IF NOT EXISTS channel_updates_scid_dir_seen_asc ON channel_updates(short_channel_id, direction, seen);
 	CREATE INDEX IF NOT EXISTS channel_updates_scid_dir_seen_desc_with_id ON channel_updates(short_channel_id ASC, direction ASC, seen DESC) INCLUDE (id);

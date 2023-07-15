@@ -201,7 +201,7 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 	}
 }
 
-pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Client, last_sync_timestamp: u32, consider_intermediate_updates: bool) {
+pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Client, last_sync_timestamp: u32) {
 	let start = Instant::now();
 	let last_sync_timestamp_object = SystemTime::UNIX_EPOCH.add(Duration::from_secs(last_sync_timestamp as u64));
 
@@ -253,18 +253,11 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 	// (to calculate the set of mutated fields for snapshotting, where intermediate updates may
 	// have been omitted)
 
-	let mut intermediate_update_prefix = "";
-	if !consider_intermediate_updates {
-		intermediate_update_prefix = "DISTINCT ON (short_channel_id, direction)";
-	}
-
-	let query_string = format!("
-		SELECT {} id, direction, blob_signed, seen
+	let intermediate_updates = client.query("
+		SELECT id, direction, blob_signed, seen
 		FROM channel_updates
 		WHERE seen >= $1
-		ORDER BY short_channel_id ASC, direction ASC, seen DESC
-		", intermediate_update_prefix);
-	let intermediate_updates = client.query(&query_string, &[&last_sync_timestamp_object]).await.unwrap();
+		", &[&last_sync_timestamp_object]).await.unwrap();
 	println!("Fetched intermediate rows ({}): {:?}", intermediate_updates.len(), start.elapsed());
 
 	let mut previous_scid = u64::MAX;

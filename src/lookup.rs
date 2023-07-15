@@ -209,14 +209,17 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 	// there was an update in either direction that happened after the last sync (to avoid
 	// collecting too many reference updates)
 	let reference_rows = client.query("
-		SELECT DISTINCT ON (short_channel_id, direction) id, direction, blob_signed
-		FROM channel_updates
-		WHERE seen < $1 AND short_channel_id IN (
+		SELECT id, direction, blob_signed FROM channel_updates
+		WHERE id IN (
+			SELECT DISTINCT ON (short_channel_id, direction) id
+			FROM channel_updates
+			WHERE seen < $1
+			ORDER BY short_channel_id ASC, direction ASC, seen DESC
+		) AND short_channel_id IN (
 			SELECT DISTINCT ON (short_channel_id) short_channel_id
 			FROM channel_updates
 			WHERE seen >= $1
 		)
-		ORDER BY short_channel_id ASC, direction ASC, seen DESC
 		", &[&last_sync_timestamp_object]).await.unwrap();
 
 	println!("Fetched reference rows ({}): {:?}", reference_rows.len(), start.elapsed());

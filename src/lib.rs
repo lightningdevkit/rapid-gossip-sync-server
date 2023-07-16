@@ -136,7 +136,7 @@ fn serialize_empty_blob(current_timestamp: u64) -> Vec<u8> {
 	blob
 }
 
-async fn serialize_delta(network_graph: Arc<NetworkGraph<TestLogger>>, last_sync_timestamp: u32, consider_intermediate_updates: bool) -> SerializedResponse {
+async fn serialize_delta(network_graph: Arc<NetworkGraph<TestLogger>>, last_sync_timestamp: u32) -> SerializedResponse {
 	let (client, connection) = lookup::connect_to_db().await;
 
 	network_graph.remove_stale_channels_and_tracking();
@@ -172,7 +172,7 @@ async fn serialize_delta(network_graph: Arc<NetworkGraph<TestLogger>>, last_sync
 	let mut delta_set = DeltaSet::new();
 	lookup::fetch_channel_announcements(&mut delta_set, network_graph, &client, last_sync_timestamp).await;
 	println!("announcement channel count: {}", delta_set.len());
-	lookup::fetch_channel_updates(&mut delta_set, &client, last_sync_timestamp, consider_intermediate_updates).await;
+	lookup::fetch_channel_updates(&mut delta_set, &client, last_sync_timestamp).await;
 	println!("update-fetched channel count: {}", delta_set.len());
 	lookup::filter_delta_set(&mut delta_set);
 	println!("update-filtered channel count: {}", delta_set.len());

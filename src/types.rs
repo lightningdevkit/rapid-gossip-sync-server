@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::ops::Deref;
 
-use lightning::chain::keysinterface::KeysManager;
+use lightning::sign::KeysManager;
 use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate};
 use lightning::ln::peer_handler::{ErroringMessageHandler, IgnoringMessageHandler, PeerManager};
 use lightning::util::logger::{Logger, Record};

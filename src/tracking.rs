@@ -11,7 +11,7 @@ use lightning::ln::peer_handler::{
 	ErroringMessageHandler, IgnoringMessageHandler, MessageHandler, PeerManager,
 };
 use lightning::routing::gossip::NetworkGraph;
-use lightning::chain::keysinterface::KeysManager;
+use lightning::sign::KeysManager;
 use tokio::sync::mpsc;
 
 use crate::{config, TestLogger};
@@ -39,13 +39,13 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessa
 		chan_handler: ErroringMessageHandler::new(),
 		route_handler: Arc::clone(&router),
 		onion_message_handler: IgnoringMessageHandler {},
+		custom_message_handler: IgnoringMessageHandler {},
 	};
 	let peer_handler = Arc::new(PeerManager::new(
 		message_handler,
 		0xdeadbeef,
 		&random_data,
 		TestLogger::new(),
-		IgnoringMessageHandler {},
 		keys_manager,
 	));
 	router.set_pm(Arc::clone(&peer_handler));

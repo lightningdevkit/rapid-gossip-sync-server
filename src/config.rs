@@ -213,31 +213,31 @@ pub(crate) async fn upgrade_db(schema: i32, client: &mut tokio_postgres::Client)
 	}
 	if schema >= 1 && schema <= 7 {
 		let tx = client.transaction().await.unwrap();
-		tx.execute("DROP INDEX channels_seen", &[]).await.unwrap();
-		tx.execute("DROP INDEX channel_updates_scid", &[]).await.unwrap();
-		tx.execute("DROP INDEX channel_updates_direction", &[]).await.unwrap();
-		tx.execute("DROP INDEX channel_updates_seen", &[]).await.unwrap();
-		tx.execute("DROP INDEX channel_updates_scid_seen", &[]).await.unwrap();
-		tx.execute("DROP INDEX channel_updates_scid_dir_seen", &[]).await.unwrap();
+		tx.execute("DROP INDEX IF EXISTS channels_seen", &[]).await.unwrap();
+		tx.execute("DROP INDEX IF EXISTS channel_updates_scid", &[]).await.unwrap();
+		tx.execute("DROP INDEX IF EXISTS channel_updates_direction", &[]).await.unwrap();
+		tx.execute("DROP INDEX IF EXISTS channel_updates_seen", &[]).await.unwrap();
+		tx.execute("DROP INDEX IF EXISTS channel_updates_scid_seen", &[]).await.unwrap();
+		tx.execute("DROP INDEX IF EXISTS channel_updates_scid_dir_seen", &[]).await.unwrap();
 		tx.execute("UPDATE config SET db_schema = 8 WHERE id = 1", &[]).await.unwrap();
 		tx.commit().await.unwrap();
 	}
 	if schema >= 1 && schema <= 8 {
 		let tx = client.transaction().await.unwrap();
-		tx.execute("DROP INDEX channel_updates_seen", &[]).await.unwrap();
-		tx.execute("DROP INDEX channel_updates_scid_seen", &[]).await.unwrap();
+		tx.execute("DROP INDEX IF EXISTS channel_updates_seen", &[]).await.unwrap();
+		tx.execute("DROP INDEX IF EXISTS channel_updates_scid_seen", &[]).await.unwrap();
 		tx.execute("UPDATE config SET db_schema = 9 WHERE id = 1", &[]).await.unwrap();
 		tx.commit().await.unwrap();
 	}
 	if schema >= 1 && schema <= 9 {
 		let tx = client.transaction().await.unwrap();
-		tx.execute("DROP INDEX channel_updates_scid_dir_seen", &[]).await.unwrap();
+		tx.execute("DROP INDEX IF EXISTS channel_updates_scid_dir_seen", &[]).await.unwrap();
 		tx.execute("UPDATE config SET db_schema = 10 WHERE id = 1", &[]).await.unwrap();
 		tx.commit().await.unwrap();
 	}
 	if schema >= 1 && schema <= 10 {
 		let tx = client.transaction().await.unwrap();
-		tx.execute("DROP INDEX channel_updates_id_with_scid_dir_blob", &[]).await.unwrap();
+		tx.execute("DROP INDEX IF EXISTS channel_updates_id_with_scid_dir_blob", &[]).await.unwrap();
 		tx.execute("UPDATE config SET db_schema = 11 WHERE id = 1", &[]).await.unwrap();
 		tx.commit().await.unwrap();
 	}

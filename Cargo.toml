@@ -12,6 +12,9 @@ tokio = { version = "1.25", features = ["full"] }
 tokio-postgres = { version="=0.7.5" }
 futures = "0.3"
 
+[profile.dev]
+panic = "abort"
+
 [profile.release]
 opt-level = 3
 lto = true

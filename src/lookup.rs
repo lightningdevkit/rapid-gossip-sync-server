@@ -160,7 +160,6 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 		// — Obtain all updates, distinct by (scid, direction), ordered by seen DESC
 		// — From those updates, select distinct by (scid), ordered by seen ASC (to obtain the older one per direction)
 		let reminder_threshold_timestamp = SystemTime::now().checked_sub(config::CHANNEL_REMINDER_AGE).unwrap();
-		let read_only_graph = network_graph.read_only();
 
 		let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] =
 			[&channel_ids, &reminder_threshold_timestamp];
@@ -189,7 +188,7 @@ pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, networ
 			// way might be able to get away with not using this
 			(*current_channel_delta).requires_reminder = true;
 
-			if let Some(current_channel_info) = read_only_graph.channel(scid as u64) {
+			if let Some(current_channel_info) = network_graph.read_only().channel(scid as u64) {
 				if current_channel_info.one_to_two.is_none() || current_channel_info.two_to_one.is_none() {
 					// we don't send reminders if we don't have bidirectional update data
 					continue;

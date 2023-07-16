@@ -225,12 +225,12 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 		WHERE id IN (
 			SELECT DISTINCT ON (short_channel_id, direction) id
 			FROM channel_updates
-			WHERE seen < $1
+			WHERE seen < $1 AND short_channel_id IN (
+				SELECT DISTINCT ON (short_channel_id) short_channel_id
+				FROM channel_updates
+				WHERE seen >= $1
+			)
 			ORDER BY short_channel_id ASC, direction ASC, seen DESC
-		) AND short_channel_id IN (
-			SELECT DISTINCT ON (short_channel_id) short_channel_id
-			FROM channel_updates
-			WHERE seen >= $1
 		)
 		", [last_sync_timestamp_object]).await.unwrap();
 	let mut pinned_rows = Box::pin(reference_rows);

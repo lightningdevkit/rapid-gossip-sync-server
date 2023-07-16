@@ -105,7 +105,9 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 				symlink(&relative_dummy_snapshot_path, &dummy_symlink_path).unwrap();
 			}
 
-			for i in 0..10_001u64 {
+			// Number of intervals since Jan 1, 2022, a few months before RGS server was released.
+			let symlink_count = (reference_timestamp - 1640995200) / config::SNAPSHOT_CALCULATION_INTERVAL as u64;
+			for i in 0..symlink_count {
 				// let's create non-dummy-symlinks
 
 				// first, determine which snapshot range should be referenced

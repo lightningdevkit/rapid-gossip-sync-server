@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+use std::ops::Deref;
 use std::os::unix::fs::symlink;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -10,12 +11,12 @@ use lightning::util::logger::Logger;
 use crate::config;
 use crate::config::cache_path;
 
-pub(crate) struct Snapshotter<L: Logger> {
-	network_graph: Arc<NetworkGraph<Arc<L>>>,
+pub(crate) struct Snapshotter<L: Deref> where L::Target: Logger {
+	network_graph: Arc<NetworkGraph<L>>,
 }
 
-impl<L: Logger> Snapshotter<L> {
-	pub fn new(network_graph: Arc<NetworkGraph<Arc<L>>>) -> Self {
+impl<L: Deref> Snapshotter<L> where L::Target: Logger {
+	pub fn new(network_graph: Arc<NetworkGraph<L>>) -> Self {
 		Self { network_graph }
 	}
 

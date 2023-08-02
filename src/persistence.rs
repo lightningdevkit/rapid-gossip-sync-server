@@ -1,5 +1,6 @@
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use lightning::routing::gossip::NetworkGraph;
@@ -13,13 +14,13 @@ use crate::types::GossipMessage;
 
 const POSTGRES_INSERT_TIMEOUT: Duration = Duration::from_secs(15);
 
-pub(crate) struct GossipPersister<L: Logger> {
+pub(crate) struct GossipPersister<L: Deref> where L::Target: Logger {
 	gossip_persistence_receiver: mpsc::Receiver<GossipMessage>,
-	network_graph: Arc<NetworkGraph<Arc<L>>>,
+	network_graph: Arc<NetworkGraph<L>>,
 }
 
-impl<L: Logger> GossipPersister<L> {
-	pub fn new(network_graph: Arc<NetworkGraph<Arc<L>>>) -> (Self, mpsc::Sender<GossipMessage>) {
+impl<L: Deref> GossipPersister<L> where L::Target: Logger {
+	pub fn new(network_graph: Arc<NetworkGraph<L>>) -> (Self, mpsc::Sender<GossipMessage>) {
 		let (gossip_persistence_sender, gossip_persistence_receiver) =
 			mpsc::channel::<GossipMessage>(100);
 		(GossipPersister {

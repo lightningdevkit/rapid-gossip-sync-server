@@ -1,4 +1,5 @@
 use std::convert::TryInto;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -15,17 +16,17 @@ use lightning_block_sync::rest::RestClient;
 use crate::config;
 use crate::types::GossipPeerManager;
 
-pub(crate) struct ChainVerifier<L: Logger + Send + Sync + 'static> {
+pub(crate) struct ChainVerifier<L: Deref + Clone + Send + Sync + 'static> where L::Target: Logger {
 	rest_client: Arc<RestClient>,
-	graph: Arc<NetworkGraph<Arc<L>>>,
-	outbound_gossiper: Arc<P2PGossipSync<Arc<NetworkGraph<Arc<L>>>, Arc<Self>, Arc<L>>>,
+	graph: Arc<NetworkGraph<L>>,
+	outbound_gossiper: Arc<P2PGossipSync<Arc<NetworkGraph<L>>, Arc<Self>, L>>,
 	peer_handler: Mutex<Option<GossipPeerManager<L>>>,
 }
 
 struct RestBinaryResponse(Vec<u8>);
 
-impl<L: Logger + Send + Sync + 'static> ChainVerifier<L> {
-	pub(crate) fn new(graph: Arc<NetworkGraph<Arc<L>>>, outbound_gossiper: Arc<P2PGossipSync<Arc<NetworkGraph<Arc<L>>>, Arc<Self>, Arc<L>>>) -> Self {
+impl<L: Deref + Clone + Send + Sync + 'static> ChainVerifier<L> where L::Target: Logger {
+	pub(crate) fn new(graph: Arc<NetworkGraph<L>>, outbound_gossiper: Arc<P2PGossipSync<Arc<NetworkGraph<L>>, Arc<Self>, L>>) -> Self {
 		ChainVerifier {
 			rest_client: Arc::new(RestClient::new(config::bitcoin_rest_endpoint()).unwrap()),
 			outbound_gossiper,
@@ -73,7 +74,7 @@ impl<L: Logger + Send + Sync + 'static> ChainVerifier<L> {
 	}
 }
 
-impl<L: Logger + Send + Sync + 'static> UtxoLookup for ChainVerifier<L> {
+impl<L: Deref + Clone + Send + Sync + 'static> UtxoLookup for ChainVerifier<L> where L::Target: Logger {
 	fn get_utxo(&self, _genesis_hash: &BlockHash, short_channel_id: u64) -> UtxoResult {
 		let res = UtxoFuture::new();
 		let fut = res.clone();

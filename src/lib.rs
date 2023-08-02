@@ -12,6 +12,7 @@ extern crate core;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::BufReader;
+use std::ops::Deref;
 use std::sync::Arc;
 
 use lightning::routing::gossip::{NetworkGraph, NodeId};
@@ -43,9 +44,9 @@ pub mod types;
 /// The fourth byte is the protocol version in case our format gets updated.
 const GOSSIP_PREFIX: [u8; 4] = [76, 68, 75, 1];
 
-pub struct RapidSyncProcessor<L: Logger> {
-	network_graph: Arc<NetworkGraph<Arc<L>>>,
-	logger: Arc<L>
+pub struct RapidSyncProcessor<L: Deref> where L::Target: Logger {
+	network_graph: Arc<NetworkGraph<L>>,
+	logger: L
 }
 
 pub struct SerializedResponse {
@@ -57,8 +58,8 @@ pub struct SerializedResponse {
 	pub update_count_incremental: u32,
 }
 
-impl<L: Logger + Send + Sync + 'static> RapidSyncProcessor<L> {
-	pub fn new(logger: Arc<L>) -> Self {
+impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Target: Logger {
+	pub fn new(logger: L) -> Self {
 		let network = config::network();
 		let network_graph = if let Ok(file) = File::open(&config::network_graph_cache_path()) {
 			println!("Initializing from cached network graph…");
@@ -90,7 +91,7 @@ impl<L: Logger + Send + Sync + 'static> RapidSyncProcessor<L> {
 
 			println!("Starting gossip download");
 			tokio::spawn(tracking::download_gossip(persistence_sender, sync_completion_sender,
-				Arc::clone(&self.network_graph), Arc::clone(&self.logger)));
+				Arc::clone(&self.network_graph), self.logger.clone()));
 			println!("Starting gossip db persistence listener");
 			tokio::spawn(async move { persister.persist_gossip().await; });
 		} else {
@@ -129,7 +130,7 @@ fn serialize_empty_blob(current_timestamp: u64) -> Vec<u8> {
 	let chain_hash = genesis_block.block_hash();
 	chain_hash.write(&mut blob).unwrap();
 
-	let blob_timestamp = Snapshotter::<RGSSLogger>::round_down_to_nearest_multiple(current_timestamp, config::SNAPSHOT_CALCULATION_INTERVAL as u64) as u32;
+	let blob_timestamp = Snapshotter::<Arc<RGSSLogger>>::round_down_to_nearest_multiple(current_timestamp, config::SNAPSHOT_CALCULATION_INTERVAL as u64) as u32;
 	blob_timestamp.write(&mut blob).unwrap();
 
 	0u32.write(&mut blob).unwrap(); // node count
@@ -139,7 +140,7 @@ fn serialize_empty_blob(current_timestamp: u64) -> Vec<u8> {
 	blob
 }
 
-async fn serialize_delta<L: Logger>(network_graph: Arc<NetworkGraph<Arc<L>>>, last_sync_timestamp: u32) -> SerializedResponse {
+async fn serialize_delta<L: Deref>(network_graph: Arc<NetworkGraph<L>>, last_sync_timestamp: u32) -> SerializedResponse where L::Target: Logger {
 	let (client, connection) = lookup::connect_to_db().await;
 
 	network_graph.remove_stale_channels_and_tracking();

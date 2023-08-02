@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 use std::io::Cursor;
-use std::ops::Add;
+use std::ops::{Add, Deref};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -76,7 +76,7 @@ pub(super) async fn connect_to_db() -> (Client, Connection<Socket, NoTlsStream>)
 /// whether they had been seen before.
 /// Also include all announcements for which the first update was announced
 /// after `last_sync_timestamp`
-pub(super) async fn fetch_channel_announcements<L: Logger>(delta_set: &mut DeltaSet, network_graph: Arc<NetworkGraph<Arc<L>>>, client: &Client, last_sync_timestamp: u32) {
+pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaSet, network_graph: Arc<NetworkGraph<L>>, client: &Client, last_sync_timestamp: u32) where L::Target: Logger {
 	println!("Obtaining channel ids from network graph");
 	let last_sync_timestamp_object = SystemTime::UNIX_EPOCH.add(Duration::from_secs(last_sync_timestamp as u64));
 	let channel_ids = {

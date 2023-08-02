@@ -1,6 +1,7 @@
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 use std::net::SocketAddr;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -19,11 +20,11 @@ use crate::config;
 use crate::downloader::GossipRouter;
 use crate::types::{GossipMessage, GossipPeerManager};
 
-pub(crate) async fn download_gossip<L: Logger + Send + Sync + 'static>(persistence_sender: mpsc::Sender<GossipMessage>,
+pub(crate) async fn download_gossip<L: Deref + Clone + Send + Sync + 'static>(persistence_sender: mpsc::Sender<GossipMessage>,
 		completion_sender: mpsc::Sender<()>,
-		network_graph: Arc<NetworkGraph<Arc<L>>>,
-		logger: Arc<L>
-) {
+		network_graph: Arc<NetworkGraph<L>>,
+		logger: L
+) where L::Target: Logger {
 	let mut key = [42; 32];
 	let mut random_data = [43; 32];
 	// Get something psuedo-random from std.
@@ -145,7 +146,7 @@ pub(crate) async fn download_gossip<L: Logger + Send + Sync + 'static>(persisten
 	});
 }
 
-async fn connect_peer<L: Logger + Send + Sync + 'static>(current_peer: (PublicKey, SocketAddr), peer_manager: GossipPeerManager<L>) -> bool {
+async fn connect_peer<L: Deref + Clone + Send + Sync + 'static>(current_peer: (PublicKey, SocketAddr), peer_manager: GossipPeerManager<L>) -> bool where L::Target: Logger {
 	eprintln!("Connecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
 	let connection = lightning_net_tokio::connect_outbound(
 		Arc::clone(&peer_manager),

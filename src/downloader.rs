@@ -1,3 +1,4 @@
+use std::ops::Deref;
 use std::sync::{Arc, RwLock};
 
 use bitcoin::secp256k1::PublicKey;
@@ -30,16 +31,16 @@ impl GossipCounter {
 	}
 }
 
-pub(crate) struct GossipRouter<L: Logger + Send + Sync + 'static> {
-	native_router: P2PGossipSync<Arc<NetworkGraph<Arc<L>>>, GossipChainAccess<L>, Arc<L>>,
+pub(crate) struct GossipRouter<L: Deref + Clone + Send + Sync + 'static> where L::Target: Logger {
+	native_router: P2PGossipSync<Arc<NetworkGraph<L>>, GossipChainAccess<L>, L>,
 	pub(crate) counter: RwLock<GossipCounter>,
 	sender: mpsc::Sender<GossipMessage>,
 	verifier: Arc<ChainVerifier<L>>,
-	outbound_gossiper: Arc<P2PGossipSync<Arc<NetworkGraph<Arc<L>>>, GossipChainAccess<L>, Arc<L>>>,
+	outbound_gossiper: Arc<P2PGossipSync<Arc<NetworkGraph<L>>, GossipChainAccess<L>, L>>,
 }
 
-impl<L: Logger + Send + Sync> GossipRouter<L> {
-	pub(crate) fn new(network_graph: Arc<NetworkGraph<Arc<L>>>, sender: mpsc::Sender<GossipMessage>, logger: Arc<L>) -> Self {
+impl<L: Deref + Clone + Send + Sync> GossipRouter<L> where L::Target: Logger {
+	pub(crate) fn new(network_graph: Arc<NetworkGraph<L>>, sender: mpsc::Sender<GossipMessage>, logger: L) -> Self {
 		let outbound_gossiper = Arc::new(P2PGossipSync::new(Arc::clone(&network_graph), None, logger.clone()));
 		let verifier = Arc::new(ChainVerifier::new(Arc::clone(&network_graph), Arc::clone(&outbound_gossiper)));
 		Self {
@@ -83,7 +84,7 @@ impl<L: Logger + Send + Sync> GossipRouter<L> {
 	}
 }
 
-impl<L: Logger + Send + Sync> MessageSendEventsProvider for GossipRouter<L> {
+impl<L: Deref + Clone + Send + Sync> MessageSendEventsProvider for GossipRouter<L> where L::Target: Logger {
 	fn get_and_clear_pending_msg_events(&self) -> Vec<MessageSendEvent> {
 		let gossip_evs = self.outbound_gossiper.get_and_clear_pending_msg_events();
 		for ev in gossip_evs {
@@ -102,7 +103,7 @@ impl<L: Logger + Send + Sync> MessageSendEventsProvider for GossipRouter<L> {
 	}
 }
 
-impl<L: Logger + Send + Sync> RoutingMessageHandler for GossipRouter<L> {
+impl<L: Deref + Clone + Send + Sync> RoutingMessageHandler for GossipRouter<L> where L::Target: Logger {
 	fn handle_node_announcement(&self, msg: &NodeAnnouncement) -> Result<bool, LightningError> {
 		self.native_router.handle_node_announcement(msg)
 	}

@@ -12,15 +12,18 @@ use lightning::ln::peer_handler::{
 };
 use lightning::routing::gossip::NetworkGraph;
 use lightning::sign::KeysManager;
+use lightning::util::logger::Logger;
 use tokio::sync::mpsc;
 
-use crate::{config, TestLogger};
+use crate::config;
 use crate::downloader::GossipRouter;
 use crate::types::{GossipMessage, GossipPeerManager};
 
-pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessage>,
+pub(crate) async fn download_gossip<L: Logger + Send + Sync + 'static>(persistence_sender: mpsc::Sender<GossipMessage>,
 		completion_sender: mpsc::Sender<()>,
-		network_graph: Arc<NetworkGraph<TestLogger>>) {
+		network_graph: Arc<NetworkGraph<Arc<L>>>,
+		logger: Arc<L>
+) {
 	let mut key = [42; 32];
 	let mut random_data = [43; 32];
 	// Get something psuedo-random from std.
@@ -33,7 +36,7 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessa
 
 	let keys_manager = Arc::new(KeysManager::new(&key, 0xdeadbeef, 0xdeadbeef));
 
-	let router = Arc::new(GossipRouter::new(network_graph, persistence_sender.clone()));
+	let router = Arc::new(GossipRouter::new(network_graph, persistence_sender.clone(), logger.clone()));
 
 	let message_handler = MessageHandler {
 		chan_handler: ErroringMessageHandler::new(),
@@ -45,7 +48,7 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessa
 		message_handler,
 		0xdeadbeef,
 		&random_data,
-		TestLogger::new(),
+		logger,
 		keys_manager,
 	));
 	router.set_pm(Arc::clone(&peer_handler));
@@ -142,7 +145,7 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessa
 	});
 }
 
-async fn connect_peer(current_peer: (PublicKey, SocketAddr), peer_manager: GossipPeerManager) -> bool {
+async fn connect_peer<L: Logger + Send + Sync + 'static>(current_peer: (PublicKey, SocketAddr), peer_manager: GossipPeerManager<L>) -> bool {
 	eprintln!("Connecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
 	let connection = lightning_net_tokio::connect_outbound(
 		Arc::clone(&peer_manager),

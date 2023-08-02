@@ -11,8 +11,9 @@ use tokio_postgres::{Client, Connection, NoTls, Socket};
 use tokio_postgres::tls::NoTlsStream;
 
 use futures::StreamExt;
+use lightning::util::logger::Logger;
 
-use crate::{config, TestLogger};
+use crate::config;
 use crate::serialization::MutatedProperties;
 
 /// The delta set needs to be a BTreeMap so the keys are sorted.
@@ -75,7 +76,7 @@ pub(super) async fn connect_to_db() -> (Client, Connection<Socket, NoTlsStream>)
 /// whether they had been seen before.
 /// Also include all announcements for which the first update was announced
 /// after `last_sync_timestamp`
-pub(super) async fn fetch_channel_announcements(delta_set: &mut DeltaSet, network_graph: Arc<NetworkGraph<TestLogger>>, client: &Client, last_sync_timestamp: u32) {
+pub(super) async fn fetch_channel_announcements<L: Logger>(delta_set: &mut DeltaSet, network_graph: Arc<NetworkGraph<Arc<L>>>, client: &Client, last_sync_timestamp: u32) {
 	println!("Obtaining channel ids from network graph");
 	let last_sync_timestamp_object = SystemTime::UNIX_EPOCH.add(Duration::from_secs(last_sync_timestamp as u64));
 	let channel_ids = {

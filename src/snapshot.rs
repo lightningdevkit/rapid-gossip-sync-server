@@ -5,16 +5,17 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lightning::routing::gossip::NetworkGraph;
+use lightning::util::logger::Logger;
 
-use crate::{config, TestLogger};
+use crate::config;
 use crate::config::cache_path;
 
-pub(crate) struct Snapshotter {
-	network_graph: Arc<NetworkGraph<TestLogger>>,
+pub(crate) struct Snapshotter<L: Logger> {
+	network_graph: Arc<NetworkGraph<Arc<L>>>,
 }
 
-impl Snapshotter {
-	pub fn new(network_graph: Arc<NetworkGraph<TestLogger>>) -> Self {
+impl<L: Logger> Snapshotter<L> {
+	pub fn new(network_graph: Arc<NetworkGraph<Arc<L>>>) -> Self {
 		Self { network_graph }
 	}
 

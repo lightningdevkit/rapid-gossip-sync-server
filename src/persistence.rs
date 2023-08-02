@@ -3,22 +3,23 @@ use std::io::{BufWriter, Write};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use lightning::routing::gossip::NetworkGraph;
+use lightning::util::logger::Logger;
 use lightning::util::ser::Writeable;
 use tokio::sync::mpsc;
 use tokio_postgres::NoTls;
 
-use crate::{config, TestLogger};
+use crate::config;
 use crate::types::GossipMessage;
 
 const POSTGRES_INSERT_TIMEOUT: Duration = Duration::from_secs(15);
 
-pub(crate) struct GossipPersister {
+pub(crate) struct GossipPersister<L: Logger> {
 	gossip_persistence_receiver: mpsc::Receiver<GossipMessage>,
-	network_graph: Arc<NetworkGraph<TestLogger>>,
+	network_graph: Arc<NetworkGraph<Arc<L>>>,
 }
 
-impl GossipPersister {
-	pub fn new(network_graph: Arc<NetworkGraph<TestLogger>>) -> (Self, mpsc::Sender<GossipMessage>) {
+impl<L: Logger> GossipPersister<L> {
+	pub fn new(network_graph: Arc<NetworkGraph<Arc<L>>>) -> (Self, mpsc::Sender<GossipMessage>) {
 		let (gossip_persistence_sender, gossip_persistence_receiver) =
 			mpsc::channel::<GossipMessage>(100);
 		(GossipPersister {

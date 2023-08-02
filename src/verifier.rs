@@ -7,25 +7,25 @@ use bitcoin::blockdata::block::Block;
 use bitcoin::hashes::Hash;
 use lightning::routing::gossip::{NetworkGraph, P2PGossipSync};
 use lightning::routing::utxo::{UtxoFuture, UtxoLookup, UtxoResult, UtxoLookupError};
+use lightning::util::logger::Logger;
 use lightning_block_sync::{BlockData, BlockSource};
 use lightning_block_sync::http::BinaryResponse;
 use lightning_block_sync::rest::RestClient;
 
 use crate::config;
-use crate::TestLogger;
 use crate::types::GossipPeerManager;
 
-pub(crate) struct ChainVerifier {
+pub(crate) struct ChainVerifier<L: Logger + Send + Sync + 'static> {
 	rest_client: Arc<RestClient>,
-	graph: Arc<NetworkGraph<TestLogger>>,
-	outbound_gossiper: Arc<P2PGossipSync<Arc<NetworkGraph<TestLogger>>, Arc<Self>, TestLogger>>,
-	peer_handler: Mutex<Option<GossipPeerManager>>,
+	graph: Arc<NetworkGraph<Arc<L>>>,
+	outbound_gossiper: Arc<P2PGossipSync<Arc<NetworkGraph<Arc<L>>>, Arc<Self>, Arc<L>>>,
+	peer_handler: Mutex<Option<GossipPeerManager<L>>>,
 }
 
 struct RestBinaryResponse(Vec<u8>);
 
-impl ChainVerifier {
-	pub(crate) fn new(graph: Arc<NetworkGraph<TestLogger>>, outbound_gossiper: Arc<P2PGossipSync<Arc<NetworkGraph<TestLogger>>, Arc<Self>, TestLogger>>) -> Self {
+impl<L: Logger + Send + Sync + 'static> ChainVerifier<L> {
+	pub(crate) fn new(graph: Arc<NetworkGraph<Arc<L>>>, outbound_gossiper: Arc<P2PGossipSync<Arc<NetworkGraph<Arc<L>>>, Arc<Self>, Arc<L>>>) -> Self {
 		ChainVerifier {
 			rest_client: Arc::new(RestClient::new(config::bitcoin_rest_endpoint()).unwrap()),
 			outbound_gossiper,
@@ -33,7 +33,7 @@ impl ChainVerifier {
 			peer_handler: Mutex::new(None),
 		}
 	}
-	pub(crate) fn set_ph(&self, peer_handler: GossipPeerManager) {
+	pub(crate) fn set_ph(&self, peer_handler: GossipPeerManager<L>) {
 		*self.peer_handler.lock().unwrap() = Some(peer_handler);
 	}
 
@@ -73,7 +73,7 @@ impl ChainVerifier {
 	}
 }
 
-impl UtxoLookup for ChainVerifier {
+impl<L: Logger + Send + Sync + 'static> UtxoLookup for ChainVerifier<L> {
 	fn get_utxo(&self, _genesis_hash: &BlockHash, short_channel_id: u64) -> UtxoResult {
 		let res = UtxoFuture::new();
 		let fut = res.clone();

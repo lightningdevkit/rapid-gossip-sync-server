@@ -88,7 +88,7 @@ impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Ta
 		let (sync_completion_sender, mut sync_completion_receiver) = mpsc::channel::<()>(1);
 
 		if config::DOWNLOAD_NEW_GOSSIP {
-			let (mut persister, persistence_sender) = GossipPersister::new(Arc::clone(&self.network_graph));
+			let (mut persister, persistence_sender) = GossipPersister::new(self.network_graph.clone(), self.logger.clone());
 
 			log_info!(self.logger, "Starting gossip download");
 			tokio::spawn(tracking::download_gossip(persistence_sender, sync_completion_sender,

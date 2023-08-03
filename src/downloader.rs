@@ -42,7 +42,7 @@ pub(crate) struct GossipRouter<L: Deref + Clone + Send + Sync + 'static> where L
 impl<L: Deref + Clone + Send + Sync> GossipRouter<L> where L::Target: Logger {
 	pub(crate) fn new(network_graph: Arc<NetworkGraph<L>>, sender: mpsc::Sender<GossipMessage>, logger: L) -> Self {
 		let outbound_gossiper = Arc::new(P2PGossipSync::new(Arc::clone(&network_graph), None, logger.clone()));
-		let verifier = Arc::new(ChainVerifier::new(Arc::clone(&network_graph), Arc::clone(&outbound_gossiper)));
+		let verifier = Arc::new(ChainVerifier::new(Arc::clone(&network_graph), Arc::clone(&outbound_gossiper), logger.clone()));
 		Self {
 			native_router: P2PGossipSync::new(network_graph, Some(Arc::clone(&verifier)), logger.clone()),
 			outbound_gossiper,

@@ -14,6 +14,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::ops::Deref;
 use std::sync::Arc;
+use lightning::log_info;
 
 use lightning::routing::gossip::{NetworkGraph, NodeId};
 use lightning::util::logger::Logger;
@@ -62,14 +63,14 @@ impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Ta
 	pub fn new(logger: L) -> Self {
 		let network = config::network();
 		let network_graph = if let Ok(file) = File::open(&config::network_graph_cache_path()) {
-			println!("Initializing from cached network graph…");
+			log_info!(logger, "Initializing from cached network graph…");
 			let mut buffered_reader = BufReader::new(file);
 			let network_graph_result = NetworkGraph::read(&mut buffered_reader, logger.clone());
 			if let Ok(network_graph) = network_graph_result {
-				println!("Initialized from cached network graph!");
+				log_info!(logger, "Initialized from cached network graph!");
 				network_graph
 			} else {
-				println!("Initialization from cached network graph failed: {}", network_graph_result.err().unwrap());
+				log_info!(logger, "Initialization from cached network graph failed: {}", network_graph_result.err().unwrap());
 				NetworkGraph::new(network, logger.clone())
 			}
 		} else {
@@ -89,10 +90,10 @@ impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Ta
 		if config::DOWNLOAD_NEW_GOSSIP {
 			let (mut persister, persistence_sender) = GossipPersister::new(Arc::clone(&self.network_graph));
 
-			println!("Starting gossip download");
+			log_info!(self.logger, "Starting gossip download");
 			tokio::spawn(tracking::download_gossip(persistence_sender, sync_completion_sender,
 				Arc::clone(&self.network_graph), self.logger.clone()));
-			println!("Starting gossip db persistence listener");
+			log_info!(self.logger, "Starting gossip db persistence listener");
 			tokio::spawn(async move { persister.persist_gossip().await; });
 		} else {
 			sync_completion_sender.send(()).await.unwrap();
@@ -102,10 +103,10 @@ impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Ta
 		if sync_completion.is_none() {
 			panic!("Sync failed!");
 		}
-		println!("Initial sync complete!");
+		log_info!(self.logger, "Initial sync complete!");
 
 		// start the gossip snapshotting service
-		Snapshotter::new(Arc::clone(&self.network_graph)).snapshot_gossip().await;
+		Snapshotter::new(Arc::clone(&self.network_graph), self.logger.clone()).snapshot_gossip().await;
 	}
 }
 
@@ -140,7 +141,7 @@ fn serialize_empty_blob(current_timestamp: u64) -> Vec<u8> {
 	blob
 }
 
-async fn serialize_delta<L: Deref>(network_graph: Arc<NetworkGraph<L>>, last_sync_timestamp: u32) -> SerializedResponse where L::Target: Logger {
+async fn serialize_delta<L: Deref>(network_graph: Arc<NetworkGraph<L>>, last_sync_timestamp: u32, logger: L) -> SerializedResponse where L::Target: Logger {
 	let (client, connection) = lookup::connect_to_db().await;
 
 	network_graph.remove_stale_channels_and_tracking();
@@ -175,11 +176,11 @@ async fn serialize_delta<L: Deref>(network_graph: Arc<NetworkGraph<L>>, last_syn
 
 	let mut delta_set = DeltaSet::new();
 	lookup::fetch_channel_announcements(&mut delta_set, network_graph, &client, last_sync_timestamp).await;
-	println!("announcement channel count: {}", delta_set.len());
+	log_info!(logger, "announcement channel count: {}", delta_set.len());
 	lookup::fetch_channel_updates(&mut delta_set, &client, last_sync_timestamp).await;
-	println!("update-fetched channel count: {}", delta_set.len());
+	log_info!(logger, "update-fetched channel count: {}", delta_set.len());
 	lookup::filter_delta_set(&mut delta_set);
-	println!("update-filtered channel count: {}", delta_set.len());
+	log_info!(logger, "update-filtered channel count: {}", delta_set.len());
 	let serialization_details = serialization::serialize_delta_set(delta_set, last_sync_timestamp);
 
 	// process announcements
@@ -250,8 +251,8 @@ async fn serialize_delta<L: Deref>(network_graph: Arc<NetworkGraph<L>>, last_syn
 
 	prefixed_output.append(&mut output);
 
-	println!("duplicated node ids: {}", duplicate_node_ids);
-	println!("latest seen timestamp: {:?}", serialization_details.latest_seen);
+	log_info!(logger, "duplicated node ids: {}", duplicate_node_ids);
+	log_info!(logger, "latest seen timestamp: {:?}", serialization_details.latest_seen);
 
 	SerializedResponse {
 		data: prefixed_output,

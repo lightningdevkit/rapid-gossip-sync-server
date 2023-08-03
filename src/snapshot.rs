@@ -11,13 +11,14 @@ use lightning::util::logger::Logger;
 use crate::config;
 use crate::config::cache_path;
 
-pub(crate) struct Snapshotter<L: Deref> where L::Target: Logger {
+pub(crate) struct Snapshotter<L: Deref + Clone> where L::Target: Logger {
 	network_graph: Arc<NetworkGraph<L>>,
+	logger: L
 }
 
-impl<L: Deref> Snapshotter<L> where L::Target: Logger {
-	pub fn new(network_graph: Arc<NetworkGraph<L>>) -> Self {
-		Self { network_graph }
+impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
+	pub fn new(network_graph: Arc<NetworkGraph<L>>, logger: L) -> Self {
+		Self { network_graph, logger }
 	}
 
 	pub(crate) async fn snapshot_gossip(&self) {
@@ -79,7 +80,7 @@ impl<L: Deref> Snapshotter<L> where L::Target: Logger {
 				{
 					println!("Calculating {}-day snapshot", day_range);
 					// calculate the snapshot
-					let snapshot = super::serialize_delta(network_graph_clone, current_last_sync_timestamp.clone() as u32).await;
+					let snapshot = super::serialize_delta(network_graph_clone, current_last_sync_timestamp.clone() as u32, self.logger.clone()).await;
 
 					// persist the snapshot and update the symlink
 					let snapshot_filename = format!("snapshot__calculated-at:{}__range:{}-days__previous-sync:{}.lngossip", reference_timestamp, day_range, current_last_sync_timestamp);

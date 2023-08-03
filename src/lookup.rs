@@ -11,6 +11,7 @@ use tokio_postgres::{Client, Connection, NoTls, Socket};
 use tokio_postgres::tls::NoTlsStream;
 
 use futures::StreamExt;
+use lightning::log_info;
 use lightning::util::logger::Logger;
 
 use crate::config;
@@ -76,12 +77,12 @@ pub(super) async fn connect_to_db() -> (Client, Connection<Socket, NoTlsStream>)
 /// whether they had been seen before.
 /// Also include all announcements for which the first update was announced
 /// after `last_sync_timestamp`
-pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaSet, network_graph: Arc<NetworkGraph<L>>, client: &Client, last_sync_timestamp: u32) where L::Target: Logger {
-	println!("Obtaining channel ids from network graph");
+pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaSet, network_graph: Arc<NetworkGraph<L>>, client: &Client, last_sync_timestamp: u32, logger: L) where L::Target: Logger {
+	log_info!(logger, "Obtaining channel ids from network graph");
 	let last_sync_timestamp_object = SystemTime::UNIX_EPOCH.add(Duration::from_secs(last_sync_timestamp as u64));
 	let channel_ids = {
 		let read_only_graph = network_graph.read_only();
-		println!("Retrieved read-only network graph copy");
+		log_info!(logger, "Retrieved read-only network graph copy");
 		let channel_iterator = read_only_graph.channels().unordered_iter();
 		channel_iterator
 			.filter(|c| c.1.announcement_message.is_some())
@@ -89,7 +90,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 			.collect::<Vec<_>>()
 	};
 
-	println!("Obtaining corresponding database entries");
+	log_info!(logger, "Obtaining corresponding database entries");
 	// get all the channel announcements that are currently in the network graph
 	let announcement_rows = client.query_raw("SELECT announcement_signed, seen FROM channel_announcements WHERE short_channel_id = any($1) ORDER BY short_channel_id ASC", [&channel_ids]).await.unwrap();
 	let mut pinned_rows = Box::pin(announcement_rows);
@@ -114,7 +115,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 	{
 		// THIS STEP IS USED TO DETERMINE IF A CHANNEL SHOULD BE OMITTED FROM THE DELTA
 
-		println!("Annotating channel announcements whose oldest channel update in a given direction occurred after the last sync");
+		log_info!(logger, "Annotating channel announcements whose oldest channel update in a given direction occurred after the last sync");
 		// Steps:
 		// — Obtain all updates, distinct by (scid, direction), ordered by seen DESC // to find the oldest update in a given direction
 		// — From those updates, select distinct by (scid), ordered by seen DESC (to obtain the newer one per direction)
@@ -156,7 +157,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 	{
 		// THIS STEP IS USED TO DETERMINE IF A REMINDER UPDATE SHOULD BE SENT
 
-		println!("Annotating channel announcements whose latest channel update in a given direction occurred more than six days ago");
+		log_info!(logger, "Annotating channel announcements whose latest channel update in a given direction occurred more than six days ago");
 		// Steps:
 		// — Obtain all updates, distinct by (scid, direction), ordered by seen DESC
 		// — From those updates, select distinct by (scid), ordered by seen ASC (to obtain the older one per direction)
@@ -214,7 +215,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 	}
 }
 
-pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Client, last_sync_timestamp: u32) {
+pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, client: &Client, last_sync_timestamp: u32, logger: L) where L::Target: Logger {
 	let start = Instant::now();
 	let last_sync_timestamp_object = SystemTime::UNIX_EPOCH.add(Duration::from_secs(last_sync_timestamp as u64));
 
@@ -236,7 +237,7 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 		", [last_sync_timestamp_object]).await.unwrap();
 	let mut pinned_rows = Box::pin(reference_rows);
 
-	println!("Fetched reference rows in {:?}", start.elapsed());
+	log_info!(logger, "Fetched reference rows in {:?}", start.elapsed());
 
 	let mut last_seen_update_ids: Vec<i32> = Vec::new();
 	let mut non_intermediate_ids: HashSet<i32> = HashSet::new();
@@ -264,7 +265,7 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 		reference_row_count += 1;
 	}
 
-	println!("Processed {} reference rows (delta size: {}) in {:?}",
+	log_info!(logger, "Processed {} reference rows (delta size: {}) in {:?}",
 		reference_row_count, delta_set.len(), start.elapsed());
 
 	// get all the intermediate channel updates
@@ -277,7 +278,7 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 		WHERE seen >= $1
 		", [last_sync_timestamp_object]).await.unwrap();
 	let mut pinned_updates = Box::pin(intermediate_updates);
-	println!("Fetched intermediate rows in {:?}", start.elapsed());
+	log_info!(logger, "Fetched intermediate rows in {:?}", start.elapsed());
 
 	let mut previous_scid = u64::MAX;
 	let mut previously_seen_directions = (false, false);
@@ -352,10 +353,10 @@ pub(super) async fn fetch_channel_updates(delta_set: &mut DeltaSet, client: &Cli
 			}
 		}
 	}
-	println!("Processed intermediate rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
+	log_info!(logger, "Processed intermediate rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
 }
 
-pub(super) fn filter_delta_set(delta_set: &mut DeltaSet) {
+pub(super) fn filter_delta_set<L: Deref>(delta_set: &mut DeltaSet, logger: L) where L::Target: Logger {
 	let original_length = delta_set.len();
 	let keys: Vec<u64> = delta_set.keys().cloned().collect();
 	for k in keys {
@@ -387,6 +388,6 @@ pub(super) fn filter_delta_set(delta_set: &mut DeltaSet) {
 
 	let new_length = delta_set.len();
 	if original_length != new_length {
-		println!("length modified!");
+		log_info!(logger, "length modified!");
 	}
 }

@@ -35,6 +35,19 @@ pub(crate) fn network() -> Network {
 	}
 }
 
+pub(crate) fn log_level() -> lightning::util::logger::Level {
+	let level = env::var("RAPID_GOSSIP_SYNC_SERVER_LOG_LEVEL").unwrap_or("info".to_string()).to_lowercase();
+	match level.as_str() {
+		"gossip" => lightning::util::logger::Level::Gossip,
+		"trace" => lightning::util::logger::Level::Trace,
+		"debug" => lightning::util::logger::Level::Debug,
+		"info" => lightning::util::logger::Level::Info,
+		"warn" => lightning::util::logger::Level::Warn,
+		"error" => lightning::util::logger::Level::Error,
+		_ => panic!("Invalid log level"),
+	}
+}
+
 pub(crate) fn network_graph_cache_path() -> String {
 	format!("{}/network_graph.bin", cache_path())
 }

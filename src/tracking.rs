@@ -1,6 +1,7 @@
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 use std::net::SocketAddr;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -10,17 +11,21 @@ use lightning;
 use lightning::ln::peer_handler::{
 	ErroringMessageHandler, IgnoringMessageHandler, MessageHandler, PeerManager,
 };
+use lightning::{log_error, log_info, log_warn};
 use lightning::routing::gossip::NetworkGraph;
 use lightning::sign::KeysManager;
+use lightning::util::logger::Logger;
 use tokio::sync::mpsc;
 
-use crate::{config, TestLogger};
+use crate::config;
 use crate::downloader::GossipRouter;
 use crate::types::{GossipMessage, GossipPeerManager};
 
-pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessage>,
+pub(crate) async fn download_gossip<L: Deref + Clone + Send + Sync + 'static>(persistence_sender: mpsc::Sender<GossipMessage>,
 		completion_sender: mpsc::Sender<()>,
-		network_graph: Arc<NetworkGraph<TestLogger>>) {
+		network_graph: Arc<NetworkGraph<L>>,
+		logger: L
+) where L::Target: Logger {
 	let mut key = [42; 32];
 	let mut random_data = [43; 32];
 	// Get something psuedo-random from std.
@@ -33,7 +38,7 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessa
 
 	let keys_manager = Arc::new(KeysManager::new(&key, 0xdeadbeef, 0xdeadbeef));
 
-	let router = Arc::new(GossipRouter::new(network_graph, persistence_sender.clone()));
+	let router = Arc::new(GossipRouter::new(network_graph, persistence_sender.clone(), logger.clone()));
 
 	let message_handler = MessageHandler {
 		chan_handler: ErroringMessageHandler::new(),
@@ -45,7 +50,7 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessa
 		message_handler,
 		0xdeadbeef,
 		&random_data,
-		TestLogger::new(),
+		logger.clone(),
 		keys_manager,
 	));
 	router.set_pm(Arc::clone(&peer_handler));
@@ -59,12 +64,12 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessa
 		}
 	});
 
-	println!("Connecting to Lightning peers...");
+	log_info!(logger, "Connecting to Lightning peers...");
 	let peers = config::ln_peers();
 	let mut connected_peer_count = 0;
 
 	for current_peer in peers {
-		let initial_connection_succeeded = connect_peer(current_peer, Arc::clone(&peer_handler)).await;
+		let initial_connection_succeeded = connect_peer(current_peer, peer_handler.clone(), logger.clone()).await;
 		if initial_connection_succeeded {
 			connected_peer_count += 1;
 		}
@@ -74,7 +79,7 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessa
 		panic!("Failed to connect to any peer.");
 	}
 
-	println!("Connected to {} Lightning peers!", connected_peer_count);
+	log_info!(logger, "Connected to {} Lightning peers!", connected_peer_count);
 
 	tokio::spawn(async move {
 		let mut previous_announcement_count = 0u64;
@@ -104,7 +109,8 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessa
 
 				// if we either aren't caught up, or just stopped/started being caught up
 				if !is_caught_up_with_gossip || (is_caught_up_with_gossip != was_previously_caught_up_with_gossip) {
-					println!(
+					log_info!(
+						logger,
 						"gossip count (iteration {}): {} (delta: {}):\n\tannouncements: {}\n\t\tmismatched scripts: {}\n\tupdates: {}\n\t\tno HTLC max: {}\n",
 						i,
 						total_message_count,
@@ -115,19 +121,19 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessa
 						counter.channel_updates_without_htlc_max_msats
 					);
 				} else {
-					println!("Monitoring for gossip…")
+					log_info!(logger, "Monitoring for gossip…")
 				}
 
 				if is_caught_up_with_gossip && !was_previously_caught_up_with_gossip {
-					println!("caught up with gossip!");
+					log_info!(logger, "caught up with gossip!");
 					needs_to_notify_persister = true;
 				} else if !is_caught_up_with_gossip && was_previously_caught_up_with_gossip {
-					println!("Received new messages since catching up with gossip!");
+					log_info!(logger, "Received new messages since catching up with gossip!");
 				}
 
 				let continuous_caught_up_duration = latest_new_gossip_time.elapsed();
 				if continuous_caught_up_duration.as_secs() > 600 {
-					eprintln!("No new gossip messages in 10 minutes! Something's amiss!");
+					log_warn!(logger, "No new gossip messages in 10 minutes! Something's amiss!");
 				}
 
 				previous_announcement_count = counter.channel_announcements;
@@ -142,19 +148,19 @@ pub(crate) async fn download_gossip(persistence_sender: mpsc::Sender<GossipMessa
 	});
 }
 
-async fn connect_peer(current_peer: (PublicKey, SocketAddr), peer_manager: GossipPeerManager) -> bool {
-	eprintln!("Connecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
+async fn connect_peer<L: Deref + Clone + Send + Sync + 'static>(current_peer: (PublicKey, SocketAddr), peer_manager: GossipPeerManager<L>, logger: L) -> bool where L::Target: Logger {
+	log_info!(logger, "Connecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
 	let connection = lightning_net_tokio::connect_outbound(
 		Arc::clone(&peer_manager),
 		current_peer.0,
 		current_peer.1,
 	).await;
 	if let Some(disconnection_future) = connection {
-		eprintln!("Connected to peer {}@{}!", current_peer.0.to_hex(), current_peer.1.to_string());
+		log_info!(logger, "Connected to peer {}@{}!", current_peer.0.to_hex(), current_peer.1.to_string());
 		tokio::spawn(async move {
 			disconnection_future.await;
 			loop {
-				eprintln!("Reconnecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
+				log_warn!(logger, "Reconnecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
 				if let Some(disconnection_future) = lightning_net_tokio::connect_outbound(
 					Arc::clone(&peer_manager),
 					current_peer.0,
@@ -167,7 +173,7 @@ async fn connect_peer(current_peer: (PublicKey, SocketAddr), peer_manager: Gossi
 		});
 		true
 	} else {
-		eprintln!("Failed to connect to peer {}@{}", current_peer.0.to_hex(), current_peer.1.to_string());
+		log_error!(logger, "Failed to connect to peer {}@{}", current_peer.0.to_hex(), current_peer.1.to_string());
 		false
 	}
 }

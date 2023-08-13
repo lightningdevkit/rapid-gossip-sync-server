@@ -1,3 +1,4 @@
+use std::ops::Deref;
 use std::sync::{Arc, RwLock};
 
 use bitcoin::secp256k1::PublicKey;
@@ -5,10 +6,10 @@ use lightning::events::{MessageSendEvent, MessageSendEventsProvider};
 use lightning::ln::features::{InitFeatures, NodeFeatures};
 use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, Init, LightningError, NodeAnnouncement, QueryChannelRange, QueryShortChannelIds, ReplyChannelRange, ReplyShortChannelIdsEnd, RoutingMessageHandler};
 use lightning::routing::gossip::{NetworkGraph, NodeId, P2PGossipSync};
+use lightning::util::logger::Logger;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 
-use crate::TestLogger;
 use crate::types::{GossipMessage, GossipChainAccess, GossipPeerManager};
 use crate::verifier::ChainVerifier;
 
@@ -30,28 +31,28 @@ impl GossipCounter {
 	}
 }
 
-pub(crate) struct GossipRouter {
-	native_router: P2PGossipSync<Arc<NetworkGraph<TestLogger>>, GossipChainAccess, TestLogger>,
+pub(crate) struct GossipRouter<L: Deref + Clone + Send + Sync + 'static> where L::Target: Logger {
+	native_router: P2PGossipSync<Arc<NetworkGraph<L>>, GossipChainAccess<L>, L>,
 	pub(crate) counter: RwLock<GossipCounter>,
 	sender: mpsc::Sender<GossipMessage>,
-	verifier: Arc<ChainVerifier>,
-	outbound_gossiper: Arc<P2PGossipSync<Arc<NetworkGraph<TestLogger>>, GossipChainAccess, TestLogger>>,
+	verifier: Arc<ChainVerifier<L>>,
+	outbound_gossiper: Arc<P2PGossipSync<Arc<NetworkGraph<L>>, GossipChainAccess<L>, L>>,
 }
 
-impl GossipRouter {
-	pub(crate) fn new(network_graph: Arc<NetworkGraph<TestLogger>>, sender: mpsc::Sender<GossipMessage>) -> Self {
-		let outbound_gossiper = Arc::new(P2PGossipSync::new(Arc::clone(&network_graph), None, TestLogger::new()));
-		let verifier = Arc::new(ChainVerifier::new(Arc::clone(&network_graph), Arc::clone(&outbound_gossiper)));
+impl<L: Deref + Clone + Send + Sync> GossipRouter<L> where L::Target: Logger {
+	pub(crate) fn new(network_graph: Arc<NetworkGraph<L>>, sender: mpsc::Sender<GossipMessage>, logger: L) -> Self {
+		let outbound_gossiper = Arc::new(P2PGossipSync::new(Arc::clone(&network_graph), None, logger.clone()));
+		let verifier = Arc::new(ChainVerifier::new(Arc::clone(&network_graph), Arc::clone(&outbound_gossiper), logger.clone()));
 		Self {
-			native_router: P2PGossipSync::new(network_graph, Some(Arc::clone(&verifier)), TestLogger::new()),
+			native_router: P2PGossipSync::new(network_graph, Some(Arc::clone(&verifier)), logger.clone()),
 			outbound_gossiper,
 			counter: RwLock::new(GossipCounter::new()),
 			sender,
-			verifier,
+			verifier
 		}
 	}
 
-	pub(crate) fn set_pm(&self, peer_handler: GossipPeerManager) {
+	pub(crate) fn set_pm(&self, peer_handler: GossipPeerManager<L>) {
 		self.verifier.set_ph(peer_handler);
 	}
 
@@ -83,7 +84,7 @@ impl GossipRouter {
 	}
 }
 
-impl MessageSendEventsProvider for GossipRouter {
+impl<L: Deref + Clone + Send + Sync> MessageSendEventsProvider for GossipRouter<L> where L::Target: Logger {
 	fn get_and_clear_pending_msg_events(&self) -> Vec<MessageSendEvent> {
 		let gossip_evs = self.outbound_gossiper.get_and_clear_pending_msg_events();
 		for ev in gossip_evs {
@@ -102,7 +103,7 @@ impl MessageSendEventsProvider for GossipRouter {
 	}
 }
 
-impl RoutingMessageHandler for GossipRouter {
+impl<L: Deref + Clone + Send + Sync> RoutingMessageHandler for GossipRouter<L> where L::Target: Logger {
 	fn handle_node_announcement(&self, msg: &NodeAnnouncement) -> Result<bool, LightningError> {
 		self.native_router.handle_node_announcement(msg)
 	}

@@ -1,29 +1,34 @@
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use lightning::log_info;
 use lightning::routing::gossip::NetworkGraph;
+use lightning::util::logger::Logger;
 use lightning::util::ser::Writeable;
 use tokio::sync::mpsc;
 use tokio_postgres::NoTls;
 
-use crate::{config, TestLogger};
+use crate::config;
 use crate::types::GossipMessage;
 
 const POSTGRES_INSERT_TIMEOUT: Duration = Duration::from_secs(15);
 
-pub(crate) struct GossipPersister {
+pub(crate) struct GossipPersister<L: Deref> where L::Target: Logger {
 	gossip_persistence_receiver: mpsc::Receiver<GossipMessage>,
-	network_graph: Arc<NetworkGraph<TestLogger>>,
+	network_graph: Arc<NetworkGraph<L>>,
+	logger: L
 }
 
-impl GossipPersister {
-	pub fn new(network_graph: Arc<NetworkGraph<TestLogger>>) -> (Self, mpsc::Sender<GossipMessage>) {
+impl<L: Deref> GossipPersister<L> where L::Target: Logger {
+	pub fn new(network_graph: Arc<NetworkGraph<L>>, logger: L) -> (Self, mpsc::Sender<GossipMessage>) {
 		let (gossip_persistence_sender, gossip_persistence_receiver) =
 			mpsc::channel::<GossipMessage>(100);
 		(GossipPersister {
 			gossip_persistence_receiver,
-			network_graph
+			network_graph,
+			logger
 		}, gossip_persistence_sender)
 	}
 
@@ -99,7 +104,7 @@ impl GossipPersister {
 			i += 1; // count the persisted gossip messages
 
 			if latest_persistence_log.elapsed().as_secs() >= 60 {
-				println!("Persisting gossip message #{}", i);
+				log_info!(self.logger, "Persisting gossip message #{}", i);
 				latest_persistence_log = Instant::now();
 			}
 
@@ -177,7 +182,7 @@ impl GossipPersister {
 	}
 
 	fn persist_network_graph(&self) {
-		println!("Caching network graph…");
+		log_info!(self.logger, "Caching network graph…");
 		let cache_path = config::network_graph_cache_path();
 		let file = OpenOptions::new()
 			.create(true)
@@ -189,6 +194,6 @@ impl GossipPersister {
 		let mut writer = BufWriter::new(file);
 		self.network_graph.write(&mut writer).unwrap();
 		writer.flush().unwrap();
-		println!("Cached network graph!");
+		log_info!(self.logger, "Cached network graph!");
 	}
 }

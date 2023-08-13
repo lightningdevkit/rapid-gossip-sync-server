@@ -1,25 +1,29 @@
 use std::collections::HashMap;
 use std::fs;
+use std::ops::Deref;
 use std::os::unix::fs::symlink;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use lightning::log_info;
 
 use lightning::routing::gossip::NetworkGraph;
+use lightning::util::logger::Logger;
 
-use crate::{config, TestLogger};
+use crate::config;
 use crate::config::cache_path;
 
-pub(crate) struct Snapshotter {
-	network_graph: Arc<NetworkGraph<TestLogger>>,
+pub(crate) struct Snapshotter<L: Deref + Clone> where L::Target: Logger {
+	network_graph: Arc<NetworkGraph<L>>,
+	logger: L
 }
 
-impl Snapshotter {
-	pub fn new(network_graph: Arc<NetworkGraph<TestLogger>>) -> Self {
-		Self { network_graph }
+impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
+	pub fn new(network_graph: Arc<NetworkGraph<L>>, logger: L) -> Self {
+		Self { network_graph, logger }
 	}
 
 	pub(crate) async fn snapshot_gossip(&self) {
-		println!("Initiating snapshotting service");
+		log_info!(self.logger, "Initiating snapshotting service");
 
 		let snapshot_sync_day_factors = [1, 2, 3, 4, 5, 6, 7, 14, 21, u64::MAX];
 		let round_day_seconds = config::SNAPSHOT_CALCULATION_INTERVAL as u64;
@@ -35,7 +39,7 @@ impl Snapshotter {
 			// 1. get the current timestamp
 			let snapshot_generation_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 			let reference_timestamp = Self::round_down_to_nearest_multiple(snapshot_generation_timestamp, round_day_seconds);
-			println!("Capturing snapshots at {} for: {}", snapshot_generation_timestamp, reference_timestamp);
+			log_info!(self.logger, "Capturing snapshots at {} for: {}", snapshot_generation_timestamp, reference_timestamp);
 
 			// 2. sleep until the next round 24 hours
 			// 3. refresh all snapshots
@@ -75,14 +79,14 @@ impl Snapshotter {
 			for (day_range, current_last_sync_timestamp) in &snapshot_sync_timestamps {
 				let network_graph_clone = self.network_graph.clone();
 				{
-					println!("Calculating {}-day snapshot", day_range);
+					log_info!(self.logger, "Calculating {}-day snapshot", day_range);
 					// calculate the snapshot
-					let snapshot = super::serialize_delta(network_graph_clone, current_last_sync_timestamp.clone() as u32).await;
+					let snapshot = super::serialize_delta(network_graph_clone, current_last_sync_timestamp.clone() as u32, self.logger.clone()).await;
 
 					// persist the snapshot and update the symlink
 					let snapshot_filename = format!("snapshot__calculated-at:{}__range:{}-days__previous-sync:{}.lngossip", reference_timestamp, day_range, current_last_sync_timestamp);
 					let snapshot_path = format!("{}/{}", pending_snapshot_directory, snapshot_filename);
-					println!("Persisting {}-day snapshot: {} ({} messages, {} announcements, {} updates ({} full, {} incremental))", day_range, snapshot_filename, snapshot.message_count, snapshot.announcement_count, snapshot.update_count, snapshot.update_count_full, snapshot.update_count_incremental);
+					log_info!(self.logger, "Persisting {}-day snapshot: {} ({} messages, {} announcements, {} updates ({} full, {} incremental))", day_range, snapshot_filename, snapshot.message_count, snapshot.announcement_count, snapshot.update_count, snapshot.update_count_full, snapshot.update_count_incremental);
 					fs::write(&snapshot_path, snapshot.data).unwrap();
 					snapshot_filenames_by_day_range.insert(day_range.clone(), snapshot_filename);
 				}
@@ -97,7 +101,7 @@ impl Snapshotter {
 
 				let dummy_symlink_path = format!("{}/{}.bin", pending_symlink_directory, reference_timestamp);
 				let relative_dummy_snapshot_path = format!("{}/{}", relative_symlink_to_snapshot_path, dummy_filename);
-				println!("Symlinking dummy: {} -> {}", dummy_symlink_path, relative_dummy_snapshot_path);
+				log_info!(self.logger, "Symlinking dummy: {} -> {}", dummy_symlink_path, relative_dummy_snapshot_path);
 				symlink(&relative_dummy_snapshot_path, &dummy_symlink_path).unwrap();
 			}
 
@@ -126,7 +130,7 @@ impl Snapshotter {
 				};
 				let symlink_path = format!("{}/{}.bin", pending_symlink_directory, canonical_last_sync_timestamp);
 
-				println!("Symlinking: {} -> {} ({} -> {}", i, referenced_day_range, symlink_path, relative_snapshot_path);
+				log_info!(self.logger, "Symlinking: {} -> {} ({} -> {}", i, referenced_day_range, symlink_path, relative_snapshot_path);
 				symlink(&relative_snapshot_path, &symlink_path).unwrap();
 			}
 
@@ -148,7 +152,7 @@ impl Snapshotter {
 			let remainder = current_time % round_day_seconds;
 			let time_until_next_day = round_day_seconds - remainder;
 
-			println!("Sleeping until next snapshot capture: {}s", time_until_next_day);
+			log_info!(self.logger, "Sleeping until next snapshot capture: {}s", time_until_next_day);
 			// add in an extra five seconds to assure the rounding down works correctly
 			let sleep = tokio::time::sleep(Duration::from_secs(time_until_next_day + 5));
 			sleep.await;

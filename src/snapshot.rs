@@ -26,7 +26,7 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 		log_info!(self.logger, "Initiating snapshotting service");
 
 		let snapshot_sync_day_factors = [1, 2, 3, 4, 5, 6, 7, 14, 21, u64::MAX];
-		let round_day_seconds = config::SNAPSHOT_CALCULATION_INTERVAL as u64;
+		const DAY_SECONDS: u64 = 60 * 60 * 24;
 
 		let pending_snapshot_directory = format!("{}/snapshots_pending", cache_path());
 		let pending_symlink_directory = format!("{}/symlinks_pending", cache_path());
@@ -38,7 +38,7 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 		loop {
 			// 1. get the current timestamp
 			let snapshot_generation_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-			let reference_timestamp = Self::round_down_to_nearest_multiple(snapshot_generation_timestamp, round_day_seconds);
+			let reference_timestamp = Self::round_down_to_nearest_multiple(snapshot_generation_timestamp, config::SNAPSHOT_CALCULATION_INTERVAL as u64);
 			log_info!(self.logger, "Capturing snapshots at {} for: {}", snapshot_generation_timestamp, reference_timestamp);
 
 			// 2. sleep until the next round 24 hours
@@ -70,7 +70,7 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 			let mut snapshot_sync_timestamps: Vec<(u64, u64)> = Vec::new();
 			for factor in &snapshot_sync_day_factors {
 				// basically timestamp - day_seconds * factor
-				let timestamp = reference_timestamp.saturating_sub(round_day_seconds.saturating_mul(factor.clone()));
+				let timestamp = reference_timestamp.saturating_sub(DAY_SECONDS.saturating_mul(factor.clone()));
 				snapshot_sync_timestamps.push((factor.clone(), timestamp));
 			};
 
@@ -105,7 +105,9 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 				symlink(&relative_dummy_snapshot_path, &dummy_symlink_path).unwrap();
 			}
 
-			for i in 0..10_001u64 {
+			// Number of intervals since Jan 1, 2022, a few months before RGS server was released.
+			let symlink_count = (reference_timestamp - 1640995200) / config::SNAPSHOT_CALCULATION_INTERVAL as u64;
+			for i in 0..symlink_count {
 				// let's create non-dummy-symlinks
 
 				// first, determine which snapshot range should be referenced
@@ -115,7 +117,7 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 				} else {
 					// find min(x) in snapshot_sync_day_factors where x >= i
 					snapshot_sync_day_factors.iter().find(|x| {
-						x >= &&i
+						*x * DAY_SECONDS >= i * config::SNAPSHOT_CALCULATION_INTERVAL as u64
 					}).unwrap().clone()
 				};
 
@@ -126,7 +128,7 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 					// special-case 0 to always refer to a full/initial sync
 					0
 				} else {
-					reference_timestamp.saturating_sub(round_day_seconds.saturating_mul(i))
+					reference_timestamp.saturating_sub((config::SNAPSHOT_CALCULATION_INTERVAL as u64).saturating_mul(i))
 				};
 				let symlink_path = format!("{}/{}.bin", pending_symlink_directory, canonical_last_sync_timestamp);
 
@@ -149,8 +151,8 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 
 			// constructing the snapshots may have taken a while
 			let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-			let remainder = current_time % round_day_seconds;
-			let time_until_next_day = round_day_seconds - remainder;
+			let remainder = current_time % config::SNAPSHOT_CALCULATION_INTERVAL as u64;
+			let time_until_next_day = config::SNAPSHOT_CALCULATION_INTERVAL as u64 - remainder;
 
 			log_info!(self.logger, "Sleeping until next snapshot capture: {}s", time_until_next_day);
 			// add in an extra five seconds to assure the rounding down works correctly

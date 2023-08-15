@@ -41,6 +41,9 @@ mod verifier;
 
 pub mod types;
 
+#[cfg(test)]
+mod tests;
+
 /// The purpose of this prefix is to identify the serialization format, should other rapid gossip
 /// sync formats arise in the future.
 ///

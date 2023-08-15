@@ -41,6 +41,9 @@ mod verifier;
 
 pub mod types;
 
+#[cfg(test)]
+mod tests;
+
 /// The purpose of this prefix is to identify the serialization format, should other rapid gossip
 /// sync formats arise in the future.
 ///
@@ -124,6 +127,14 @@ pub(crate) async fn connect_to_db() -> Client {
 			panic!("connection error: {}", e);
 		}
 	});
+
+	#[cfg(test)]
+	{
+		let schema_name = tests::db_test_schema();
+		let schema_creation_command = format!("CREATE SCHEMA IF NOT EXISTS {}", schema_name);
+		client.execute(&schema_creation_command, &[]).await.unwrap();
+		client.execute(&format!("SET search_path TO {}", schema_name), &[]).await.unwrap();
+	}
 
 	client.execute("set time zone UTC", &[]).await.unwrap();
 	client

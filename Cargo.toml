@@ -5,12 +5,15 @@ edition = "2021"
 
 [dependencies]
 bitcoin = "0.29"
-lightning = { version = "0.0.116" }
-lightning-block-sync = { version = "0.0.116", features=["rest-client"] }
-lightning-net-tokio = { version = "0.0.116" }
+lightning = { version = "0.0.117" }
+lightning-block-sync = { version = "0.0.117", features=["rest-client"] }
+lightning-net-tokio = { version = "0.0.117" }
 tokio = { version = "1.25", features = ["full"] }
-tokio-postgres = { version="=0.7.5" }
+tokio-postgres = { version = "=0.7.5" }
 futures = "0.3"
+
+[dev-dependencies]
+lightning-rapid-gossip-sync = { version = "0.0.117" }
 
 [profile.dev]
 panic = "abort"

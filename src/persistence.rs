@@ -99,7 +99,11 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 		while let Some(gossip_message) = &self.gossip_persistence_receiver.recv().await {
 			i += 1; // count the persisted gossip messages
 
-			if latest_persistence_log.elapsed().as_secs() >= 60 {
+			let _should_log_message = latest_persistence_log.elapsed().as_secs() >= 60;
+			#[cfg(test)]
+			let _should_log_message = true; // we log every persistence message in test
+
+			if _should_log_message {
 				log_info!(self.logger, "Persisting gossip message #{}", i);
 				latest_persistence_log = Instant::now();
 			}

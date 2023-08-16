@@ -146,8 +146,23 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 					let mut update_signed = Vec::new();
 					update.write(&mut update_signed).unwrap();
 
-					tokio::time::timeout(POSTGRES_INSERT_TIMEOUT, client
-						.execute("INSERT INTO channel_updates (\
+					let insertion_statement = if cfg!(test) {
+						"INSERT INTO channel_updates (\
+							short_channel_id, \
+							timestamp, \
+							seen, \
+							channel_flags, \
+							direction, \
+							disable, \
+							cltv_expiry_delta, \
+							htlc_minimum_msat, \
+							fee_base_msat, \
+							fee_proportional_millionths, \
+							htlc_maximum_msat, \
+							blob_signed \
+						) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)  ON CONFLICT DO NOTHING"
+					} else {
+						"INSERT INTO channel_updates (\
 							short_channel_id, \
 							timestamp, \
 							channel_flags, \
@@ -159,9 +174,19 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 							fee_proportional_millionths, \
 							htlc_maximum_msat, \
 							blob_signed \
-						) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)  ON CONFLICT DO NOTHING", &[
+						) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)  ON CONFLICT DO NOTHING"
+					};
+
+					// this may not be used outside test cfg
+					#[cfg(test)]
+					let system_time: std::time::SystemTime = std::time::UNIX_EPOCH + Duration::from_secs(timestamp as u64);
+
+					tokio::time::timeout(POSTGRES_INSERT_TIMEOUT, client
+						.execute(insertion_statement, &[
 							&scid,
 							&timestamp,
+							#[cfg(test)]
+								&system_time,
 							&(update.contents.flags as i16),
 							&direction,
 							&disable,

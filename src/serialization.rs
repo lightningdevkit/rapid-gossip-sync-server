@@ -3,11 +3,11 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bitcoin::BlockHash;
-use bitcoin::hashes::Hash;
 use lightning::ln::msgs::{UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::util::ser::{BigSize, Writeable};
 use crate::config;
 
+use crate::config;
 use crate::lookup::{DeltaSet, DirectedUpdateDelta};
 
 pub(super) struct SerializationSet {
@@ -105,15 +105,14 @@ struct FullUpdateValueHistograms {
 }
 
 pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32) -> SerializationSet {
+	let chain_hash = bitcoin::blockdata::constants::genesis_block(config::network()).block_hash();
 	let mut serialization_set = SerializationSet {
 		announcements: vec![],
 		updates: vec![],
 		full_update_defaults: Default::default(),
-		chain_hash: BlockHash::all_zeros(),
+		chain_hash,
 		latest_seen: 0,
 	};
-
-	let mut chain_hash_set = false;
 
 	let mut full_update_histograms = FullUpdateValueHistograms {
 		cltv_expiry_delta: Default::default(),
@@ -138,11 +137,6 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 
 		// any announcement chain hash is gonna be the same value. Just set it from the first one.
 		let channel_announcement_delta = channel_delta.announcement.as_ref().unwrap();
-		if !chain_hash_set {
-			chain_hash_set = true;
-			serialization_set.chain_hash = channel_announcement_delta.announcement.chain_hash.clone();
-		}
-
 		let current_announcement_seen = channel_announcement_delta.seen;
 		let is_new_announcement = current_announcement_seen >= last_sync_timestamp;
 		let is_newly_included_announcement = if let Some(first_update_seen) = channel_delta.first_bidirectional_updates_seen {

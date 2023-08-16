@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, HashSet};
 use std::io::Cursor;
-use std::ops::{Add, Deref};
+use std::ops::Deref;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::routing::gossip::NetworkGraph;
@@ -79,7 +79,6 @@ pub(super) async fn connect_to_db() -> (Client, Connection<Socket, NoTlsStream>)
 /// after `last_sync_timestamp`
 pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaSet, network_graph: Arc<NetworkGraph<L>>, client: &Client, last_sync_timestamp: u32, logger: L) where L::Target: Logger {
 	log_info!(logger, "Obtaining channel ids from network graph");
-	let last_sync_timestamp_object = SystemTime::UNIX_EPOCH.add(Duration::from_secs(last_sync_timestamp as u64));
 	let channel_ids = {
 		let read_only_graph = network_graph.read_only();
 		log_info!(logger, "Retrieved read-only network graph copy");
@@ -89,12 +88,17 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 			.map(|c| c.1.announcement_message.as_ref().unwrap().contents.short_channel_id as i64)
 			.collect::<Vec<_>>()
 	};
+	#[cfg(test)]
+	log_info!(logger, "Channel IDs: {:?}", channel_ids);
+	log_info!(logger, "Last sync timestamp: {}", last_sync_timestamp);
+	let last_sync_timestamp_float = last_sync_timestamp as f64;
 
 	log_info!(logger, "Obtaining corresponding database entries");
 	// get all the channel announcements that are currently in the network graph
 	let announcement_rows = client.query_raw("SELECT announcement_signed, seen FROM channel_announcements WHERE short_channel_id = any($1) ORDER BY short_channel_id ASC", [&channel_ids]).await.unwrap();
 	let mut pinned_rows = Box::pin(announcement_rows);
 
+	let mut announcement_count = 0;
 	while let Some(row_res) = pinned_rows.next().await {
 		let current_announcement_row = row_res.unwrap();
 		let blob: Vec<u8> = current_announcement_row.get("announcement_signed");
@@ -110,7 +114,10 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 			announcement: unsigned_announcement,
 			seen: current_seen_timestamp,
 		});
+
+		announcement_count += 1;
 	}
+	log_info!(logger, "Fetched {} announcement rows", announcement_count);
 
 	{
 		// THIS STEP IS USED TO DETERMINE IF A CHANNEL SHOULD BE OMITTED FROM THE DELTA
@@ -124,7 +131,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 		// here is where the channels whose first update in either direction occurred after
 		// `last_seen_timestamp` are added to the selection
 		let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] =
-			[&channel_ids, &last_sync_timestamp_object];
+			[&channel_ids, &last_sync_timestamp_float];
 		let newer_oldest_directional_updates = client.query_raw("
 			SELECT * FROM (
 				SELECT DISTINCT ON (short_channel_id) *
@@ -136,10 +143,11 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 				) AS directional_last_seens
 				ORDER BY short_channel_id ASC, seen DESC
 			) AS distinct_chans
-			WHERE distinct_chans.seen >= $2
+			WHERE distinct_chans.seen >= TO_TIMESTAMP($2)
 			", params).await.unwrap();
 		let mut pinned_updates = Box::pin(newer_oldest_directional_updates);
 
+		let mut newer_oldest_directional_update_count = 0;
 		while let Some(row_res) = pinned_updates.next().await {
 			let current_row = row_res.unwrap();
 
@@ -151,7 +159,10 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 			let current_channel_delta = delta_set.entry(scid as u64).or_insert(ChannelDelta::default());
 			// first time a channel was seen in both directions
 			(*current_channel_delta).first_bidirectional_updates_seen = Some(current_seen_timestamp);
+
+			newer_oldest_directional_update_count += 1;
 		}
+		log_info!(logger, "Fetched {} update rows of the first update in a new direction", newer_oldest_directional_update_count);
 	}
 
 	{
@@ -161,7 +172,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 		// Steps:
 		// — Obtain all updates, distinct by (scid, direction), ordered by seen DESC
 		// — From those updates, select distinct by (scid), ordered by seen ASC (to obtain the older one per direction)
-		let reminder_threshold_timestamp = SystemTime::now().checked_sub(config::CHANNEL_REMINDER_AGE).unwrap();
+		let reminder_threshold_timestamp = SystemTime::now().checked_sub(config::CHANNEL_REMINDER_AGE).unwrap().duration_since(UNIX_EPOCH).unwrap().as_secs() as f64;
 
 		let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] =
 			[&channel_ids, &reminder_threshold_timestamp];
@@ -176,10 +187,11 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 				) AS directional_last_seens
 				ORDER BY short_channel_id ASC, seen ASC
 			) AS distinct_chans
-			WHERE distinct_chans.seen <= $2
+			WHERE distinct_chans.seen <= TO_TIMESTAMP($2)
 			", params).await.unwrap();
 		let mut pinned_updates = Box::pin(older_latest_directional_updates);
 
+		let mut older_latest_directional_update_count = 0;
 		while let Some(row_res) = pinned_updates.next().await {
 			let current_row = row_res.unwrap();
 			let scid: i64 = current_row.get("short_channel_id");
@@ -211,13 +223,15 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 				// we don't send reminders if we don't have the channel
 				continue;
 			}
+			older_latest_directional_update_count += 1;
 		}
+		log_info!(logger, "Fetched {} update rows of the latest update in the less recently updated direction", older_latest_directional_update_count);
 	}
 }
 
 pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, client: &Client, last_sync_timestamp: u32, logger: L) where L::Target: Logger {
 	let start = Instant::now();
-	let last_sync_timestamp_object = SystemTime::UNIX_EPOCH.add(Duration::from_secs(last_sync_timestamp as u64));
+	let last_sync_timestamp_float = last_sync_timestamp as f64;
 
 	// get the latest channel update in each direction prior to last_sync_timestamp, provided
 	// there was an update in either direction that happened after the last sync (to avoid
@@ -227,14 +241,14 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 		WHERE id IN (
 			SELECT DISTINCT ON (short_channel_id, direction) id
 			FROM channel_updates
-			WHERE seen < $1 AND short_channel_id IN (
+			WHERE seen < TO_TIMESTAMP($1) AND short_channel_id IN (
 				SELECT DISTINCT ON (short_channel_id) short_channel_id
 				FROM channel_updates
-				WHERE seen >= $1
+				WHERE seen >= TO_TIMESTAMP($1)
 			)
 			ORDER BY short_channel_id ASC, direction ASC, seen DESC
 		)
-		", [last_sync_timestamp_object]).await.unwrap();
+		", [last_sync_timestamp_float]).await.unwrap();
 	let mut pinned_rows = Box::pin(reference_rows);
 
 	log_info!(logger, "Fetched reference rows in {:?}", start.elapsed());
@@ -275,8 +289,8 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 	let intermediate_updates = client.query_raw("
 		SELECT id, direction, blob_signed, seen
 		FROM channel_updates
-		WHERE seen >= $1
-		", [last_sync_timestamp_object]).await.unwrap();
+		WHERE seen >= TO_TIMESTAMP($1)
+		", [last_sync_timestamp_float]).await.unwrap();
 	let mut pinned_updates = Box::pin(intermediate_updates);
 	log_info!(logger, "Fetched intermediate rows in {:?}", start.elapsed());
 

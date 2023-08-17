@@ -7,8 +7,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::routing::gossip::NetworkGraph;
 use lightning::util::ser::Readable;
-use tokio_postgres::{Client, Connection, NoTls, Socket};
-use tokio_postgres::tls::NoTlsStream;
+use tokio_postgres::Client;
 
 use futures::StreamExt;
 use lightning::log_info;
@@ -66,11 +65,6 @@ impl Default for DirectedUpdateDelta {
 			serialization_update_flags: None,
 		}
 	}
-}
-
-pub(super) async fn connect_to_db() -> (Client, Connection<Socket, NoTlsStream>) {
-	let connection_config = config::db_connection_config();
-	connection_config.connect(NoTls).await.unwrap()
 }
 
 /// Fetch all the channel announcements that are presently in the network graph, regardless of
@@ -288,6 +282,7 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 		SELECT id, direction, blob_signed, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen
 		FROM channel_updates
 		WHERE seen >= TO_TIMESTAMP($1)
+		ORDER BY timestamp DESC
 		", [last_sync_timestamp_float]).await.unwrap();
 	let mut pinned_updates = Box::pin(intermediate_updates);
 	log_info!(logger, "Fetched intermediate rows in {:?}", start.elapsed());

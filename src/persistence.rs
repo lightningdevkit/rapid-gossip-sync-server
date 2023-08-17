@@ -8,7 +8,6 @@ use lightning::routing::gossip::NetworkGraph;
 use lightning::util::logger::Logger;
 use lightning::util::ser::Writeable;
 use tokio::sync::mpsc;
-use tokio_postgres::NoTls;
 
 use crate::config;
 use crate::types::GossipMessage;
@@ -33,15 +32,7 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 	}
 
 	pub(crate) async fn persist_gossip(&mut self) {
-		let connection_config = config::db_connection_config();
-		let (mut client, connection) =
-			connection_config.connect(NoTls).await.unwrap();
-
-		tokio::spawn(async move {
-			if let Err(e) = connection.await {
-				panic!("connection error: {}", e);
-			}
-		});
+		let mut client = crate::connect_to_db().await;
 
 		{
 			// initialize the database
@@ -55,6 +46,11 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 			let cur_schema = client.query("SELECT db_schema FROM config WHERE id = $1", &[&1]).await.unwrap();
 			if !cur_schema.is_empty() {
 				config::upgrade_db(cur_schema[0].get(0), &mut client).await;
+			}
+
+			let preparation = client.execute("set time zone UTC", &[]).await;
+			if let Err(preparation_error) = preparation {
+				panic!("db preparation error: {}", preparation_error);
 			}
 
 			let initialization = client

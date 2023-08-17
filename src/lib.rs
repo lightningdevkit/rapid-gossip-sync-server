@@ -20,6 +20,7 @@ use lightning::routing::gossip::{NetworkGraph, NodeId};
 use lightning::util::logger::Logger;
 use lightning::util::ser::{ReadableArgs, Writeable};
 use tokio::sync::mpsc;
+use tokio_postgres::{Client, NoTls};
 use crate::lookup::DeltaSet;
 
 use crate::persistence::GossipPersister;
@@ -110,6 +111,20 @@ impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Ta
 	}
 }
 
+pub(crate) async fn connect_to_db() -> Client {
+	let connection_config = config::db_connection_config();
+	let (client, connection) = connection_config.connect(NoTls).await.unwrap();
+
+	tokio::spawn(async move {
+		if let Err(e) = connection.await {
+			panic!("connection error: {}", e);
+		}
+	});
+
+	client.execute("set time zone UTC", &[]).await.unwrap();
+	client
+}
+
 /// This method generates a no-op blob that can be used as a delta where none exists.
 ///
 /// The primary purpose of this method is the scenario of a client retrieving and processing a
@@ -142,15 +157,9 @@ fn serialize_empty_blob(current_timestamp: u64) -> Vec<u8> {
 }
 
 async fn serialize_delta<L: Deref + Clone>(network_graph: Arc<NetworkGraph<L>>, last_sync_timestamp: u32, logger: L) -> SerializedResponse where L::Target: Logger {
-	let (client, connection) = lookup::connect_to_db().await;
+	let client = connect_to_db().await;
 
 	network_graph.remove_stale_channels_and_tracking();
-
-	tokio::spawn(async move {
-		if let Err(e) = connection.await {
-			panic!("connection error: {}", e);
-		}
-	});
 
 	let mut output: Vec<u8> = vec![];
 

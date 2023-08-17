@@ -115,21 +115,34 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 			}
 
 			match &gossip_message {
-				GossipMessage::ChannelAnnouncement(announcement) => {
+				GossipMessage::ChannelAnnouncement(announcement, timestamp) => {
 					let scid = announcement.contents.short_channel_id as i64;
 
 					// start with the type prefix, which is already known a priori
 					let mut announcement_signed = Vec::new();
 					announcement.write(&mut announcement_signed).unwrap();
 
-					tokio::time::timeout(POSTGRES_INSERT_TIMEOUT, client
-						.execute("INSERT INTO channel_announcements (\
+					if let Some(timestamp) = timestamp {
+						tokio::time::timeout(POSTGRES_INSERT_TIMEOUT, client
+							.execute("INSERT INTO channel_announcements (\
+							short_channel_id, \
+							announcement_signed, \
+							seen \
+						) VALUES ($1, $2, TO_TIMESTAMP($3)) ON CONFLICT (short_channel_id) DO NOTHING", &[
+								&scid,
+								&announcement_signed,
+								&(*timestamp as f64)
+							])).await.unwrap().unwrap();
+					} else {
+						tokio::time::timeout(POSTGRES_INSERT_TIMEOUT, client
+							.execute("INSERT INTO channel_announcements (\
 							short_channel_id, \
 							announcement_signed \
 						) VALUES ($1, $2) ON CONFLICT (short_channel_id) DO NOTHING", &[
-							&scid,
-							&announcement_signed
-						])).await.unwrap().unwrap();
+								&scid,
+								&announcement_signed
+							])).await.unwrap().unwrap();
+					}
 				}
 				GossipMessage::ChannelUpdate(update) => {
 					let scid = update.contents.short_channel_id as i64;

@@ -62,7 +62,7 @@ impl<L: Deref + Clone + Send + Sync> GossipRouter<L> where L::Target: Logger {
 			counter.channel_announcements += 1;
 		}
 
-		let gossip_message = GossipMessage::ChannelAnnouncement(msg);
+		let gossip_message = GossipMessage::ChannelAnnouncement(msg, None);
 		if let Err(err) = self.sender.try_send(gossip_message) {
 			let gossip_message = match err { TrySendError::Full(msg)|TrySendError::Closed(msg) => msg };
 			tokio::task::block_in_place(move || { tokio::runtime::Handle::current().block_on(async move {

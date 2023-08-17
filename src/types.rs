@@ -14,7 +14,10 @@ pub(crate) type GossipPeerManager<L> = Arc<PeerManager<lightning_net_tokio::Sock
 
 #[derive(Debug)]
 pub(crate) enum GossipMessage {
-	ChannelAnnouncement(ChannelAnnouncement),
+	ChannelAnnouncement(
+		ChannelAnnouncement,
+		Option<u32> // optionally include a persistence timestamp
+	),
 	ChannelUpdate(ChannelUpdate),
 }
 

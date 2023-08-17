@@ -140,12 +140,12 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 
 		let current_announcement_seen = channel_announcement_delta.seen;
 		let is_new_announcement = current_announcement_seen >= last_sync_timestamp;
-		let is_newly_updated_announcement = if let Some(first_update_seen) = channel_delta.first_bidirectional_updates_seen {
+		let is_newly_included_announcement = if let Some(first_update_seen) = channel_delta.first_bidirectional_updates_seen {
 			first_update_seen >= last_sync_timestamp
 		} else {
 			false
 		};
-		let send_announcement = is_new_announcement || is_newly_updated_announcement;
+		let send_announcement = is_new_announcement || is_newly_included_announcement;
 		if send_announcement {
 			serialization_set.latest_seen = max(serialization_set.latest_seen, current_announcement_seen);
 			serialization_set.announcements.push(channel_delta.announcement.unwrap().announcement);
@@ -166,7 +166,7 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 
 					if updates.last_update_before_seen.is_some() {
 						let mutated_properties = updates.mutated_properties;
-						if mutated_properties.len() == 5 {
+						if mutated_properties.len() == 5 || send_announcement {
 							// all five values have changed, it makes more sense to just
 							// serialize the update as a full update instead of as a change
 							// this way, the default values can be computed more efficiently

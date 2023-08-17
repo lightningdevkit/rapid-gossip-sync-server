@@ -95,7 +95,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 
 	log_info!(logger, "Obtaining corresponding database entries");
 	// get all the channel announcements that are currently in the network graph
-	let announcement_rows = client.query_raw("SELECT announcement_signed, seen FROM channel_announcements WHERE short_channel_id = any($1) ORDER BY short_channel_id ASC", [&channel_ids]).await.unwrap();
+	let announcement_rows = client.query_raw("SELECT announcement_signed, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen FROM channel_announcements WHERE short_channel_id = any($1) ORDER BY short_channel_id ASC", [&channel_ids]).await.unwrap();
 	let mut pinned_rows = Box::pin(announcement_rows);
 
 	let mut announcement_count = 0;
@@ -106,8 +106,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 		let unsigned_announcement = ChannelAnnouncement::read(&mut readable).unwrap().contents;
 
 		let scid = unsigned_announcement.short_channel_id;
-		let current_seen_timestamp_object: SystemTime = current_announcement_row.get("seen");
-		let current_seen_timestamp: u32 = current_seen_timestamp_object.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u32;
+		let current_seen_timestamp = current_announcement_row.get::<_, i64>("seen") as u32;
 
 		let current_channel_delta = delta_set.entry(scid).or_insert(ChannelDelta::default());
 		(*current_channel_delta).announcement = Some(AnnouncementDelta {
@@ -133,7 +132,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 		let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] =
 			[&channel_ids, &last_sync_timestamp_float];
 		let newer_oldest_directional_updates = client.query_raw("
-			SELECT * FROM (
+			SELECT short_channel_id, CAST(EXTRACT('epoch' from distinct_chans.seen) AS BIGINT) AS seen FROM (
 				SELECT DISTINCT ON (short_channel_id) *
 				FROM (
 					SELECT DISTINCT ON (short_channel_id, direction) short_channel_id, seen
@@ -152,8 +151,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 			let current_row = row_res.unwrap();
 
 			let scid: i64 = current_row.get("short_channel_id");
-			let current_seen_timestamp_object: SystemTime = current_row.get("seen");
-			let current_seen_timestamp: u32 = current_seen_timestamp_object.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u32;
+			let current_seen_timestamp = current_row.get::<_, i64>("seen") as u32;
 
 			// the newer of the two oldest seen directional updates came after last sync timestamp
 			let current_channel_delta = delta_set.entry(scid as u64).or_insert(ChannelDelta::default());
@@ -287,7 +285,7 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 	// have been omitted)
 
 	let intermediate_updates = client.query_raw("
-		SELECT id, direction, blob_signed, seen
+		SELECT id, direction, blob_signed, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen
 		FROM channel_updates
 		WHERE seen >= TO_TIMESTAMP($1)
 		", [last_sync_timestamp_float]).await.unwrap();
@@ -308,8 +306,7 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 		intermediate_update_count += 1;
 
 		let direction: bool = intermediate_update.get("direction");
-		let current_seen_timestamp_object: SystemTime = intermediate_update.get("seen");
-		let current_seen_timestamp: u32 = current_seen_timestamp_object.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u32;
+		let current_seen_timestamp = intermediate_update.get::<_, i64>("seen") as u32;
 		let blob: Vec<u8> = intermediate_update.get("blob_signed");
 		let mut readable = Cursor::new(blob);
 		let unsigned_channel_update = ChannelUpdate::read(&mut readable).unwrap().contents;

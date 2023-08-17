@@ -40,6 +40,8 @@ pub(super) struct DirectedUpdateDelta {
 pub(super) struct ChannelDelta {
 	pub(super) announcement: Option<AnnouncementDelta>,
 	pub(super) updates: (Option<DirectedUpdateDelta>, Option<DirectedUpdateDelta>),
+	/// This value is only set if the first update to achieve bidirectionality was seen after
+	/// the last sync.
 	pub(super) first_bidirectional_updates_seen: Option<u32>,
 	/// The seen timestamp of the older of the two latest directional updates
 	pub(super) requires_reminder: bool,
@@ -164,7 +166,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 			let scid: i64 = current_row.get("short_channel_id");
 			let current_seen_timestamp = current_row.get::<_, i64>("seen") as u32;
 
-			log_trace!(logger, "Channel {} first update to complete bidirectional data seen at: {}", scid, current_seen_timestamp);
+			log_trace!(logger, "Channel {} with first update to complete bidirectional data since last sync seen at: {}", scid, current_seen_timestamp);
 
 			// the newer of the two oldest seen directional updates came after last sync timestamp
 			let current_channel_delta = delta_set.entry(scid as u64).or_insert(ChannelDelta::default());
@@ -173,7 +175,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 
 			newer_oldest_directional_update_count += 1;
 		}
-		log_info!(logger, "Fetched {} update rows of the first update in a new direction", newer_oldest_directional_update_count);
+		log_info!(logger, "Fetched {} update rows of the first update in a new direction having occurred since the last sync", newer_oldest_directional_update_count);
 	}
 
 	{
@@ -388,7 +390,7 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 			}
 		}
 	}
-	log_info!(logger, "Processed intermediate rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
+	log_info!(logger, "Processed {} intermediate rows (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
 }
 
 pub(super) fn filter_delta_set<L: Deref>(delta_set: &mut DeltaSet, logger: L) where L::Target: Logger {

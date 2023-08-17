@@ -82,8 +82,9 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 			.map(|c| c.1.announcement_message.as_ref().unwrap().contents.short_channel_id as i64)
 			.collect::<Vec<_>>()
 	};
-	#[cfg(test)]
-	log_info!(logger, "Channel IDs: {:?}", channel_ids);
+	if cfg!(test) {
+		log_info!(logger, "Channel IDs: {:?}", channel_ids);
+	}
 	log_info!(logger, "Last sync timestamp: {}", last_sync_timestamp);
 	let last_sync_timestamp_float = last_sync_timestamp as f64;
 
@@ -111,6 +112,22 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 		announcement_count += 1;
 	}
 	log_info!(logger, "Fetched {} announcement rows", announcement_count);
+
+	if cfg!(test) {
+		// THIS STEP IS USED TO DEBUG THE NUMBER OF ROWS WHEN TESTING
+		let update_rows = client.query("SELECT * FROM channel_updates", &[]).await.unwrap();
+		log_info!(logger, "Fetched {} update rows", update_rows.len());
+
+		let update_rows = client.query("SELECT * FROM channel_updates WHERE short_channel_id = any($1)", &[&channel_ids]).await.unwrap();
+		log_info!(logger, "Fetched {} update rows with filtered channels", update_rows.len());
+
+		// let timestamp_string = format!("{}", last_sync_timestamp);
+		let update_rows = client.query("SELECT * FROM channel_updates WHERE seen >= TO_TIMESTAMP($1)", &[&last_sync_timestamp_float]).await.unwrap();
+		log_info!(logger, "Fetched {} update rows with filtered seen", update_rows.len());
+
+		let update_rows = client.query("SELECT * FROM channel_updates WHERE short_channel_id = any($1) AND seen >= TO_TIMESTAMP($2)", &[&channel_ids, &last_sync_timestamp_float]).await.unwrap();
+		log_info!(logger, "Fetched {} update rows with filtered channels and seen", update_rows.len());
+	}
 
 	{
 		// THIS STEP IS USED TO DETERMINE IF A CHANNEL SHOULD BE OMITTED FROM THE DELTA
@@ -146,6 +163,8 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 
 			let scid: i64 = current_row.get("short_channel_id");
 			let current_seen_timestamp = current_row.get::<_, i64>("seen") as u32;
+
+			log_trace!(logger, "Channel {} first update to complete bidirectional data seen at: {}", scid, current_seen_timestamp);
 
 			// the newer of the two oldest seen directional updates came after last sync timestamp
 			let current_channel_delta = delta_set.entry(scid as u64).or_insert(ChannelDelta::default());
@@ -188,6 +207,8 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 			let current_row = row_res.unwrap();
 			let scid: i64 = current_row.get("short_channel_id");
 
+			log_trace!(logger, "Channel {} with newest update in less recently updated direction being at least 6 days ago", scid);
+
 			// annotate this channel as requiring that reminders be sent to the client
 			let current_channel_delta = delta_set.entry(scid as u64).or_insert(ChannelDelta::default());
 
@@ -217,7 +238,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 			}
 			older_latest_directional_update_count += 1;
 		}
-		log_info!(logger, "Fetched {} update rows of the latest update in the less recently updated direction", older_latest_directional_update_count);
+		log_info!(logger, "Fetched {} update rows of the latest update in the less recently updated direction being more than six days ago", older_latest_directional_update_count);
 	}
 }
 
@@ -334,12 +355,14 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 					seen: current_seen_timestamp,
 					update: unsigned_channel_update.clone(),
 				});
+				log_trace!(logger, "Channel {} latest update in direction 0: {} (seen: {})", scid, unsigned_channel_update.timestamp, current_seen_timestamp)
 			} else if direction && !previously_seen_directions.1 {
 				previously_seen_directions.1 = true;
 				update_delta.latest_update_after_seen = Some(UpdateDelta {
 					seen: current_seen_timestamp,
 					update: unsigned_channel_update.clone(),
 				});
+				log_trace!(logger, "Channel {} latest update in direction 1: {} (seen: {})", scid, unsigned_channel_update.timestamp, current_seen_timestamp)
 			}
 		}
 

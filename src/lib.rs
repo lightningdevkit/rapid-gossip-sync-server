@@ -10,6 +10,8 @@
 extern crate core;
 
 use std::collections::{HashMap, HashSet};
+#[cfg(test)]
+use std::fmt::{Debug, Formatter};
 use std::fs::File;
 use std::io::BufReader;
 use std::ops::Deref;
@@ -115,6 +117,21 @@ impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Ta
 
 		// start the gossip snapshotting service
 		Snapshotter::new(Arc::clone(&self.network_graph), self.logger.clone()).snapshot_gossip().await;
+	}
+}
+
+#[cfg(test)]
+impl Debug for SerializedResponse {
+	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+		write!(
+			f,
+			"\nmessages: {}\n\tannouncements: {}\n\tupdates: {}\n\t\tfull: {}\n\t\tincremental: {}",
+			self.message_count,
+			self.announcement_count,
+			self.update_count,
+			self.update_count_full,
+			self.update_count_incremental
+		)
 	}
 }
 

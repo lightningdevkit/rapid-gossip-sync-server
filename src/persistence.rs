@@ -164,7 +164,7 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 							fee_proportional_millionths, \
 							htlc_maximum_msat, \
 							blob_signed \
-						) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)  ON CONFLICT DO NOTHING"
+						) VALUES ($1, $2, TO_TIMESTAMP($3), $4, $5, $6, $7, $8, $9, $10, $11, $12)  ON CONFLICT DO NOTHING"
 					} else {
 						"INSERT INTO channel_updates (\
 							short_channel_id, \
@@ -183,7 +183,7 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 
 					// this may not be used outside test cfg
 					#[cfg(test)]
-					let system_time: std::time::SystemTime = std::time::UNIX_EPOCH + Duration::from_secs(timestamp as u64);
+					let system_time = timestamp as f64;
 
 					tokio::time::timeout(POSTGRES_INSERT_TIMEOUT, client
 						.execute(insertion_statement, &[

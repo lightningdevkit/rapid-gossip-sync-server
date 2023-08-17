@@ -1,9 +1,12 @@
 use std::cmp::max;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::ops::Deref;
 
 use bitcoin::BlockHash;
 use lightning::ln::msgs::{UnsignedChannelAnnouncement, UnsignedChannelUpdate};
+use lightning::log_trace;
+use lightning::util::logger::Logger;
 use lightning::util::ser::{BigSize, Writeable};
 use crate::config;
 
@@ -104,7 +107,7 @@ struct FullUpdateValueHistograms {
 	htlc_maximum_msat: HashMap<u64, usize>,
 }
 
-pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32) -> SerializationSet {
+pub(super) fn serialize_delta_set<L: Deref>(delta_set: DeltaSet, last_sync_timestamp: u32, logger: L) -> SerializationSet where L::Target: Logger {
 	let chain_hash = bitcoin::blockdata::constants::genesis_block(config::network()).block_hash();
 	let mut serialization_set = SerializationSet {
 		announcements: vec![],
@@ -140,10 +143,14 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 		let current_announcement_seen = channel_announcement_delta.seen;
 		let is_new_announcement = current_announcement_seen >= last_sync_timestamp;
 		let is_newly_included_announcement = if let Some(first_update_seen) = channel_delta.first_bidirectional_updates_seen {
+			#[cfg(test)]
+			log_trace!(logger, "Channel {} first bidirectional update seen: {}", scid, first_update_seen);
 			first_update_seen >= last_sync_timestamp
 		} else {
 			false
 		};
+		#[cfg(test)]
+		log_trace!(logger, "Channel {} announcement seen at {} (new: {}, newly included: {})", scid, current_announcement_seen, is_new_announcement, is_newly_included_announcement);
 		let send_announcement = is_new_announcement || is_newly_included_announcement;
 		if send_announcement {
 			serialization_set.latest_seen = max(serialization_set.latest_seen, current_announcement_seen);

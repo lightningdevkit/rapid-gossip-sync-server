@@ -198,7 +198,7 @@ async fn serialize_delta<L: Deref + Clone>(network_graph: Arc<NetworkGraph<L>>, 
 	log_info!(logger, "update-fetched channel count: {}", delta_set.len());
 	lookup::filter_delta_set(&mut delta_set, logger.clone());
 	log_info!(logger, "update-filtered channel count: {}", delta_set.len());
-	let serialization_details = serialization::serialize_delta_set(delta_set, last_sync_timestamp);
+	let serialization_details = serialization::serialize_delta_set(delta_set, last_sync_timestamp, logger.clone());
 
 	// process announcements
 	// write the number of channel announcements to the output

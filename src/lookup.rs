@@ -288,6 +288,7 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 		SELECT id, direction, blob_signed, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen
 		FROM channel_updates
 		WHERE seen >= TO_TIMESTAMP($1)
+		ORDER BY timestamp DESC
 		", [last_sync_timestamp_float]).await.unwrap();
 	let mut pinned_updates = Box::pin(intermediate_updates);
 	log_info!(logger, "Fetched intermediate rows in {:?}", start.elapsed());

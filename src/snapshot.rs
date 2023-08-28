@@ -115,11 +115,27 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 					// special-case 0 to always refer to a full/initial sync
 					u64::MAX
 				} else {
+					/*
+					We have snapshots for 6-day- and 7-day-intervals, but the next interval is
+					14 days. So if somebody requests an update with a timestamp that is 10 days old,
+					there is no longer a snapshot for that specific interval.
+
+					The correct snapshot will be the next highest interval, i. e. for 14 days.
+
+					The `snapshot_sync_day_factors` array is sorted ascendingly, so find() will
+					return on the first iteration that is at least equal to the requested interval.
+
+					Note, however, that the last value in the array is u64::max, which means that
+					multiplying it with DAY_SECONDS will overflow. To avoid that, we use
+					saturating_mul.
+					 */
+
 					// find min(x) in snapshot_sync_day_factors where x >= i
 					snapshot_sync_day_factors.iter().find(|x| {
-						*x * DAY_SECONDS >= i * config::SNAPSHOT_CALCULATION_INTERVAL as u64
+						DAY_SECONDS.saturating_mul(**x) >= i * config::SNAPSHOT_CALCULATION_INTERVAL as u64
 					}).unwrap().clone()
 				};
+				log_info!(self.logger, "i: {}, referenced day range: {}", i, referenced_day_range);
 
 				let snapshot_filename = snapshot_filenames_by_day_range.get(&referenced_day_range).unwrap();
 				let relative_snapshot_path = format!("{}/{}", relative_symlink_to_snapshot_path, snapshot_filename);

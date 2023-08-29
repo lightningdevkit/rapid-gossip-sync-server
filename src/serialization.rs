@@ -1,10 +1,12 @@
 use std::cmp::max;
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use bitcoin::BlockHash;
 use bitcoin::hashes::Hash;
 use lightning::ln::msgs::{UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::util::ser::{BigSize, Writeable};
+use crate::config;
 
 use crate::lookup::{DeltaSet, DirectedUpdateDelta};
 
@@ -129,6 +131,9 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 		*full_update_histograms.htlc_maximum_msat.entry(full_update.htlc_maximum_msat).or_insert(0) += 1;
 	};
 
+	// if the previous seen update happened more than 6 days ago, the client may have pruned it, and an incremental update wouldn't work
+	let non_incremental_previous_update_threshold_timestamp = SystemTime::now().checked_sub(config::CHANNEL_REMINDER_AGE).unwrap().duration_since(UNIX_EPOCH).unwrap().as_secs() as u32;
+
 	for (scid, channel_delta) in delta_set.into_iter() {
 
 		// any announcement chain hash is gonna be the same value. Just set it from the first one.
@@ -164,9 +169,9 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 					// announcements and latest updates
 					serialization_set.latest_seen = max(serialization_set.latest_seen, latest_update_delta.seen);
 
-					if updates.last_update_before_seen.is_some() {
+					if let Some(update_delta) = updates.last_update_before_seen {
 						let mutated_properties = updates.mutated_properties;
-						if mutated_properties.len() == 5 || send_announcement {
+						if send_announcement || mutated_properties.len() == 5 || update_delta.seen <= non_incremental_previous_update_threshold_timestamp {
 							// all five values have changed, it makes more sense to just
 							// serialize the update as a full update instead of as a change
 							// this way, the default values can be computed more efficiently

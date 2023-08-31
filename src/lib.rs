@@ -21,6 +21,7 @@ use lightning::util::logger::Logger;
 use lightning::util::ser::{ReadableArgs, Writeable};
 use tokio::sync::mpsc;
 use tokio_postgres::{Client, NoTls};
+use crate::config::SYMLINK_GRANULARITY_INTERVAL;
 use crate::lookup::DeltaSet;
 
 use crate::persistence::GossipPersister;
@@ -85,6 +86,9 @@ impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Ta
 	}
 
 	pub async fn start_sync(&self) {
+		log_info!(self.logger, "Starting Rapid Gossip Sync Server");
+		log_info!(self.logger, "Snapshot interval: {} seconds", config::snapshot_generation_interval());
+
 		// means to indicate sync completion status within this module
 		let (sync_completion_sender, mut sync_completion_receiver) = mpsc::channel::<()>(1);
 
@@ -142,12 +146,11 @@ fn serialize_empty_blob(current_timestamp: u64) -> Vec<u8> {
 	let mut blob = GOSSIP_PREFIX.to_vec();
 
 	let network = config::network();
-	let calc_interval = config::calculate_interval();
 	let genesis_block = bitcoin::blockdata::constants::genesis_block(network);
 	let chain_hash = genesis_block.block_hash();
 	chain_hash.write(&mut blob).unwrap();
 
-	let blob_timestamp = Snapshotter::<Arc<RGSSLogger>>::round_down_to_nearest_multiple(current_timestamp, calc_interval as u64) as u32;
+	let blob_timestamp = Snapshotter::<Arc<RGSSLogger>>::round_down_to_nearest_multiple(current_timestamp, SYMLINK_GRANULARITY_INTERVAL as u64) as u32;
 	blob_timestamp.write(&mut blob).unwrap();
 
 	0u32.write(&mut blob).unwrap(); // node count
@@ -163,7 +166,7 @@ async fn serialize_delta<L: Deref + Clone>(network_graph: Arc<NetworkGraph<L>>, 
 	network_graph.remove_stale_channels_and_tracking();
 
 	let mut output: Vec<u8> = vec![];
-	let calc_interval = config::calculate_interval();
+	let snapshot_interval = config::snapshot_generation_interval();
 
 	// set a flag if the chain hash is prepended
 	// chain hash only necessary if either channel announcements or non-incremental updates are present
@@ -249,7 +252,7 @@ async fn serialize_delta<L: Deref + Clone>(network_graph: Arc<NetworkGraph<L>>, 
 	serialization_details.chain_hash.write(&mut prefixed_output).unwrap();
 	// always write the latest seen timestamp
 	let latest_seen_timestamp = serialization_details.latest_seen;
-	let overflow_seconds = latest_seen_timestamp % calc_interval;
+	let overflow_seconds = latest_seen_timestamp % snapshot_interval;
 	let serialized_seen_timestamp = latest_seen_timestamp.saturating_sub(overflow_seconds);
 	serialized_seen_timestamp.write(&mut prefixed_output).unwrap();
 

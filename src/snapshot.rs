@@ -26,7 +26,6 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 		log_info!(self.logger, "Initiating snapshotting service");
 
 		let snapshot_sync_day_factors = [1, 2, 3, 4, 5, 6, 7, 14, 21, u64::MAX];
-		const DAY_SECONDS: u64 = 60 * 60 * 24;
 
 		let pending_snapshot_directory = format!("{}/snapshots_pending", cache_path());
 		let pending_symlink_directory = format!("{}/symlinks_pending", cache_path());
@@ -70,7 +69,7 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 			let mut snapshot_sync_timestamps: Vec<(u64, u64)> = Vec::new();
 			for factor in &snapshot_sync_day_factors {
 				// basically timestamp - day_seconds * factor
-				let timestamp = reference_timestamp.saturating_sub(DAY_SECONDS.saturating_mul(factor.clone()));
+				let timestamp = reference_timestamp.saturating_sub((config::SNAPSHOT_CALCULATION_INTERVAL as u64).saturating_mul(factor.clone()));
 				snapshot_sync_timestamps.push((factor.clone(), timestamp));
 			};
 
@@ -126,13 +125,13 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 					return on the first iteration that is at least equal to the requested interval.
 
 					Note, however, that the last value in the array is u64::max, which means that
-					multiplying it with DAY_SECONDS will overflow. To avoid that, we use
-					saturating_mul.
+					multiplying it with config::SNAPSHOT_CALCULATION_INTERVAL will overflow. To avoid
+					that, we use saturating_mul.
 					 */
 
 					// find min(x) in snapshot_sync_day_factors where x >= i
 					snapshot_sync_day_factors.iter().find(|x| {
-						DAY_SECONDS.saturating_mul(**x) >= i * config::SNAPSHOT_CALCULATION_INTERVAL as u64
+						(config::SNAPSHOT_CALCULATION_INTERVAL as u64).saturating_mul(**x) >= i * config::SNAPSHOT_CALCULATION_INTERVAL as u64
 					}).unwrap().clone()
 				};
 				log_info!(self.logger, "i: {}, referenced day range: {}", i, referenced_day_range);

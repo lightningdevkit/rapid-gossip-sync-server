@@ -181,15 +181,16 @@ async fn connect_peer<L: Deref + Clone + Send + Sync + 'static>(current_peer: (P
 					sender.send(true).await.unwrap();
 				}
 				disconnection_future.await;
-				log_warn!(logger, "Disconnected from peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
-				tokio::time::sleep(Duration::from_secs(10)).await;
-				log_warn!(logger, "Reconnecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
+				log_warn!(logger, "Disconnected from peer {}@{}", current_peer.0.to_hex(), current_peer.1.to_string());
 			} else {
+				log_warn!(logger, "Failed to connect to peer {}@{}!", current_peer.0.to_hex(), current_peer.1.to_string());
 				if is_first_iteration {
 					sender.send(false).await.unwrap();
 				}
 			}
 			is_first_iteration = false;
+			tokio::time::sleep(Duration::from_secs(10)).await;
+			log_warn!(logger, "Reconnecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
 		}
 	});
 

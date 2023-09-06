@@ -11,7 +11,7 @@ use lightning;
 use lightning::ln::peer_handler::{
 	ErroringMessageHandler, IgnoringMessageHandler, MessageHandler, PeerManager,
 };
-use lightning::{log_error, log_info, log_warn};
+use lightning::{log_info, log_warn};
 use lightning::routing::gossip::NetworkGraph;
 use lightning::sign::KeysManager;
 use lightning::util::logger::Logger;
@@ -165,31 +165,34 @@ pub(crate) async fn download_gossip<L: Deref + Clone + Send + Sync + 'static>(pe
 }
 
 async fn connect_peer<L: Deref + Clone + Send + Sync + 'static>(current_peer: (PublicKey, SocketAddr), peer_manager: GossipPeerManager<L>, logger: L) -> bool where L::Target: Logger {
-	log_info!(logger, "Connecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
-	let connection = lightning_net_tokio::connect_outbound(
-		Arc::clone(&peer_manager),
-		current_peer.0,
-		current_peer.1,
-	).await;
-	if let Some(disconnection_future) = connection {
-		log_info!(logger, "Connected to peer {}@{}!", current_peer.0.to_hex(), current_peer.1.to_string());
-		tokio::spawn(async move {
-			disconnection_future.await;
-			loop {
-				log_warn!(logger, "Reconnecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
-				if let Some(disconnection_future) = lightning_net_tokio::connect_outbound(
-					Arc::clone(&peer_manager),
-					current_peer.0,
-					current_peer.1,
-				).await {
-					disconnection_future.await;
+	// we seek to find out if the first connection attempt was successful
+	let (sender, mut receiver) = mpsc::channel::<bool>(1);
+	tokio::spawn(async move {
+		log_info!(logger, "Connecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
+		let mut is_first_iteration = true;
+		loop {
+			if let Some(disconnection_future) = lightning_net_tokio::connect_outbound(
+				Arc::clone(&peer_manager),
+				current_peer.0,
+				current_peer.1,
+			).await {
+				log_info!(logger, "Connected to peer {}@{}!", current_peer.0.to_hex(), current_peer.1.to_string());
+				if is_first_iteration {
+					sender.send(true).await.unwrap();
 				}
+				disconnection_future.await;
+				log_warn!(logger, "Disconnected from peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
 				tokio::time::sleep(Duration::from_secs(10)).await;
+				log_warn!(logger, "Reconnecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
+			} else {
+				if is_first_iteration {
+					sender.send(false).await.unwrap();
+				}
 			}
-		});
-		true
-	} else {
-		log_error!(logger, "Failed to connect to peer {}@{}", current_peer.0.to_hex(), current_peer.1.to_string());
-		false
-	}
+			is_first_iteration = false;
+		}
+	});
+
+	let success = receiver.recv().await.unwrap();
+	success
 }

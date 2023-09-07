@@ -2,12 +2,14 @@
 #![allow(unused_imports)]
 //! Multi-module tests that use database fixtures
 
+use std::cell::{RefCell, RefMut};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use bitcoin::{BlockHash, Network};
 use bitcoin::secp256k1::ecdsa::Signature;
 use bitcoin::secp256k1::{Secp256k1, SecretKey};
 use bitcoin::hashes::Hash;
+use bitcoin::hashes::hex::ToHex;
 use bitcoin::hashes::sha256d::Hash as Sha256dHash;
 use lightning::ln::features::ChannelFeatures;
 use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, UnsignedChannelAnnouncement, UnsignedChannelUpdate};
@@ -21,6 +23,10 @@ use crate::types::{GossipMessage, tests::TestLogger};
 
 const CLIENT_BACKDATE_INTERVAL: u32 = 3600 * 24 * 7; // client backdates RGS by a week
 
+thread_local! {
+	static DB_TEST_SCHEMA:RefCell<Option<String>> = RefCell::new(None);
+}
+
 fn blank_signature() -> Signature {
 	Signature::from_compact(&[0u8; 64]).unwrap()
 }
@@ -31,6 +37,29 @@ fn genesis_hash() -> BlockHash {
 
 fn current_time() -> u32 {
 	SystemTime::now().duration_since(UNIX_EPOCH).expect("Time must be > 1970").as_secs() as u32
+}
+
+pub(crate) fn db_test_schema() -> String {
+	DB_TEST_SCHEMA.with(|suffix_reference| {
+		let mut suffix_option = suffix_reference.borrow_mut();
+		match suffix_option.as_ref() {
+			None => {
+				let current_time = SystemTime::now();
+				let unix_time = current_time.duration_since(UNIX_EPOCH).expect("Time went backwards");
+				let timestamp_seconds = unix_time.as_secs();
+				let timestamp_nanos = unix_time.as_nanos();
+				let preimage = format!("{}", timestamp_nanos);
+				let suffix = Sha256dHash::hash(preimage.as_bytes()).into_inner().to_hex();
+				// the schema must start with a letter
+				let schema = format!("test_{}_{}", timestamp_seconds, suffix);
+				suffix_option.replace(schema.clone());
+				schema
+			}
+			Some(suffix) => {
+				suffix.clone()
+			}
+		}
+	})
 }
 
 fn generate_announcement(short_channel_id: u64) -> ChannelAnnouncement {
@@ -88,25 +117,13 @@ fn generate_update(scid: u64, direction: bool, timestamp: u32, expiry_delta: u16
 }
 
 async fn clean_test_db() {
-	let connection_config = config::db_connection_config();
-	let (client, connection) = connection_config.connect(NoTls).await.unwrap();
-
-	tokio::spawn(async move {
-		if let Err(e) = connection.await {
-			panic!("connection error: {}", e);
-		}
-	});
-
-	client.query("TRUNCATE TABLE channel_announcements RESTART IDENTITY CASCADE", &[]).await.unwrap();
-	client.query("TRUNCATE TABLE channel_updates RESTART IDENTITY CASCADE", &[]).await.unwrap();
-	client.query("TRUNCATE TABLE config RESTART IDENTITY CASCADE", &[]).await.unwrap();
+	let client = crate::connect_to_db().await;
+	let schema = db_test_schema();
+	client.execute(&format!("DROP SCHEMA IF EXISTS {} CASCADE", schema), &[]).await.unwrap();
 }
 
 #[tokio::test]
 async fn test_trivial_setup() {
-	// start off with a clean slate
-	clean_test_db().await;
-
 	let logger = Arc::new(TestLogger::new());
 	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
 	let network_graph_arc = Arc::new(network_graph);
@@ -149,12 +166,12 @@ async fn test_trivial_setup() {
 	let update_result = rgs.update_network_graph(&serialization.data).unwrap();
 	println!("update result: {}", update_result);
 	// the update result must be a multiple of our snapshot granularity
-	assert_eq!(update_result % config::SNAPSHOT_CALCULATION_INTERVAL, 0);
+	assert_eq!(update_result % config::snapshot_generation_interval(), 0);
 	assert!(update_result < timestamp);
 
 	let timestamp_delta = timestamp - update_result;
 	println!("timestamp delta: {}", timestamp_delta);
-	assert!(timestamp_delta < config::SNAPSHOT_CALCULATION_INTERVAL);
+	assert!(timestamp_delta < config::snapshot_generation_interval());
 
 	let readonly_graph = client_graph_arc.read_only();
 	let channels = readonly_graph.channels();
@@ -200,7 +217,7 @@ async fn test_unidirectional_intermediate_update_consideration() {
 		network_graph_arc.update_channel_unsigned(&update_3.contents).unwrap();
 		network_graph_arc.update_channel_unsigned(&update_4.contents).unwrap();
 
-		receiver.send(GossipMessage::ChannelAnnouncement(announcement)).await.unwrap();
+		receiver.send(GossipMessage::ChannelAnnouncement(announcement, Some(current_timestamp))).await.unwrap();
 		receiver.send(GossipMessage::ChannelUpdate(update_1)).await.unwrap();
 		receiver.send(GossipMessage::ChannelUpdate(update_2)).await.unwrap();
 		receiver.send(GossipMessage::ChannelUpdate(update_3)).await.unwrap();
@@ -247,7 +264,7 @@ async fn test_unidirectional_intermediate_update_consideration() {
 	println!("last sync timestamp: {}", last_sync_timestamp);
 	println!("next timestamp: {}", next_timestamp);
 	// the update result must be a multiple of our snapshot granularity
-	assert_eq!(next_timestamp % config::SNAPSHOT_CALCULATION_INTERVAL, 0);
+	assert_eq!(next_timestamp % config::snapshot_generation_interval(), 0);
 
 	let readonly_graph = client_graph_arc.read_only();
 	let channels = readonly_graph.channels();

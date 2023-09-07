@@ -54,7 +54,7 @@ const GOSSIP_PREFIX: [u8; 4] = [76, 68, 75, 1];
 
 pub struct RapidSyncProcessor<L: Deref> where L::Target: Logger {
 	network_graph: Arc<NetworkGraph<L>>,
-	logger: L
+	logger: L,
 }
 
 pub struct SerializedResponse {
@@ -86,7 +86,7 @@ impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Ta
 		let arc_network_graph = Arc::new(network_graph);
 		Self {
 			network_graph: arc_network_graph,
-			logger
+			logger,
 		}
 	}
 
@@ -144,6 +144,13 @@ pub(crate) async fn connect_to_db() -> Client {
 			panic!("connection error: {}", e);
 		}
 	});
+
+	if cfg!(test) {
+		let schema_name = tests::db_test_schema();
+		let schema_creation_command = format!("CREATE SCHEMA IF NOT EXISTS {}", schema_name);
+		client.execute(&schema_creation_command, &[]).await.unwrap();
+		client.execute(&format!("SET search_path TO {}", schema_name), &[]).await.unwrap();
+	}
 
 	client.execute("set time zone UTC", &[]).await.unwrap();
 	client

@@ -40,6 +40,8 @@ pub(super) struct DirectedUpdateDelta {
 pub(super) struct ChannelDelta {
 	pub(super) announcement: Option<AnnouncementDelta>,
 	pub(super) updates: (Option<DirectedUpdateDelta>, Option<DirectedUpdateDelta>),
+	/// This value is only set if the first update to achieve bidirectionality was seen after
+	/// the last sync.
 	pub(super) first_bidirectional_updates_seen: Option<u32>,
 	/// The seen timestamp of the older of the two latest directional updates
 	pub(super) requires_reminder: bool,
@@ -112,6 +114,22 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 	}
 	log_info!(logger, "Fetched {} announcement rows", announcement_count);
 
+	if cfg!(test) {
+		// THIS STEP IS USED TO DEBUG THE NUMBER OF ROWS WHEN TESTING
+		let update_rows = client.query("SELECT * FROM channel_updates", &[]).await.unwrap();
+		log_info!(logger, "Fetched {} update rows", update_rows.len());
+
+		let update_rows = client.query("SELECT * FROM channel_updates WHERE short_channel_id = any($1)", &[&channel_ids]).await.unwrap();
+		log_info!(logger, "Fetched {} update rows with filtered channels", update_rows.len());
+
+		// let timestamp_string = format!("{}", last_sync_timestamp);
+		let update_rows = client.query("SELECT * FROM channel_updates WHERE seen >= TO_TIMESTAMP($1)", &[&last_sync_timestamp_float]).await.unwrap();
+		log_info!(logger, "Fetched {} update rows with filtered seen", update_rows.len());
+
+		let update_rows = client.query("SELECT * FROM channel_updates WHERE short_channel_id = any($1) AND seen >= TO_TIMESTAMP($2)", &[&channel_ids, &last_sync_timestamp_float]).await.unwrap();
+		log_info!(logger, "Fetched {} update rows with filtered channels and seen", update_rows.len());
+	}
+
 	{
 		// THIS STEP IS USED TO DETERMINE IF A CHANNEL SHOULD BE OMITTED FROM THE DELTA
 
@@ -147,6 +165,8 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 			let scid: i64 = current_row.get("short_channel_id");
 			let current_seen_timestamp = current_row.get::<_, i64>("seen") as u32;
 
+			log_gossip!(logger, "Channel {} with first update to complete bidirectional data since last sync seen at: {}", scid, current_seen_timestamp);
+
 			// the newer of the two oldest seen directional updates came after last sync timestamp
 			let current_channel_delta = delta_set.entry(scid as u64).or_insert(ChannelDelta::default());
 			// first time a channel was seen in both directions
@@ -154,7 +174,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 
 			newer_oldest_directional_update_count += 1;
 		}
-		log_info!(logger, "Fetched {} update rows of the first update in a new direction", newer_oldest_directional_update_count);
+		log_info!(logger, "Fetched {} update rows of the first update in a new direction having occurred since the last sync", newer_oldest_directional_update_count);
 	}
 
 	{
@@ -188,6 +208,8 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 			let current_row = row_res.unwrap();
 			let scid: i64 = current_row.get("short_channel_id");
 
+			log_gossip!(logger, "Channel {} with newest update in less recently updated direction being at least 6 days ago", scid);
+
 			// annotate this channel as requiring that reminders be sent to the client
 			let current_channel_delta = delta_set.entry(scid as u64).or_insert(ChannelDelta::default());
 
@@ -217,7 +239,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 			}
 			older_latest_directional_update_count += 1;
 		}
-		log_info!(logger, "Fetched {} update rows of the latest update in the less recently updated direction", older_latest_directional_update_count);
+		log_info!(logger, "Fetched {} update rows of the latest update in the less recently updated direction being more than six days ago", older_latest_directional_update_count);
 	}
 }
 
@@ -334,12 +356,14 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 					seen: current_seen_timestamp,
 					update: unsigned_channel_update.clone(),
 				});
+				log_gossip!(logger, "Channel {} latest update in direction 0: {} (seen: {})", scid, unsigned_channel_update.timestamp, current_seen_timestamp)
 			} else if direction && !previously_seen_directions.1 {
 				previously_seen_directions.1 = true;
 				update_delta.latest_update_after_seen = Some(UpdateDelta {
 					seen: current_seen_timestamp,
 					update: unsigned_channel_update.clone(),
 				});
+				log_gossip!(logger, "Channel {} latest update in direction 1: {} (seen: {})", scid, unsigned_channel_update.timestamp, current_seen_timestamp)
 			}
 		}
 
@@ -365,7 +389,7 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 			}
 		}
 	}
-	log_info!(logger, "Processed intermediate rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
+	log_info!(logger, "Processed {} intermediate rows (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
 }
 
 pub(super) fn filter_delta_set<L: Deref>(delta_set: &mut DeltaSet, logger: L) where L::Target: Logger {

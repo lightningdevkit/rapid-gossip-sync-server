@@ -10,6 +10,8 @@
 extern crate core;
 
 use std::collections::{HashMap, HashSet};
+#[cfg(test)]
+use std::fmt::{Debug, Formatter};
 use std::fs::File;
 use std::io::BufReader;
 use std::ops::Deref;
@@ -41,6 +43,9 @@ mod verifier;
 
 pub mod types;
 
+#[cfg(test)]
+mod tests;
+
 /// The purpose of this prefix is to identify the serialization format, should other rapid gossip
 /// sync formats arise in the future.
 ///
@@ -49,7 +54,7 @@ const GOSSIP_PREFIX: [u8; 4] = [76, 68, 75, 1];
 
 pub struct RapidSyncProcessor<L: Deref> where L::Target: Logger {
 	network_graph: Arc<NetworkGraph<L>>,
-	logger: L
+	logger: L,
 }
 
 pub struct SerializedResponse {
@@ -81,7 +86,7 @@ impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Ta
 		let arc_network_graph = Arc::new(network_graph);
 		Self {
 			network_graph: arc_network_graph,
-			logger
+			logger,
 		}
 	}
 
@@ -115,6 +120,21 @@ impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Ta
 	}
 }
 
+#[cfg(test)]
+impl Debug for SerializedResponse {
+	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+		write!(
+			f,
+			"\nmessages: {}\n\tannouncements: {}\n\tupdates: {}\n\t\tfull: {}\n\t\tincremental: {}",
+			self.message_count,
+			self.announcement_count,
+			self.update_count,
+			self.update_count_full,
+			self.update_count_incremental
+		)
+	}
+}
+
 pub(crate) async fn connect_to_db() -> Client {
 	let connection_config = config::db_connection_config();
 	let (client, connection) = connection_config.connect(NoTls).await.unwrap();
@@ -124,6 +144,13 @@ pub(crate) async fn connect_to_db() -> Client {
 			panic!("connection error: {}", e);
 		}
 	});
+
+	if cfg!(test) {
+		let schema_name = tests::db_test_schema();
+		let schema_creation_command = format!("CREATE SCHEMA IF NOT EXISTS {}", schema_name);
+		client.execute(&schema_creation_command, &[]).await.unwrap();
+		client.execute(&format!("SET search_path TO {}", schema_name), &[]).await.unwrap();
+	}
 
 	client.execute("set time zone UTC", &[]).await.unwrap();
 	client
@@ -195,7 +222,7 @@ async fn serialize_delta<L: Deref + Clone>(network_graph: Arc<NetworkGraph<L>>, 
 	log_info!(logger, "update-fetched channel count: {}", delta_set.len());
 	lookup::filter_delta_set(&mut delta_set, logger.clone());
 	log_info!(logger, "update-filtered channel count: {}", delta_set.len());
-	let serialization_details = serialization::serialize_delta_set(delta_set, last_sync_timestamp);
+	let serialization_details = serialization::serialize_delta_set(delta_set, last_sync_timestamp, logger.clone());
 
 	// process announcements
 	// write the number of channel announcements to the output

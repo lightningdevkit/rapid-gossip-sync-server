@@ -5,12 +5,15 @@ edition = "2021"
 
 [dependencies]
 bitcoin = "0.29"
-lightning = { version = "0.0.116" }
-lightning-block-sync = { version = "0.0.116", features=["rest-client"] }
-lightning-net-tokio = { version = "0.0.116" }
+lightning = { git = "https://github.com/lightningdevkit/rust-lightning", rev = "e13ff10c63b01d3a9f1618320ce5f17dad2e5b48" }
+lightning-block-sync = { git = "https://github.com/lightningdevkit/rust-lightning", rev = "e13ff10c63b01d3a9f1618320ce5f17dad2e5b48", features = ["rest-client"] }
+lightning-net-tokio = { git = "https://github.com/lightningdevkit/rust-lightning", rev = "e13ff10c63b01d3a9f1618320ce5f17dad2e5b48" }
 tokio = { version = "1.25", features = ["full"] }
-tokio-postgres = { version="=0.7.5" }
+tokio-postgres = { version = "=0.7.5" }
 futures = "0.3"
+
+[dev-dependencies]
+lightning-rapid-gossip-sync = { git = "https://github.com/lightningdevkit/rust-lightning", rev = "e13ff10c63b01d3a9f1618320ce5f17dad2e5b48" }
 
 [profile.dev]
 panic = "abort"

@@ -99,7 +99,11 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 		while let Some(gossip_message) = &self.gossip_persistence_receiver.recv().await {
 			i += 1; // count the persisted gossip messages
 
-			if latest_persistence_log.elapsed().as_secs() >= 60 {
+			let _should_log_message = latest_persistence_log.elapsed().as_secs() >= 60;
+			#[cfg(test)]
+			let _should_log_message = true; // we log every persistence message in test
+
+			if _should_log_message {
 				log_info!(self.logger, "Persisting gossip message #{}", i);
 				latest_persistence_log = Instant::now();
 			}
@@ -111,21 +115,34 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 			}
 
 			match &gossip_message {
-				GossipMessage::ChannelAnnouncement(announcement) => {
+				GossipMessage::ChannelAnnouncement(announcement, timestamp) => {
 					let scid = announcement.contents.short_channel_id as i64;
 
 					// start with the type prefix, which is already known a priori
 					let mut announcement_signed = Vec::new();
 					announcement.write(&mut announcement_signed).unwrap();
 
-					tokio::time::timeout(POSTGRES_INSERT_TIMEOUT, client
-						.execute("INSERT INTO channel_announcements (\
+					if let Some(timestamp) = timestamp {
+						tokio::time::timeout(POSTGRES_INSERT_TIMEOUT, client
+							.execute("INSERT INTO channel_announcements (\
+							short_channel_id, \
+							announcement_signed, \
+							seen \
+						) VALUES ($1, $2, TO_TIMESTAMP($3)) ON CONFLICT (short_channel_id) DO NOTHING", &[
+								&scid,
+								&announcement_signed,
+								&(*timestamp as f64)
+							])).await.unwrap().unwrap();
+					} else {
+						tokio::time::timeout(POSTGRES_INSERT_TIMEOUT, client
+							.execute("INSERT INTO channel_announcements (\
 							short_channel_id, \
 							announcement_signed \
 						) VALUES ($1, $2) ON CONFLICT (short_channel_id) DO NOTHING", &[
-							&scid,
-							&announcement_signed
-						])).await.unwrap().unwrap();
+								&scid,
+								&announcement_signed
+							])).await.unwrap().unwrap();
+					}
 				}
 				GossipMessage::ChannelUpdate(update) => {
 					let scid = update.contents.short_channel_id as i64;
@@ -146,8 +163,23 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 					let mut update_signed = Vec::new();
 					update.write(&mut update_signed).unwrap();
 
-					tokio::time::timeout(POSTGRES_INSERT_TIMEOUT, client
-						.execute("INSERT INTO channel_updates (\
+					let insertion_statement = if cfg!(test) {
+						"INSERT INTO channel_updates (\
+							short_channel_id, \
+							timestamp, \
+							seen, \
+							channel_flags, \
+							direction, \
+							disable, \
+							cltv_expiry_delta, \
+							htlc_minimum_msat, \
+							fee_base_msat, \
+							fee_proportional_millionths, \
+							htlc_maximum_msat, \
+							blob_signed \
+						) VALUES ($1, $2, TO_TIMESTAMP($3), $4, $5, $6, $7, $8, $9, $10, $11, $12)  ON CONFLICT DO NOTHING"
+					} else {
+						"INSERT INTO channel_updates (\
 							short_channel_id, \
 							timestamp, \
 							channel_flags, \
@@ -159,9 +191,19 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 							fee_proportional_millionths, \
 							htlc_maximum_msat, \
 							blob_signed \
-						) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)  ON CONFLICT DO NOTHING", &[
+						) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)  ON CONFLICT DO NOTHING"
+					};
+
+					// this may not be used outside test cfg
+					#[cfg(test)]
+					let system_time = timestamp as f64;
+
+					tokio::time::timeout(POSTGRES_INSERT_TIMEOUT, client
+						.execute(insertion_statement, &[
 							&scid,
 							&timestamp,
+							#[cfg(test)]
+								&system_time,
 							&(update.contents.flags as i16),
 							&direction,
 							&disable,

@@ -51,7 +51,8 @@ pub mod tests {
 
 	impl TestLogger {
 		pub fn new() -> TestLogger {
-			Self::with_id("".to_owned())
+			let id = crate::tests::db_test_schema();
+			Self::with_id(id)
 		}
 		pub fn with_id(id: String) -> TestLogger {
 			TestLogger {

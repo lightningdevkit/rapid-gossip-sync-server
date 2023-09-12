@@ -22,6 +22,7 @@ const CLIENT_BACKDATE_INTERVAL: u32 = 3600 * 24 * 7; // client backdates RGS by 
 
 thread_local! {
 	static DB_TEST_SCHEMA: RefCell<Option<String>> = RefCell::new(None);
+	static IS_TEST_SCHEMA_CLEAN: RefCell<Option<bool>> = RefCell::new(None);
 }
 
 fn blank_signature() -> Signature {
@@ -38,24 +39,8 @@ fn current_time() -> u32 {
 
 pub(crate) fn db_test_schema() -> String {
 	DB_TEST_SCHEMA.with(|suffix_reference| {
-		let mut suffix_option = suffix_reference.borrow_mut();
-		match suffix_option.as_ref() {
-			None => {
-				let current_time = SystemTime::now();
-				let unix_time = current_time.duration_since(UNIX_EPOCH).expect("Time went backwards");
-				let timestamp_seconds = unix_time.as_secs();
-				let timestamp_nanos = unix_time.as_nanos();
-				let preimage = format!("{}", timestamp_nanos);
-				let suffix = Sha256dHash::hash(preimage.as_bytes()).into_inner().to_hex();
-				// the schema must start with a letter
-				let schema = format!("test_{}_{}", timestamp_seconds, suffix);
-				suffix_option.replace(schema.clone());
-				schema
-			}
-			Some(suffix) => {
-				suffix.clone()
-			}
-		}
+		let mut suffix_option = suffix_reference.borrow();
+		suffix_option.as_ref().unwrap().clone()
 	})
 }
 
@@ -113,14 +98,57 @@ fn generate_update(scid: u64, direction: bool, timestamp: u32, expiry_delta: u16
 	}
 }
 
+struct SchemaSanitizer {}
+
+impl SchemaSanitizer {
+	fn new() -> Self {
+		IS_TEST_SCHEMA_CLEAN.with(|cleanliness_reference| {
+			let mut is_clean_option = cleanliness_reference.borrow_mut();
+			*is_clean_option = Some(false);
+		});
+
+		DB_TEST_SCHEMA.with(|suffix_reference| {
+			let mut suffix_option = suffix_reference.borrow_mut();
+			let current_time = SystemTime::now();
+			let unix_time = current_time.duration_since(UNIX_EPOCH).expect("Time went backwards");
+			let timestamp_seconds = unix_time.as_secs();
+			let timestamp_nanos = unix_time.as_nanos();
+			let preimage = format!("{}", timestamp_nanos);
+			let suffix = Sha256dHash::hash(preimage.as_bytes()).into_inner().to_hex();
+			// the schema must start with a letter
+			let schema = format!("test_{}_{}", timestamp_seconds, suffix);
+			*suffix_option = Some(schema);
+		});
+
+		return Self {};
+	}
+}
+
+impl Drop for SchemaSanitizer {
+	fn drop(&mut self) {
+		IS_TEST_SCHEMA_CLEAN.with(|cleanliness_reference| {
+			let is_clean_option = cleanliness_reference.borrow();
+			if let Some(is_clean) = *is_clean_option {
+				assert_eq!(is_clean, true);
+			}
+		});
+	}
+}
+
+
 async fn clean_test_db() {
 	let client = crate::connect_to_db().await;
 	let schema = db_test_schema();
 	client.execute(&format!("DROP SCHEMA IF EXISTS {} CASCADE", schema), &[]).await.unwrap();
+	IS_TEST_SCHEMA_CLEAN.with(|cleanliness_reference| {
+		let mut is_clean_option = cleanliness_reference.borrow_mut();
+		*is_clean_option = Some(true);
+	});
 }
 
 #[tokio::test]
 async fn test_trivial_setup() {
+	let _sanitizer = SchemaSanitizer::new();
 	let logger = Arc::new(TestLogger::new());
 	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
 	let network_graph_arc = Arc::new(network_graph);

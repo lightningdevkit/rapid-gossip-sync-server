@@ -168,9 +168,9 @@ async fn test_trivial_setup() {
 		network_graph_arc.update_channel_unsigned(&update_1.contents).unwrap();
 		network_graph_arc.update_channel_unsigned(&update_2.contents).unwrap();
 
-		receiver.send(GossipMessage::ChannelAnnouncement(announcement)).await.unwrap();
-		receiver.send(GossipMessage::ChannelUpdate(update_1)).await.unwrap();
-		receiver.send(GossipMessage::ChannelUpdate(update_2)).await.unwrap();
+		receiver.send(GossipMessage::ChannelAnnouncement(announcement, None)).await.unwrap();
+		receiver.send(GossipMessage::ChannelUpdate(update_1, None)).await.unwrap();
+		receiver.send(GossipMessage::ChannelUpdate(update_2, None)).await.unwrap();
 		drop(receiver);
 		persister.persist_gossip().await;
 	}

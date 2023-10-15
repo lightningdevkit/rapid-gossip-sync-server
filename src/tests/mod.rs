@@ -104,6 +104,7 @@ impl SchemaSanitizer {
 	fn new() -> Self {
 		IS_TEST_SCHEMA_CLEAN.with(|cleanliness_reference| {
 			let mut is_clean_option = cleanliness_reference.borrow_mut();
+			assert!(is_clean_option.is_none());
 			*is_clean_option = Some(false);
 		});
 

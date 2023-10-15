@@ -7,6 +7,10 @@ on:
     branches:
       - "*"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     strategy:
@@ -29,3 +33,35 @@ jobs:
       - name: Build on Rust ${{ matrix.toolchain }}
         run: |
           cargo build --verbose --color always
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v3
+      - name: Install Rust ${{ matrix.toolchain }} toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          profile: minimal
+      - name: Run tests
+        run: |
+          cargo test --verbose --color always -- --show-output
+        env:
+          RAPID_GOSSIP_TEST_DB_HOST: localhost
+          RAPID_GOSSIP_TEST_DB_NAME: postgres
+          RAPID_GOSSIP_TEST_DB_USER: postgres
+          RAPID_GOSSIP_TEST_DB_PASSWORD: postgres
+          RAPID_GOSSIP_SYNC_SERVER_LOG_LEVEL: gossip

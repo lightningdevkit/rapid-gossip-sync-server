@@ -13,6 +13,7 @@ tokio-postgres = { version = "=0.7.5" }
 futures = "0.3"
 
 [dev-dependencies]
+lightning = { version = "0.0.117", features = ["_test_utils"] }
 lightning-rapid-gossip-sync = { version = "0.0.117" }
 
 [profile.dev]

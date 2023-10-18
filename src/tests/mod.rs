@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 use std::sync::Arc;
-use std::thread;
+use std::{fs, thread};
 use std::time::{SystemTime, UNIX_EPOCH};
 use bitcoin::{BlockHash, Network};
 use bitcoin::secp256k1::ecdsa::Signature;
@@ -17,6 +17,7 @@ use lightning::util::ser::Writeable;
 use lightning_rapid_gossip_sync::RapidGossipSync;
 use crate::{config, serialize_delta};
 use crate::persistence::GossipPersister;
+use crate::snapshot::Snapshotter;
 use crate::types::{GossipMessage, tests::TestLogger};
 
 const CLIENT_BACKDATE_INTERVAL: u32 = 3600 * 24 * 7; // client backdates RGS by a week
@@ -137,6 +138,26 @@ impl Drop for SchemaSanitizer {
 				assert_eq!(is_clean, true);
 			}
 		});
+	}
+}
+
+struct CacheSanitizer {}
+
+impl CacheSanitizer {
+	/// The CacheSanitizer instantiation requires that there be a schema sanitizer
+	fn new(_: &SchemaSanitizer) -> Self {
+		Self {}
+	}
+
+	fn cache_path(&self) -> String {
+		format!("./res/{}/", db_test_schema())
+	}
+}
+
+impl Drop for CacheSanitizer {
+	fn drop(&mut self) {
+		let cache_path = self.cache_path();
+		fs::remove_dir_all(cache_path).unwrap();
 	}
 }
 
@@ -577,5 +598,111 @@ async fn test_full_snapshot_mutiny_scenario() {
 		assert_eq!(first_channel.two_to_one.as_ref().unwrap().fees.proportional_millionths, 10);
 	}
 
+	clean_test_db().await;
+}
+
+#[tokio::test]
+async fn test_full_snapshot_persistence() {
+	let schema_sanitizer = SchemaSanitizer::new();
+	let logger = Arc::new(TestLogger::new());
+	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
+	let network_graph_arc = Arc::new(network_graph);
+	let snapshotter = Snapshotter::new(network_graph_arc.clone(), logger.clone());
+	let cache_sanitizer = CacheSanitizer::new(&schema_sanitizer);
+
+	let short_channel_id = 1;
+	let timestamp = current_time();
+	println!("timestamp: {}", timestamp);
+
+	{ // seed the db
+		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+		let announcement = generate_announcement(short_channel_id);
+		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+		receiver.send(GossipMessage::ChannelAnnouncement(announcement, None)).await.unwrap();
+
+		{ // direction true
+			let update = generate_update(short_channel_id, true, timestamp, 0, 0, 0, 0, 10);
+			network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
+		}
+
+		{ // direction false
+			let update = generate_update(short_channel_id, false, timestamp - 1, 0, 0, 0, 0, 38);
+			network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
+		}
+
+
+		drop(receiver);
+		persister.persist_gossip().await;
+	}
+
+	let cache_path = cache_sanitizer.cache_path();
+	let symlink_path = format!("{}/symlinks/0.bin", cache_path);
+
+	// generate snapshots
+	{
+		snapshotter.generate_snapshots(20, 5, &[5, u64::MAX], &cache_path, Some(10)).await;
+
+		let symlinked_data = fs::read(&symlink_path).unwrap();
+		let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
+		let client_graph_arc = Arc::new(client_graph);
+
+		let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
+		let update_result = rgs.update_network_graph(&symlinked_data).unwrap();
+		// the update result must be a multiple of our snapshot granularity
+		assert_eq!(update_result % config::snapshot_generation_interval(), 0);
+
+		let readonly_graph = client_graph_arc.read_only();
+		let channels = readonly_graph.channels();
+		let client_channel_count = channels.len();
+		assert_eq!(client_channel_count, 1);
+
+		let first_channel = channels.get(&short_channel_id).unwrap();
+		assert!(&first_channel.announcement_message.is_none());
+		// ensure the update in one direction shows the latest fee
+		assert_eq!(first_channel.one_to_two.as_ref().unwrap().fees.proportional_millionths, 38);
+		assert_eq!(first_channel.two_to_one.as_ref().unwrap().fees.proportional_millionths, 10);
+	}
+
+	{ // update the db
+		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+
+		{ // second update
+			let update = generate_update(short_channel_id, false, timestamp + 30, 0, 0, 0, 0, 39);
+			network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
+		}
+
+		drop(receiver);
+		persister.persist_gossip().await;
+	}
+
+	// regenerate snapshots
+	{
+		snapshotter.generate_snapshots(20, 5, &[5, u64::MAX], &cache_path, Some(10)).await;
+
+		let symlinked_data = fs::read(&symlink_path).unwrap();
+		let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
+		let client_graph_arc = Arc::new(client_graph);
+
+		let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
+		let update_result = rgs.update_network_graph(&symlinked_data).unwrap();
+		// the update result must be a multiple of our snapshot granularity
+		assert_eq!(update_result % config::snapshot_generation_interval(), 0);
+
+		let readonly_graph = client_graph_arc.read_only();
+		let channels = readonly_graph.channels();
+		let client_channel_count = channels.len();
+		assert_eq!(client_channel_count, 1);
+
+		let first_channel = channels.get(&short_channel_id).unwrap();
+		assert!(&first_channel.announcement_message.is_none());
+		// ensure the update in one direction shows the latest fee
+		assert_eq!(first_channel.one_to_two.as_ref().unwrap().fees.proportional_millionths, 39);
+		assert_eq!(first_channel.two_to_one.as_ref().unwrap().fees.proportional_millionths, 10);
+	}
+
+	// clean up afterwards
 	clean_test_db().await;
 }

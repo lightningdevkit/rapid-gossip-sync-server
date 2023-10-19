@@ -14,8 +14,9 @@ pub(crate) type GossipPeerManager<L> = Arc<PeerManager<lightning_net_tokio::Sock
 
 #[derive(Debug)]
 pub(crate) enum GossipMessage {
-	ChannelAnnouncement(ChannelAnnouncement),
-	ChannelUpdate(ChannelUpdate),
+	// the second element is an optional override for the seen value
+	ChannelAnnouncement(ChannelAnnouncement, Option<u32>),
+	ChannelUpdate(ChannelUpdate, Option<u32>),
 }
 
 #[derive(Clone, Copy)]

@@ -15,7 +15,7 @@ use lightning::util::ser::Readable;
 use lightning_block_sync::http::HttpEndpoint;
 use tokio_postgres::Config;
 
-pub(crate) const SCHEMA_VERSION: i32 = 12;
+pub(crate) const SCHEMA_VERSION: i32 = 13;
 pub(crate) const SYMLINK_GRANULARITY_INTERVAL: u32 = 3600 * 3; // three hours
 pub(crate) const MAX_SNAPSHOT_SCOPE: u32 = 3600 * 24 * 21; // three weeks
 // generate symlinks based on a 3-hour-granularity
@@ -143,7 +143,7 @@ pub(crate) fn db_index_creation_query() -> &'static str {
 	CREATE INDEX IF NOT EXISTS channel_updates_scid_dir_seen_desc_with_id ON channel_updates(short_channel_id ASC, direction ASC, seen DESC) INCLUDE (id);
 	CREATE UNIQUE INDEX IF NOT EXISTS channel_updates_key ON channel_updates (short_channel_id, direction, timestamp);
 	CREATE INDEX IF NOT EXISTS channel_updates_seen ON channel_updates(seen);
-	CREATE INDEX IF NOT EXISTS channel_updates_timestamp_desc ON channel_updates(timestamp DESC);
+	CREATE INDEX IF NOT EXISTS channel_updates_scid_asc_timestamp_desc ON channel_updates(short_channel_id ASC, timestamp DESC);
 	"
 }
 
@@ -280,6 +280,12 @@ pub(crate) async fn upgrade_db(schema: i32, client: &mut tokio_postgres::Client)
 		let tx = client.transaction().await.unwrap();
 		tx.execute("DROP INDEX IF EXISTS channel_updates_seen_with_id_direction_blob", &[]).await.unwrap();
 		tx.execute("UPDATE config SET db_schema = 12 WHERE id = 1", &[]).await.unwrap();
+		tx.commit().await.unwrap();
+	}
+	if schema >= 1 && schema <= 12 {
+		let tx = client.transaction().await.unwrap();
+		tx.execute("DROP INDEX IF EXISTS channel_updates_timestamp_desc", &[]).await.unwrap();
+		tx.execute("UPDATE config SET db_schema = 13 WHERE id = 1", &[]).await.unwrap();
 		tx.commit().await.unwrap();
 	}
 	if schema <= 1 || schema > SCHEMA_VERSION {

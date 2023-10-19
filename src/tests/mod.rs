@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 use std::{fs, thread};
+use std::io::Cursor;
 use std::time::{SystemTime, UNIX_EPOCH};
 use bitcoin::{BlockHash, Network};
 use bitcoin::secp256k1::ecdsa::Signature;
@@ -13,7 +14,8 @@ use bitcoin::hashes::sha256d::Hash as Sha256dHash;
 use lightning::ln::features::ChannelFeatures;
 use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::routing::gossip::{NetworkGraph, NodeId};
-use lightning::util::ser::Writeable;
+use lightning::util::logger::Level;
+use lightning::util::ser::{ReadableArgs, Writeable};
 use lightning_rapid_gossip_sync::RapidGossipSync;
 use crate::{config, serialize_delta};
 use crate::persistence::GossipPersister;
@@ -704,6 +706,60 @@ async fn test_full_snapshot_interlaced_channel_timestamps() {
 	}
 
 	clean_test_db().await;
+}
+
+#[tokio::test]
+async fn test_full_snapshot_synonym_deserialization() {
+	let mut raw_logger = TestLogger::with_id("");
+	raw_logger.enable(Level::Trace);
+	let logger = Arc::new(raw_logger);
+
+	let scid = 804725963415420929;
+
+	{
+		let snapshot_fixture_path = "./res/fixtures/snapshot-next-1697749200-requested-0.bin";
+		let fixture_data = fs::read(&snapshot_fixture_path).unwrap();
+		let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
+		let client_graph_arc = Arc::new(client_graph);
+
+		let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
+		let update_result = rgs.update_network_graph(&fixture_data).unwrap();
+		println!("UPDATE RESULT: {}", update_result);
+
+		// the update result must be a multiple of our snapshot granularity
+		assert_eq!(update_result % config::snapshot_generation_interval(), 0);
+
+		let readonly_graph = client_graph_arc.read_only();
+		let channels = readonly_graph.channels();
+		let client_channel_count = channels.len();
+		assert_eq!(client_channel_count, 69455);
+
+		let first_channel = channels.get(&scid).unwrap();
+		assert!(&first_channel.announcement_message.is_none());
+		// ensure the update in one direction shows the latest fee
+
+		// false direction
+		assert_eq!(first_channel.one_to_two.as_ref().unwrap().fees.proportional_millionths, 1000);
+
+		// true direction
+		assert_eq!(first_channel.two_to_one.as_ref().unwrap().fees.proportional_millionths, 900);
+	}
+
+	{
+		let graph_path = "./res/fixtures/synonym_graph.bin";
+		let graph_data = fs::read(&graph_path).unwrap();
+		let mut cursor = Cursor::new(graph_data);
+		let network_graph = NetworkGraph::read(&mut cursor, logger.clone()).unwrap();
+		let readonly_graph = network_graph.read_only();
+		let channels = readonly_graph.channels();
+		let relevant_channel = channels.get(&scid).unwrap();
+
+		// false direction
+		assert_eq!(relevant_channel.one_to_two.as_ref().unwrap().fees.proportional_millionths, 1000);
+
+		// true direction
+		assert_eq!(relevant_channel.two_to_one.as_ref().unwrap().fees.proportional_millionths, 900);
+	}
 }
 
 #[tokio::test]

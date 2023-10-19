@@ -602,6 +602,111 @@ async fn test_full_snapshot_mutiny_scenario() {
 }
 
 #[tokio::test]
+async fn test_full_snapshot_interlaced_channel_timestamps() {
+	let _sanitizer = SchemaSanitizer::new();
+	let logger = Arc::new(TestLogger::new());
+	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
+	let network_graph_arc = Arc::new(network_graph);
+
+	let main_channel_id = 1;
+	let timestamp = current_time();
+	println!("timestamp: {}", timestamp);
+
+	{ // seed the db
+		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+		let secondary_channel_id = main_channel_id + 1;
+
+		{ // main channel
+			let announcement = generate_announcement(main_channel_id);
+			network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+			receiver.send(GossipMessage::ChannelAnnouncement(announcement, None)).await.unwrap();
+		}
+
+		{ // secondary channel
+			let announcement = generate_announcement(secondary_channel_id);
+			network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+			receiver.send(GossipMessage::ChannelAnnouncement(announcement, None)).await.unwrap();
+		}
+
+		{ // main channel
+			{ // direction false
+				let update = generate_update(main_channel_id, false, timestamp - 2, 0, 0, 0, 0, 10);
+				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
+			}
+			{ // direction true
+				let update = generate_update(main_channel_id, true, timestamp - 2, 0, 0, 0, 0, 5);
+				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
+			}
+		}
+
+		{ // in-between channel
+			{ // direction false
+				let update = generate_update(secondary_channel_id, false, timestamp - 1, 0, 0, 0, 0, 42);
+				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
+			}
+			{ // direction true
+				let update = generate_update(secondary_channel_id, true, timestamp - 1, 0, 0, 0, 0, 42);
+				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
+			}
+		}
+
+		{ // main channel
+			{ // direction false
+				let update = generate_update(main_channel_id, false, timestamp, 0, 0, 0, 0, 11);
+				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
+			}
+			{ // direction true
+				let update = generate_update(main_channel_id, true, timestamp, 0, 0, 0, 0, 6);
+				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
+			}
+		}
+
+		drop(receiver);
+		persister.persist_gossip().await;
+	}
+
+	let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
+	let client_graph_arc = Arc::new(client_graph);
+
+	{ // sync after initial seed
+		let serialization = serialize_delta(network_graph_arc.clone(), 0, logger.clone()).await;
+		logger.assert_log_contains("rapid_gossip_sync_server", "announcement channel count: 2", 1);
+
+		let channel_count = network_graph_arc.read_only().channels().len();
+
+		assert_eq!(channel_count, 2);
+		assert_eq!(serialization.message_count, 6);
+		assert_eq!(serialization.announcement_count, 2);
+		assert_eq!(serialization.update_count, 4);
+
+		let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
+		let update_result = rgs.update_network_graph(&serialization.data).unwrap();
+		// the update result must be a multiple of our snapshot granularity
+		assert_eq!(update_result % config::snapshot_generation_interval(), 0);
+		assert!(update_result < timestamp);
+
+		let readonly_graph = client_graph_arc.read_only();
+		let channels = readonly_graph.channels();
+		let client_channel_count = channels.len();
+		assert_eq!(client_channel_count, 2);
+
+		let first_channel = channels.get(&main_channel_id).unwrap();
+		assert!(&first_channel.announcement_message.is_none());
+		// ensure the update in one direction shows the latest fee
+		assert_eq!(first_channel.one_to_two.as_ref().unwrap().fees.proportional_millionths, 11);
+		assert_eq!(first_channel.two_to_one.as_ref().unwrap().fees.proportional_millionths, 6);
+	}
+
+	clean_test_db().await;
+}
+
+#[tokio::test]
 async fn test_full_snapshot_persistence() {
 	let schema_sanitizer = SchemaSanitizer::new();
 	let logger = Arc::new(TestLogger::new());

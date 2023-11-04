@@ -241,6 +241,124 @@ async fn test_trivial_setup() {
 	assert_eq!(last_update_seen_b, update_result - CLIENT_BACKDATE_INTERVAL);
 }
 
+/// If a channel has only seen updates in one direction, it should not be announced
+#[tokio::test]
+async fn test_unidirectional_intermediate_update_consideration() {
+	let _sanitizer = SchemaSanitizer::new();
+
+	let logger = Arc::new(TestLogger::new());
+	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
+	let network_graph_arc = Arc::new(network_graph);
+	let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+
+	let short_channel_id = 1;
+	let timestamp = current_time() - 10;
+	println!("timestamp: {}", timestamp);
+
+	{ // seed the db
+		let announcement = generate_announcement(short_channel_id);
+		let update_1 = generate_update(short_channel_id, false, timestamp, 0, 0, 0, 6, 0);
+		let update_2 = generate_update(short_channel_id, true, timestamp + 1, 0, 0, 0, 3, 0);
+		let update_3 = generate_update(short_channel_id, true, timestamp + 2, 0, 0, 0, 4, 0);
+
+		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+		network_graph_arc.update_channel_unsigned(&update_1.contents).unwrap();
+		network_graph_arc.update_channel_unsigned(&update_2.contents).unwrap();
+		network_graph_arc.update_channel_unsigned(&update_3.contents).unwrap();
+
+		receiver.send(GossipMessage::ChannelAnnouncement(announcement, Some(timestamp))).await.unwrap();
+		receiver.send(GossipMessage::ChannelUpdate(update_1, None)).await.unwrap();
+		receiver.send(GossipMessage::ChannelUpdate(update_2, None)).await.unwrap();
+		receiver.send(GossipMessage::ChannelUpdate(update_3, None)).await.unwrap();
+		drop(receiver);
+		persister.persist_gossip().await;
+	}
+
+	let channel_count = network_graph_arc.read_only().channels().len();
+	assert_eq!(channel_count, 1);
+
+	let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
+	let client_graph_arc = Arc::new(client_graph);
+	let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
+
+	let serialization = serialize_delta(network_graph_arc.clone(), timestamp + 1, logger.clone()).await;
+
+	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 1 update rows of the first update in a new direction", 1);
+	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Processed 1 reference rows", 1);
+	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Processed intermediate rows (2)", 1);
+
+	assert_eq!(serialization.message_count, 3);
+	assert_eq!(serialization.announcement_count, 1);
+	assert_eq!(serialization.update_count, 2);
+	assert_eq!(serialization.update_count_full, 2);
+	assert_eq!(serialization.update_count_incremental, 0);
+
+	let update_result = rgs.update_network_graph(&serialization.data).unwrap();
+	println!("update result: {}", update_result);
+	// the update result must be a multiple of our snapshot granularity
+
+	let readonly_graph = client_graph_arc.read_only();
+	let channels = readonly_graph.channels();
+	let client_channel_count = channels.len();
+	assert_eq!(client_channel_count, 1);
+
+	clean_test_db().await;
+}
+
+/// If a channel has only seen updates in one direction, it should not be announced
+#[tokio::test]
+async fn test_bidirectional_intermediate_update_consideration() {
+	let _sanitizer = SchemaSanitizer::new();
+
+	let logger = Arc::new(TestLogger::new());
+	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
+	let network_graph_arc = Arc::new(network_graph);
+	let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+
+	let short_channel_id = 1;
+	let timestamp = current_time() - 10;
+	println!("timestamp: {}", timestamp);
+
+	{ // seed the db
+		let announcement = generate_announcement(short_channel_id);
+		let update_1 = generate_update(short_channel_id, false, timestamp, 0, 0, 0, 5, 0);
+		let update_2 = generate_update(short_channel_id, false, timestamp + 1, 0, 0, 0, 4, 0);
+		let update_3 = generate_update(short_channel_id, false, timestamp + 2, 0, 0, 0, 3, 0);
+		let update_4 = generate_update(short_channel_id, true, timestamp, 0, 0, 0, 3, 0);
+
+		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+		network_graph_arc.update_channel_unsigned(&update_1.contents).unwrap();
+		network_graph_arc.update_channel_unsigned(&update_2.contents).unwrap();
+		network_graph_arc.update_channel_unsigned(&update_3.contents).unwrap();
+		network_graph_arc.update_channel_unsigned(&update_4.contents).unwrap();
+
+		receiver.send(GossipMessage::ChannelAnnouncement(announcement, Some(timestamp))).await.unwrap();
+		receiver.send(GossipMessage::ChannelUpdate(update_1, None)).await.unwrap();
+		receiver.send(GossipMessage::ChannelUpdate(update_2, None)).await.unwrap();
+		receiver.send(GossipMessage::ChannelUpdate(update_3, None)).await.unwrap();
+		receiver.send(GossipMessage::ChannelUpdate(update_4, None)).await.unwrap();
+		drop(receiver);
+		persister.persist_gossip().await;
+	}
+
+	let channel_count = network_graph_arc.read_only().channels().len();
+	assert_eq!(channel_count, 1);
+
+	let serialization = serialize_delta(network_graph_arc.clone(), timestamp + 1, logger.clone()).await;
+
+	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 0 update rows of the first update in a new direction", 1);
+	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Processed 2 reference rows", 1);
+	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Processed intermediate rows (2)", 1);
+
+	assert_eq!(serialization.message_count, 1);
+	assert_eq!(serialization.announcement_count, 0);
+	assert_eq!(serialization.update_count, 1);
+	assert_eq!(serialization.update_count_full, 0);
+	assert_eq!(serialization.update_count_incremental, 1);
+
+	clean_test_db().await;
+}
+
 #[tokio::test]
 async fn test_full_snapshot_recency() {
 	let _sanitizer = SchemaSanitizer::new();

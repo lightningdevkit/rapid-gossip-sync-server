@@ -187,6 +187,10 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 						record_full_update_in_histograms(&latest_update);
 						serialization_set.updates.push(UpdateSerialization::Full(latest_update));
 					}
+				} else if is_newly_included_announcement {
+					if let Some(unannounced_update) = updates.last_update_before_seen {
+						serialization_set.updates.push(UpdateSerialization::Full(unannounced_update.update));
+					}
 				} else if let Some(flags) = updates.serialization_update_flags {
 					serialization_set.updates.push(UpdateSerialization::Reminder(scid, flags));
 				}

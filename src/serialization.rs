@@ -2,8 +2,8 @@ use std::cmp::max;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bitcoin::BlockHash;
-use bitcoin::hashes::Hash;
+use bitcoin::Network;
+use bitcoin::blockdata::constants::ChainHash;
 use lightning::ln::msgs::{UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::util::ser::{BigSize, Writeable};
 use crate::config;
@@ -15,7 +15,7 @@ pub(super) struct SerializationSet {
 	pub(super) updates: Vec<UpdateSerialization>,
 	pub(super) full_update_defaults: DefaultUpdateValues,
 	pub(super) latest_seen: u32,
-	pub(super) chain_hash: BlockHash,
+	pub(super) chain_hash: ChainHash,
 }
 
 pub(super) struct DefaultUpdateValues {
@@ -109,7 +109,7 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 		announcements: vec![],
 		updates: vec![],
 		full_update_defaults: Default::default(),
-		chain_hash: BlockHash::all_zeros(),
+		chain_hash: ChainHash::using_genesis_block(Network::Bitcoin),
 		latest_seen: 0,
 	};
 
@@ -140,7 +140,7 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 		let channel_announcement_delta = channel_delta.announcement.as_ref().unwrap();
 		if !chain_hash_set {
 			chain_hash_set = true;
-			serialization_set.chain_hash = channel_announcement_delta.announcement.chain_hash.clone();
+			serialization_set.chain_hash = channel_announcement_delta.announcement.chain_hash;
 		}
 
 		let current_announcement_seen = channel_announcement_delta.seen;

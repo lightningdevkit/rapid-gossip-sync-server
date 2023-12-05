@@ -3,6 +3,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use bitcoin::blockdata::constants::ChainHash;
 use bitcoin::{BlockHash, TxOut};
 use bitcoin::blockdata::block::Block;
 use bitcoin::hashes::Hash;
@@ -84,7 +85,7 @@ impl<L: Deref + Clone + Send + Sync + 'static> ChainVerifier<L> where L::Target:
 }
 
 impl<L: Deref + Clone + Send + Sync + 'static> UtxoLookup for ChainVerifier<L> where L::Target: Logger {
-	fn get_utxo(&self, _genesis_hash: &BlockHash, short_channel_id: u64) -> UtxoResult {
+	fn get_utxo(&self, _genesis_hash: &ChainHash, short_channel_id: u64) -> UtxoResult {
 		let res = UtxoFuture::new();
 		let fut = res.clone();
 		let graph_ref = Arc::clone(&self.graph);

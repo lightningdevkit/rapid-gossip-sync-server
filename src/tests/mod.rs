@@ -4,7 +4,8 @@ use std::cell::RefCell;
 use std::sync::Arc;
 use std::{fs, thread};
 use std::time::{SystemTime, UNIX_EPOCH};
-use bitcoin::{BlockHash, Network};
+use bitcoin::blockdata::constants::ChainHash;
+use bitcoin::Network;
 use bitcoin::secp256k1::ecdsa::Signature;
 use bitcoin::secp256k1::{Secp256k1, SecretKey};
 use bitcoin::hashes::Hash;
@@ -31,8 +32,8 @@ fn blank_signature() -> Signature {
 	Signature::from_compact(&[0u8; 64]).unwrap()
 }
 
-fn genesis_hash() -> BlockHash {
-	bitcoin::blockdata::constants::genesis_block(Network::Bitcoin).block_hash()
+fn genesis_hash() -> ChainHash {
+	ChainHash::using_genesis_block(Network::Bitcoin)
 }
 
 fn current_time() -> u32 {

@@ -14,6 +14,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::ops::Deref;
 use std::sync::Arc;
+use bitcoin::blockdata::constants::ChainHash;
 use lightning::log_info;
 
 use lightning::routing::gossip::{NetworkGraph, NodeId};
@@ -157,8 +158,7 @@ fn serialize_empty_blob(current_timestamp: u64) -> Vec<u8> {
 	let mut blob = GOSSIP_PREFIX.to_vec();
 
 	let network = config::network();
-	let genesis_block = bitcoin::blockdata::constants::genesis_block(network);
-	let chain_hash = genesis_block.block_hash();
+	let chain_hash = ChainHash::using_genesis_block(network);
 	chain_hash.write(&mut blob).unwrap();
 
 	let blob_timestamp = Snapshotter::<Arc<RGSSLogger>>::round_down_to_nearest_multiple(current_timestamp, SYMLINK_GRANULARITY_INTERVAL as u64) as u32;

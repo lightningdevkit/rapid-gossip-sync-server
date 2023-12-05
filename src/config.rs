@@ -102,6 +102,26 @@ pub(crate) fn bitcoin_rest_endpoint() -> HttpEndpoint {
 	HttpEndpoint::for_host(host).with_port(port).with_path(path)
 }
 
+pub(crate) fn bitcoin_rpc_endpoint() -> HttpEndpoint {
+	let host = env::var("BITCOIN_RPC_DOMAIN").unwrap_or("127.0.0.1".to_string());
+	let port = env::var("BITCOIN_RPC_PORT")
+		.unwrap_or("8332".to_string())
+		.parse::<u16>()
+		.expect("BITCOIN_RPC_PORT env variable must be a u16.");
+	let path = env::var("BITCOIN_RPC_PATH").unwrap_or("/".to_string());
+	HttpEndpoint::for_host(host).with_port(port).with_path(path)
+}
+
+pub(crate) fn bitcoin_rpc_credentials() -> String {
+	let user = env::var("BITCOIN_RPC_USER").unwrap_or("user".to_string());
+	let password = env::var("BITCOIN_RPC_PASSWORD").unwrap_or("password".to_string());
+	format!("{}:{}", user, password)
+}
+
+pub(crate) fn use_bitcoin_rpc_api() -> bool {
+	env::var("USE_BITCOIN_RPC_API").unwrap_or("false".to_string()) == "true"
+} 
+
 pub(crate) fn db_config_table_creation_query() -> &'static str {
 	"CREATE TABLE IF NOT EXISTS config (
 		id SERIAL PRIMARY KEY,

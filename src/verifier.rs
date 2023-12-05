@@ -5,12 +5,12 @@ use std::sync::Mutex;
 
 use bitcoin::{BlockHash, TxOut};
 use bitcoin::blockdata::block::Block;
-use bitcoin::hashes::Hash;
 use lightning::log_error;
 use lightning::routing::gossip::{NetworkGraph, P2PGossipSync};
 use lightning::routing::utxo::{UtxoFuture, UtxoLookup, UtxoResult, UtxoLookupError};
 use lightning::util::logger::Logger;
 use lightning_block_sync::{BlockData, BlockSource};
+use lightning_block_sync::gossip::UtxoSource;
 use lightning_block_sync::http::BinaryResponse;
 use lightning_block_sync::rest::RestClient;
 
@@ -60,14 +60,10 @@ impl<L: Deref + Clone + Send + Sync + 'static> ChainVerifier<L> where L::Target:
 	}
 
 	async fn retrieve_block(client: Arc<RestClient>, block_height: u32, logger: L) -> Result<Block, UtxoLookupError> {
-		let uri = format!("blockhashbyheight/{}.bin", block_height);
-		let block_hash_result =
-			client.request_resource::<BinaryResponse, RestBinaryResponse>(&uri).await;
-		let block_hash: Vec<u8> = block_hash_result.map_err(|error| {
-			log_error!(logger, "Could't find block hash at height {}: {}", block_height, error.to_string());
+		let block_hash = client.get_block_hash_by_height(block_height).await.map_err(|error| {
+			log_error!(logger, "Could't find block hash at height {}: {:?}", block_height, error);
 			UtxoLookupError::UnknownChain
-		})?.0;
-		let block_hash = BlockHash::from_slice(&block_hash).unwrap();
+		})?;
 
 		let block_result = client.get_block(&block_hash).await;
 		match block_result {

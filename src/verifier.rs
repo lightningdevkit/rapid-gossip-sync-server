@@ -13,30 +13,35 @@ use lightning_block_sync::{BlockData, BlockSource};
 use lightning_block_sync::gossip::UtxoSource;
 use lightning_block_sync::http::BinaryResponse;
 use lightning_block_sync::rest::RestClient;
+use lightning_block_sync::rpc::RpcClient;
 
 use crate::config;
 use crate::types::GossipPeerManager;
 
 enum AnyChainSource {
-	Rest(RestClient)
+	Rest(RestClient),
+	Rpc(RpcClient),
 }
 
 impl BlockSource for AnyChainSource {
     fn get_header<'a>(&'a self, header_hash: &'a BlockHash, height_hint: Option<u32>) -> lightning_block_sync::AsyncBlockSourceResult<'a, lightning_block_sync::BlockHeaderData> {
         match self {
-			AnyChainSource::Rest(client) => client.get_header(header_hash, height_hint)
+			AnyChainSource::Rest(client) => client.get_header(header_hash, height_hint),
+			AnyChainSource::Rpc(client) => client.get_header(header_hash, height_hint),
 		}
     }
 
     fn get_block<'a>(&'a self, header_hash: &'a BlockHash) -> lightning_block_sync::AsyncBlockSourceResult<'a, BlockData> {
         match self {
-			AnyChainSource::Rest(client) => client.get_block(header_hash)
+			AnyChainSource::Rest(client) => client.get_block(header_hash),
+			AnyChainSource::Rpc(client) => client.get_block(header_hash),
 		}
     }
 
     fn get_best_block<'a>(&'a self) -> lightning_block_sync::AsyncBlockSourceResult<(BlockHash, Option<u32>)> {
         match self {
-			AnyChainSource::Rest(client) => client.get_best_block()
+			AnyChainSource::Rest(client) => client.get_best_block(),
+			AnyChainSource::Rpc(client) => client.get_best_block(),
 		}
     }
 }
@@ -44,13 +49,15 @@ impl BlockSource for AnyChainSource {
 impl UtxoSource for AnyChainSource {
     fn get_block_hash_by_height<'a>(&'a self, block_height: u32) -> lightning_block_sync::AsyncBlockSourceResult<'a, BlockHash> {
         match self {
-			AnyChainSource::Rest(client) => client.get_block_hash_by_height(block_height)
+			AnyChainSource::Rest(client) => client.get_block_hash_by_height(block_height),
+			AnyChainSource::Rpc(client) => client.get_block_hash_by_height(block_height),
 		}
     }
 
     fn is_output_unspent<'a>(&'a self, outpoint: bitcoin::OutPoint) -> lightning_block_sync::AsyncBlockSourceResult<'a, bool> {
         match self {
-			AnyChainSource::Rest(client) => client.is_output_unspent(outpoint)
+			AnyChainSource::Rest(client) => client.is_output_unspent(outpoint),
+			AnyChainSource::Rpc(client) => client.is_output_unspent(outpoint),
 		}
     }
 }
@@ -67,7 +74,14 @@ struct RestBinaryResponse(Vec<u8>);
 
 impl<L: Deref + Clone + Send + Sync + 'static> ChainVerifier<L> where L::Target: Logger {
 	pub(crate) fn new(graph: Arc<NetworkGraph<L>>, outbound_gossiper: Arc<P2PGossipSync<Arc<NetworkGraph<L>>, Arc<Self>, L>>, logger: L) -> Self {
-		let chain_source = Arc::new(AnyChainSource::Rest(RestClient::new(config::bitcoin_rest_endpoint()).unwrap()));
+		
+		let chain_source = {
+			if config::use_bitcoin_rpc_api() {
+				Arc::new(AnyChainSource::Rpc(RpcClient::new(&config::bitcoin_rpc_credentials(), config::bitcoin_rpc_endpoint()).unwrap()))
+			} else {
+				Arc::new(AnyChainSource::Rest(RestClient::new(config::bitcoin_rest_endpoint()).unwrap()))
+			}
+		};
 
 		ChainVerifier {
 			chain_source,

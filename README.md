@@ -23,7 +23,7 @@ can be made by setting environment variables, whose usage is as follows:
 | BITCOIN_REST_DOMAIN                        | 127.0.0.1           | Domain of the [bitcoind REST server](https://github.com/bitcoin/bitcoin/blob/master/doc/REST-interface.md) |
 | BITCOIN_REST_PORT                          | 8332                | HTTP port of the bitcoind REST server                                                                      |
 | BITCOIN_REST_PATH                          | /rest/              | Path infix to access the bitcoind REST endpoints                                                           |
-| LN_PEERS                                   | _Wallet of Satoshi_ | Comma separated list of LN peers to use for retrieving gossip                                              |
+| LN_PEERS                                   | _Wallet of Satoshi_ | Line separated list of LN peers to use for retrieving gossip                                              |
 
 ### downloader
 

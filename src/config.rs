@@ -304,8 +304,15 @@ pub(crate) fn ln_peers() -> Vec<(PublicKey, SocketAddr)> {
 	const WALLET_OF_SATOSHI: &str = "035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226@170.75.163.209:9735";
 	let list = env::var("LN_PEERS").unwrap_or(WALLET_OF_SATOSHI.to_string());
 	let mut peers = Vec::new();
-	for peer_info in list.split(',') {
-		peers.push(resolve_peer_info(peer_info).expect("Invalid peer info in LN_PEERS"));
+	for (item, peer_info) in list.split(',').enumerate() {
+		// Ignore leading or trailing whitespace
+		let trimmed_peer_info = peer_info.trim();
+		// Ignore trailing or repeated commas
+		if !trimmed_peer_info.is_empty() {
+			peers.push(resolve_peer_info(trimmed_peer_info).unwrap_or_else(|_| {
+				panic!("Invalid peer info in LN_PEERS at item {}: {}", item, peer_info)
+			}));
+		}
 	}
 	peers
 }
@@ -329,8 +336,9 @@ fn resolve_peer_info(peer_info: &str) -> Result<(PublicKey, SocketAddr), &str> {
 
 #[cfg(test)]
 mod tests {
-	use super::resolve_peer_info;
+	use super::*;
 	use bitcoin::hashes::hex::ToHex;
+	use std::str::FromStr;
 
 	#[test]
 	fn test_resolve_peer_info() {
@@ -350,4 +358,27 @@ mod tests {
 		let socket_address = socket_address.to_string();
 		assert!(socket_address == "127.0.0.1:9735" || socket_address == "[::1]:9735");
 	}
+
+    #[test]
+    fn test_ln_peers() {
+        // Set the environment variable, including a repeated comma, leading space, and trailing comma.
+        std::env::set_var("LN_PEERS", "035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226@170.75.163.209:9735,, 035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc227@170.75.163.210:9735,");
+        let peers = ln_peers();
+        
+        // Assert output is as expected
+        assert_eq!(
+            peers,
+            vec![
+                (
+                    PublicKey::from_str("035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226").unwrap(), 
+                    SocketAddr::from_str("170.75.163.209:9735").unwrap()
+                ),
+                (
+                    PublicKey::from_str("035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc227").unwrap(), 
+                    SocketAddr::from_str("170.75.163.210:9735").unwrap()
+                )
+            ]
+        );
+    }
+
 }

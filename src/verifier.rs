@@ -1,4 +1,5 @@
 use std::convert::TryInto;
+use std::io::ErrorKind;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -65,7 +66,15 @@ impl<L: Deref + Clone + Send + Sync + 'static> ChainVerifier<L> where L::Target:
 		let block_hash_result =
 			client.request_resource::<BinaryResponse, RestBinaryResponse>(&uri).await;
 		let block_hash: Vec<u8> = block_hash_result.map_err(|error| {
-			log_error!(logger, "Could't find block hash at height {}: {}", block_height, error.to_string());
+			match error.kind() {
+				ErrorKind::InvalidData => {
+					// the response length was likely 0
+					log_error!(logger, "Could't find block hash at height {}: Invalid response! Please make sure the `-rest=1` flag is set.", block_height);
+				}
+				_ => {
+					log_error!(logger, "Could't find block hash at height {}: {}", block_height, error.to_string());
+				}
+			}
 			UtxoLookupError::UnknownChain
 		})?.0;
 		let block_hash = BlockHash::from_slice(&block_hash).unwrap();

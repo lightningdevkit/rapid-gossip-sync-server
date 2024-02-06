@@ -53,12 +53,12 @@ pub mod tests {
 	impl TestLogger {
 		pub fn new() -> TestLogger {
 			let id = crate::tests::db_test_schema();
-			Self::with_id(id)
+			Self::with_id(&id)
 		}
-		pub fn with_id(id: String) -> TestLogger {
+		pub fn with_id(id: &str) -> TestLogger {
 			TestLogger {
 				level: Level::Gossip,
-				id,
+				id: id.to_string(),
 				lines: Mutex::new(HashMap::new()),
 			}
 		}
@@ -86,6 +86,9 @@ pub mod tests {
 	impl Logger for TestLogger {
 		fn log(&self, record: &Record) {
 			*self.lines.lock().unwrap().entry((record.module_path.to_string(), format!("{}", record.args))).or_insert(0) += 1;
+			if record.level < self.level {
+				return;
+			}
 			println!("{:<5} {} [{} : {}, {}] {}", record.level.to_string(), self.id, record.module_path, record.file, record.line, record.args);
 		}
 	}

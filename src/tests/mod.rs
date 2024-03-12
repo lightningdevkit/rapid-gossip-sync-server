@@ -174,6 +174,22 @@ async fn clean_test_db() {
 }
 
 #[tokio::test]
+async fn test_persistence_runtime() {
+	let _sanitizer = SchemaSanitizer::new();
+	let logger = Arc::new(TestLogger::new());
+	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
+	let network_graph_arc = Arc::new(network_graph);
+	let (_persister, _receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+
+	tokio::task::spawn_blocking(move || {
+		drop(_persister);
+	}).await.unwrap();
+
+	clean_test_db().await;
+}
+
+
+#[tokio::test]
 async fn test_trivial_setup() {
 	let _sanitizer = SchemaSanitizer::new();
 	let logger = Arc::new(TestLogger::new());
@@ -240,6 +256,10 @@ async fn test_trivial_setup() {
 	println!("last update b: {}", last_update_seen_b);
 	assert_eq!(last_update_seen_a, update_result - CLIENT_BACKDATE_INTERVAL);
 	assert_eq!(last_update_seen_b, update_result - CLIENT_BACKDATE_INTERVAL);
+
+	tokio::task::spawn_blocking(move || {
+		drop(persister);
+	}).await.unwrap();
 }
 
 /// If a channel has only seen updates in one direction, it should not be announced
@@ -303,6 +323,10 @@ async fn test_unidirectional_intermediate_update_consideration() {
 	let client_channel_count = channels.len();
 	assert_eq!(client_channel_count, 1);
 
+	tokio::task::spawn_blocking(move || {
+		drop(persister);
+	}).await.unwrap();
+
 	clean_test_db().await;
 }
 
@@ -357,6 +381,10 @@ async fn test_bidirectional_intermediate_update_consideration() {
 	assert_eq!(serialization.update_count_full, 0);
 	assert_eq!(serialization.update_count_incremental, 1);
 
+	tokio::task::spawn_blocking(move || {
+		drop(persister);
+	}).await.unwrap();
+
 	clean_test_db().await;
 }
 
@@ -399,6 +427,10 @@ async fn test_full_snapshot_recency() {
 
 		drop(receiver);
 		persister.persist_gossip().await;
+
+		tokio::task::spawn_blocking(move || {
+			drop(persister);
+		}).await.unwrap();
 	}
 
 	let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
@@ -475,6 +507,10 @@ async fn test_full_snapshot_recency_with_wrong_seen_order() {
 
 		drop(receiver);
 		persister.persist_gossip().await;
+
+		tokio::task::spawn_blocking(move || {
+			drop(persister);
+		}).await.unwrap();
 	}
 
 	let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
@@ -550,6 +586,10 @@ async fn test_full_snapshot_recency_with_wrong_propagation_order() {
 
 		drop(receiver);
 		persister.persist_gossip().await;
+
+		tokio::task::spawn_blocking(move || {
+			drop(persister);
+		}).await.unwrap();
 	}
 
 	let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
@@ -679,6 +719,10 @@ async fn test_full_snapshot_mutiny_scenario() {
 
 		drop(receiver);
 		persister.persist_gossip().await;
+
+		tokio::task::spawn_blocking(move || {
+			drop(persister);
+		}).await.unwrap();
 	}
 
 	let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
@@ -788,6 +832,10 @@ async fn test_full_snapshot_interlaced_channel_timestamps() {
 
 		drop(receiver);
 		persister.persist_gossip().await;
+
+		tokio::task::spawn_blocking(move || {
+			drop(persister);
+		}).await.unwrap();
 	}
 
 	let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
@@ -859,6 +907,10 @@ async fn test_full_snapshot_persistence() {
 
 		drop(receiver);
 		persister.persist_gossip().await;
+
+		tokio::task::spawn_blocking(move || {
+			drop(persister);
+		}).await.unwrap();
 	}
 
 	let cache_path = cache_sanitizer.cache_path();
@@ -900,6 +952,10 @@ async fn test_full_snapshot_persistence() {
 
 		drop(receiver);
 		persister.persist_gossip().await;
+
+		tokio::task::spawn_blocking(move || {
+			drop(persister);
+		}).await.unwrap();
 	}
 
 	// regenerate snapshots

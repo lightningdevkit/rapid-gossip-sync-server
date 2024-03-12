@@ -8,6 +8,7 @@ use lightning::log_info;
 use lightning::routing::gossip::NetworkGraph;
 use lightning::util::logger::Logger;
 use lightning::util::ser::Writeable;
+use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, Mutex, Semaphore};
 
 use crate::config;
@@ -19,6 +20,7 @@ const INSERT_PARALELLISM: usize = 16;
 pub(crate) struct GossipPersister<L: Deref> where L::Target: Logger {
 	gossip_persistence_receiver: mpsc::Receiver<GossipMessage>,
 	network_graph: Arc<NetworkGraph<L>>,
+	tokio_runtime: Runtime,
 	logger: L
 }
 
@@ -26,9 +28,11 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 	pub fn new(network_graph: Arc<NetworkGraph<L>>, logger: L) -> (Self, mpsc::Sender<GossipMessage>) {
 		let (gossip_persistence_sender, gossip_persistence_receiver) =
 			mpsc::channel::<GossipMessage>(100);
+		let runtime = Runtime::new().unwrap();
 		(GossipPersister {
 			gossip_persistence_receiver,
 			network_graph,
+			tokio_runtime: runtime,
 			logger
 		}, gossip_persistence_sender)
 	}
@@ -127,7 +131,7 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 					let mut announcement_signed = Vec::new();
 					announcement.write(&mut announcement_signed).unwrap();
 
-					let _task = tokio::spawn(async move {
+					let _task = self.tokio_runtime.spawn(async move {
 						let client;
 						{
 							let mut connections_set = connections_cache_ref.lock().await;
@@ -219,7 +223,7 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 					// this may not be used outside test cfg
 					let _seen_timestamp = seen_override.unwrap_or(timestamp as u32) as f64;
 
-					let _task = tokio::spawn(async move {
+					let _task = self.tokio_runtime.spawn(async move {
 						let client;
 						{
 							let mut connections_set = connections_cache_ref.lock().await;

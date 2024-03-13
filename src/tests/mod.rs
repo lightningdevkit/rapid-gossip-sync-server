@@ -9,8 +9,8 @@ use bitcoin::Network;
 use bitcoin::secp256k1::ecdsa::Signature;
 use bitcoin::secp256k1::{Secp256k1, SecretKey};
 use bitcoin::hashes::Hash;
-use bitcoin::hashes::hex::ToHex;
 use bitcoin::hashes::sha256d::Hash as Sha256dHash;
+use hex_conservative::DisplayHex;
 use lightning::ln::features::ChannelFeatures;
 use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::routing::gossip::{NetworkGraph, NodeId};
@@ -121,9 +121,9 @@ impl SchemaSanitizer {
 			let thread_id = thread::current().id();
 			let preimage = format!("{:?}-{}", thread_id, timestamp_nanos);
 			println!("test schema preimage: {}", preimage);
-			let suffix = Sha256dHash::hash(preimage.as_bytes()).into_inner().to_hex();
+			let suffix = Sha256dHash::hash(preimage.as_bytes()).encode();
 			// the schema must start with a letter
-			let schema = format!("test_{}_{}", timestamp_seconds, suffix);
+			let schema = format!("test_{}_{}", timestamp_seconds, suffix.as_hex());
 			*suffix_option = Some(schema);
 		});
 

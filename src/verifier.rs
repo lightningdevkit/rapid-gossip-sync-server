@@ -1,4 +1,3 @@
-use std::convert::TryInto;
 use std::io::ErrorKind;
 use std::ops::Deref;
 use std::sync::Arc;

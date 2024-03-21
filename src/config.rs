@@ -1,6 +1,5 @@
 use crate::hex_utils;
 
-use std::convert::TryInto;
 use std::env;
 use std::io::Cursor;
 use std::net::{SocketAddr, ToSocketAddrs};

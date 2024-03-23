@@ -250,7 +250,7 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 		}
 		#[cfg(test)]
 		for task in tasks_spawned {
-			task.await;
+			task.await.unwrap();
 		}
 	}
 

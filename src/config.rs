@@ -367,26 +367,25 @@ mod tests {
 		assert!(socket_address == "127.0.0.1:9735" || socket_address == "[::1]:9735");
 	}
 
-    #[test]
-    fn test_ln_peers() {
-        // Set the environment variable, including a repeated comma, leading space, and trailing comma.
-        std::env::set_var("LN_PEERS", "035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226@170.75.163.209:9735,, 035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc227@170.75.163.210:9735,");
-        let peers = ln_peers();
-        
-        // Assert output is as expected
-        assert_eq!(
-            peers,
-            vec![
-                (
-                    PublicKey::from_str("035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226").unwrap(), 
-                    SocketAddr::from_str("170.75.163.209:9735").unwrap()
-                ),
-                (
-                    PublicKey::from_str("035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc227").unwrap(), 
-                    SocketAddr::from_str("170.75.163.210:9735").unwrap()
-                )
-            ]
-        );
-    }
-
+	#[test]
+	fn test_ln_peers() {
+		// Set the environment variable, including a repeated comma, leading space, and trailing comma.
+		std::env::set_var("LN_PEERS", "035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226@170.75.163.209:9735,, 035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc227@170.75.163.210:9735,");
+		let peers = ln_peers();
+		
+		// Assert output is as expected
+		assert_eq!(
+			peers,
+			vec![
+				(
+					PublicKey::from_str("035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226").unwrap(),
+					SocketAddr::from_str("170.75.163.209:9735").unwrap()
+				),
+				(
+					PublicKey::from_str("035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc227").unwrap(),
+					SocketAddr::from_str("170.75.163.210:9735").unwrap()
+				)
+			]
+		);
+	}
 }

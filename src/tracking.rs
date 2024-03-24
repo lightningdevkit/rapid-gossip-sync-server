@@ -5,8 +5,8 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bitcoin::hashes::hex::ToHex;
 use bitcoin::secp256k1::PublicKey;
+use hex_conservative::display::DisplayHex;
 use lightning::ln::peer_handler::{
 	ErroringMessageHandler, IgnoringMessageHandler, MessageHandler, PeerManager,
 };
@@ -167,7 +167,8 @@ async fn connect_peer<L: Deref + Clone + Send + Sync + 'static>(current_peer: (P
 	// we seek to find out if the first connection attempt was successful
 	let (sender, mut receiver) = mpsc::channel::<bool>(1);
 	tokio::spawn(async move {
-		log_info!(logger, "Connecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
+		let current_peer_pubkey_hex = current_peer.0.serialize().to_lower_hex_string();
+		log_info!(logger, "Connecting to peer {}@{}...", current_peer_pubkey_hex, current_peer.1);
 		let mut is_first_iteration = true;
 		loop {
 			if let Some(disconnection_future) = lightning_net_tokio::connect_outbound(
@@ -175,21 +176,21 @@ async fn connect_peer<L: Deref + Clone + Send + Sync + 'static>(current_peer: (P
 				current_peer.0,
 				current_peer.1,
 			).await {
-				log_info!(logger, "Connected to peer {}@{}!", current_peer.0.to_hex(), current_peer.1.to_string());
+				log_info!(logger, "Connected to peer {}@{}!", current_peer_pubkey_hex, current_peer.1);
 				if is_first_iteration {
 					sender.send(true).await.unwrap();
 				}
 				disconnection_future.await;
-				log_warn!(logger, "Disconnected from peer {}@{}", current_peer.0.to_hex(), current_peer.1.to_string());
+				log_warn!(logger, "Disconnected from peer {}@{}", current_peer_pubkey_hex, current_peer.1);
 			} else {
-				log_warn!(logger, "Failed to connect to peer {}@{}!", current_peer.0.to_hex(), current_peer.1.to_string());
+				log_warn!(logger, "Failed to connect to peer {}@{}!", current_peer_pubkey_hex, current_peer.1);
 				if is_first_iteration {
 					sender.send(false).await.unwrap();
 				}
 			}
 			is_first_iteration = false;
 			tokio::time::sleep(Duration::from_secs(10)).await;
-			log_warn!(logger, "Reconnecting to peer {}@{}...", current_peer.0.to_hex(), current_peer.1.to_string());
+			log_warn!(logger, "Reconnecting to peer {}@{}...", current_peer_pubkey_hex, current_peer.1);
 		}
 	});
 

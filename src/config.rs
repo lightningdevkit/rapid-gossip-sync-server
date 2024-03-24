@@ -336,48 +336,56 @@ fn resolve_peer_info(peer_info: &str) -> Result<(PublicKey, SocketAddr), &str> {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use bitcoin::hashes::hex::ToHex;
+	use hex_conservative::DisplayHex;
 	use std::str::FromStr;
 
 	#[test]
 	fn test_resolve_peer_info() {
 		let wallet_of_satoshi = "035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226@170.75.163.209:9735";
 		let (pubkey, socket_address) = resolve_peer_info(wallet_of_satoshi).unwrap();
-		assert_eq!(pubkey.serialize().to_hex(), "035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226");
+		assert_eq!(
+			pubkey.serialize().to_lower_hex_string(),
+			"035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226"
+		);
 		assert_eq!(socket_address.to_string(), "170.75.163.209:9735");
 
 		let ipv6 = "033d8656219478701227199cbd6f670335c8d408a92ae88b962c49d4dc0e83e025@[2001:db8::1]:80";
 		let (pubkey, socket_address) = resolve_peer_info(ipv6).unwrap();
-		assert_eq!(pubkey.serialize().to_hex(), "033d8656219478701227199cbd6f670335c8d408a92ae88b962c49d4dc0e83e025");
+		assert_eq!(
+			pubkey.serialize().to_lower_hex_string(),
+			"033d8656219478701227199cbd6f670335c8d408a92ae88b962c49d4dc0e83e025"
+		);
 		assert_eq!(socket_address.to_string(), "[2001:db8::1]:80");
 
 		let localhost = "033d8656219478701227199cbd6f670335c8d408a92ae88b962c49d4dc0e83e025@localhost:9735";
 		let (pubkey, socket_address) = resolve_peer_info(localhost).unwrap();
-		assert_eq!(pubkey.serialize().to_hex(), "033d8656219478701227199cbd6f670335c8d408a92ae88b962c49d4dc0e83e025");
+		assert_eq!(
+			pubkey.serialize().to_lower_hex_string(),
+			"033d8656219478701227199cbd6f670335c8d408a92ae88b962c49d4dc0e83e025"
+		);
 		let socket_address = socket_address.to_string();
 		assert!(socket_address == "127.0.0.1:9735" || socket_address == "[::1]:9735");
 	}
 
-    #[test]
-    fn test_ln_peers() {
-        // Set the environment variable, including a repeated comma, leading space, and trailing comma.
-        std::env::set_var("LN_PEERS", "035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226@170.75.163.209:9735,, 035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc227@170.75.163.210:9735,");
-        let peers = ln_peers();
-        
-        // Assert output is as expected
-        assert_eq!(
-            peers,
-            vec![
-                (
-                    PublicKey::from_str("035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226").unwrap(), 
-                    SocketAddr::from_str("170.75.163.209:9735").unwrap()
-                ),
-                (
-                    PublicKey::from_str("035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc227").unwrap(), 
-                    SocketAddr::from_str("170.75.163.210:9735").unwrap()
-                )
-            ]
-        );
-    }
-
+	#[test]
+	fn test_ln_peers() {
+		// Set the environment variable, including a repeated comma, leading space, and trailing comma.
+		std::env::set_var("LN_PEERS", "035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226@170.75.163.209:9735,, 035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc227@170.75.163.210:9735,");
+		let peers = ln_peers();
+		
+		// Assert output is as expected
+		assert_eq!(
+			peers,
+			vec![
+				(
+					PublicKey::from_str("035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226").unwrap(),
+					SocketAddr::from_str("170.75.163.209:9735").unwrap()
+				),
+				(
+					PublicKey::from_str("035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc227").unwrap(),
+					SocketAddr::from_str("170.75.163.210:9735").unwrap()
+				)
+			]
+		);
+	}
 }

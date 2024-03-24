@@ -29,7 +29,7 @@ impl RGSSLogger {
 }
 
 impl Logger for RGSSLogger {
-	fn log(&self, record: &Record) {
+	fn log(&self, record: Record) {
 		let threshold = config::log_level();
 		if record.level < threshold {
 			return;
@@ -84,7 +84,7 @@ pub mod tests {
 	}
 
 	impl Logger for TestLogger {
-		fn log(&self, record: &Record) {
+		fn log(&self, record: Record) {
 			*self.lines.lock().unwrap().entry((record.module_path.to_string(), format!("{}", record.args))).or_insert(0) += 1;
 			println!("{:<5} {} [{} : {}, {}] {}", record.level.to_string(), self.id, record.module_path, record.file, record.line, record.args);
 		}

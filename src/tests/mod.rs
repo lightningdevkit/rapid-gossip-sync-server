@@ -11,9 +11,9 @@ use bitcoin::secp256k1::{Secp256k1, SecretKey};
 use bitcoin::hashes::Hash;
 use bitcoin::hashes::sha256d::Hash as Sha256dHash;
 use hex_conservative::DisplayHex;
-use lightning::ln::features::ChannelFeatures;
-use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, UnsignedChannelAnnouncement, UnsignedChannelUpdate};
-use lightning::routing::gossip::{NetworkGraph, NodeId};
+use lightning::ln::features::{ChannelFeatures, NodeFeatures};
+use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, NodeAnnouncement, UnsignedChannelAnnouncement, UnsignedChannelUpdate, UnsignedNodeAnnouncement};
+use lightning::routing::gossip::{NetworkGraph, NodeAlias, NodeId};
 use lightning::util::ser::Writeable;
 use lightning_rapid_gossip_sync::RapidGossipSync;
 use crate::{config, serialize_delta};
@@ -47,7 +47,35 @@ pub(crate) fn db_test_schema() -> String {
 	})
 }
 
-fn generate_announcement(short_channel_id: u64) -> ChannelAnnouncement {
+fn generate_node_announcement() -> NodeAnnouncement {
+	let secp_context = Secp256k1::new();
+
+	let random_private_key = SecretKey::from_slice(&[1; 32]).unwrap();
+	let random_public_key = random_private_key.public_key(&secp_context);
+	let node_id = NodeId::from_pubkey(&random_public_key);
+
+	let announcement = UnsignedNodeAnnouncement {
+		features: NodeFeatures::empty(),
+		timestamp: 0,
+		node_id,
+		rgb: [0, 128, 255],
+		alias: NodeAlias([0; 32]),
+		addresses: vec![],
+		excess_data: vec![],
+		excess_address_data: vec![],
+	};
+
+	let msg_hash = bitcoin::secp256k1::Message::from_slice(&Sha256dHash::hash(&announcement.encode()[..])[..]).unwrap();
+	let signature = secp_context.sign_ecdsa(&msg_hash, &random_private_key);
+
+	NodeAnnouncement {
+		signature,
+		contents: announcement,
+	}
+}
+
+
+fn generate_channel_announcement(short_channel_id: u64) -> ChannelAnnouncement {
 	let secp_context = Secp256k1::new();
 
 	let random_private_key_1 = SecretKey::from_slice(&[1; 32]).unwrap();
@@ -205,7 +233,7 @@ async fn test_trivial_setup() {
 	println!("timestamp: {}", timestamp);
 
 	{ // seed the db
-		let announcement = generate_announcement(short_channel_id);
+		let announcement = generate_channel_announcement(short_channel_id);
 		let update_1 = generate_update(short_channel_id, false, timestamp, 0, 0, 0, 5, 0);
 		let update_2 = generate_update(short_channel_id, true, timestamp, 0, 0, 0, 10, 0);
 
@@ -265,6 +293,29 @@ async fn test_trivial_setup() {
 	}).await.unwrap();
 }
 
+#[tokio::test]
+async fn test_node_announcement_persistence() {
+	let _sanitizer = SchemaSanitizer::new();
+	let logger = Arc::new(TestLogger::new());
+	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
+	let network_graph_arc = Arc::new(network_graph);
+	let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+
+	{ // seed the db
+		let announcement = generate_node_announcement();
+		receiver.send(GossipMessage::NodeAnnouncement(announcement.clone(), None)).await.unwrap();
+		receiver.send(GossipMessage::NodeAnnouncement(announcement, Some(12345))).await.unwrap();
+		drop(receiver);
+		persister.persist_gossip().await;
+
+		tokio::task::spawn_blocking(move || {
+			drop(persister);
+		}).await.unwrap();
+	}
+	clean_test_db().await;
+}
+
+
 /// If a channel has only seen updates in one direction, it should not be announced
 #[tokio::test]
 async fn test_unidirectional_intermediate_update_consideration() {
@@ -280,7 +331,7 @@ async fn test_unidirectional_intermediate_update_consideration() {
 	println!("timestamp: {}", timestamp);
 
 	{ // seed the db
-		let announcement = generate_announcement(short_channel_id);
+		let announcement = generate_channel_announcement(short_channel_id);
 		let update_1 = generate_update(short_channel_id, false, timestamp, 0, 0, 0, 6, 0);
 		let update_2 = generate_update(short_channel_id, true, timestamp + 1, 0, 0, 0, 3, 0);
 		let update_3 = generate_update(short_channel_id, true, timestamp + 2, 0, 0, 0, 4, 0);
@@ -348,7 +399,7 @@ async fn test_bidirectional_intermediate_update_consideration() {
 	println!("timestamp: {}", timestamp);
 
 	{ // seed the db
-		let announcement = generate_announcement(short_channel_id);
+		let announcement = generate_channel_announcement(short_channel_id);
 		let update_1 = generate_update(short_channel_id, false, timestamp, 0, 0, 0, 5, 0);
 		let update_2 = generate_update(short_channel_id, false, timestamp + 1, 0, 0, 0, 4, 0);
 		let update_3 = generate_update(short_channel_id, false, timestamp + 2, 0, 0, 0, 3, 0);
@@ -407,7 +458,7 @@ async fn test_channel_reminders() {
 	{ // seed the db
 		{ // unupdated channel
 			let short_channel_id = 1;
-			let announcement = generate_announcement(short_channel_id);
+			let announcement = generate_channel_announcement(short_channel_id);
 			let update_1 = generate_update(short_channel_id, false, timestamp - channel_reminder_delta - 1, 0, 0, 0, 5, 0);
 			let update_2 = generate_update(short_channel_id, true, timestamp - channel_reminder_delta - 1, 0, 0, 0, 3, 0);
 
@@ -421,7 +472,7 @@ async fn test_channel_reminders() {
 		}
 		{ // unmodified but updated channel
 			let short_channel_id = 2;
-			let announcement = generate_announcement(short_channel_id);
+			let announcement = generate_channel_announcement(short_channel_id);
 			let update_1 = generate_update(short_channel_id, false, timestamp - channel_reminder_delta - 10, 0, 0, 0, 5, 0);
 			// in the false direction, we have one update that's different prior
 			let update_2 = generate_update(short_channel_id, false, timestamp - channel_reminder_delta - 5, 0, 1, 0, 5, 0);
@@ -488,7 +539,7 @@ async fn test_full_snapshot_recency() {
 
 	{ // seed the db
 		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
-		let announcement = generate_announcement(short_channel_id);
+		let announcement = generate_channel_announcement(short_channel_id);
 		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
 		receiver.send(GossipMessage::ChannelAnnouncement(announcement, None)).await.unwrap();
 
@@ -568,7 +619,7 @@ async fn test_full_snapshot_recency_with_wrong_seen_order() {
 
 	{ // seed the db
 		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
-		let announcement = generate_announcement(short_channel_id);
+		let announcement = generate_channel_announcement(short_channel_id);
 		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
 		receiver.send(GossipMessage::ChannelAnnouncement(announcement, None)).await.unwrap();
 
@@ -648,7 +699,7 @@ async fn test_full_snapshot_recency_with_wrong_propagation_order() {
 
 	{ // seed the db
 		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
-		let announcement = generate_announcement(short_channel_id);
+		let announcement = generate_channel_announcement(short_channel_id);
 		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
 		receiver.send(GossipMessage::ChannelAnnouncement(announcement, None)).await.unwrap();
 
@@ -730,7 +781,7 @@ async fn test_full_snapshot_mutiny_scenario() {
 
 	{ // seed the db
 		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
-		let announcement = generate_announcement(short_channel_id);
+		let announcement = generate_channel_announcement(short_channel_id);
 		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
 		receiver.send(GossipMessage::ChannelAnnouncement(announcement, None)).await.unwrap();
 
@@ -867,13 +918,13 @@ async fn test_full_snapshot_interlaced_channel_timestamps() {
 		let secondary_channel_id = main_channel_id + 1;
 
 		{ // main channel
-			let announcement = generate_announcement(main_channel_id);
+			let announcement = generate_channel_announcement(main_channel_id);
 			network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
 			receiver.send(GossipMessage::ChannelAnnouncement(announcement, None)).await.unwrap();
 		}
 
 		{ // secondary channel
-			let announcement = generate_announcement(secondary_channel_id);
+			let announcement = generate_channel_announcement(secondary_channel_id);
 			network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
 			receiver.send(GossipMessage::ChannelAnnouncement(announcement, None)).await.unwrap();
 		}
@@ -975,7 +1026,7 @@ async fn test_full_snapshot_persistence() {
 
 	{ // seed the db
 		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
-		let announcement = generate_announcement(short_channel_id);
+		let announcement = generate_channel_announcement(short_channel_id);
 		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
 		receiver.send(GossipMessage::ChannelAnnouncement(announcement, None)).await.unwrap();
 

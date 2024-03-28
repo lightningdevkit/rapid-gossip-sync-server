@@ -69,21 +69,20 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 				panic!("db init error: {}", initialization_error);
 			}
 
-			let initialization = client
-				.execute(config::db_announcement_table_creation_query(), &[])
-				.await;
-			if let Err(initialization_error) = initialization {
-				panic!("db init error: {}", initialization_error);
-			}
+			let table_creation_queries = [
+				config::db_announcement_table_creation_query(),
+				config::db_channel_update_table_creation_query(),
+				config::db_channel_update_table_creation_query(),
+				config::db_node_announcement_table_creation_query()
+			];
 
-			let initialization = client
-				.execute(
-					config::db_channel_update_table_creation_query(),
-					&[],
-				)
-				.await;
-			if let Err(initialization_error) = initialization {
-				panic!("db init error: {}", initialization_error);
+			for current_table_creation_query in table_creation_queries {
+				let initialization = client
+					.execute(current_table_creation_query, &[])
+					.await;
+				if let Err(initialization_error) = initialization {
+					panic!("db init error: {}", initialization_error);
+				}
 			}
 
 			let initialization = client
@@ -133,6 +132,9 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 
 			let connections_cache_ref = Arc::clone(&connections_cache);
 			match gossip_message {
+				GossipMessage::NodeAnnouncement(_announcement, _seen_override) => {
+
+				},
 				GossipMessage::ChannelAnnouncement(announcement, seen_override) => {
 					let scid = announcement.contents.short_channel_id as i64;
 

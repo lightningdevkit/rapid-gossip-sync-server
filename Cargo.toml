@@ -6,16 +6,16 @@ edition = "2021"
 [dependencies]
 bitcoin = "0.30"
 hex-conservative = "0.2"
-lightning = { version = "0.0.121" }
-lightning-block-sync = { version = "0.0.121", features=["rest-client"] }
-lightning-net-tokio = { version = "0.0.121" }
+lightning = { git = "https://github.com/arik-so/rust-lightning.git", branch = "2024-03-public-node-announcement-excess" }
+lightning-block-sync = { git = "https://github.com/arik-so/rust-lightning.git", branch = "2024-03-public-node-announcement-excess", features=["rest-client"] }
+lightning-net-tokio = { git = "https://github.com/arik-so/rust-lightning.git", branch = "2024-03-public-node-announcement-excess" }
 tokio = { version = "1.25", features = ["full"] }
 tokio-postgres = { version = "=0.7.5" }
 futures = "0.3"
 
 [dev-dependencies]
-lightning = { version = "0.0.121", features = ["_test_utils"] }
-lightning-rapid-gossip-sync = { version = "0.0.121" }
+lightning = { git = "https://github.com/arik-so/rust-lightning.git", branch = "2024-03-public-node-announcement-excess", features = ["_test_utils"] }
+lightning-rapid-gossip-sync = { git = "https://github.com/arik-so/rust-lightning.git", branch = "2024-03-public-node-announcement-excess" }
 
 [profile.dev]
 panic = "abort"

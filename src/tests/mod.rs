@@ -12,7 +12,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::hashes::sha256d::Hash as Sha256dHash;
 use hex_conservative::DisplayHex;
 use lightning::ln::features::{ChannelFeatures, NodeFeatures};
-use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, NodeAnnouncement, UnsignedChannelAnnouncement, UnsignedChannelUpdate, UnsignedNodeAnnouncement};
+use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, NodeAnnouncement, SocketAddress, UnsignedChannelAnnouncement, UnsignedChannelUpdate, UnsignedNodeAnnouncement};
 use lightning::routing::gossip::{NetworkGraph, NodeAlias, NodeId};
 use lightning::util::ser::Writeable;
 use lightning_rapid_gossip_sync::RapidGossipSync;
@@ -302,9 +302,28 @@ async fn test_node_announcement_persistence() {
 	let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
 
 	{ // seed the db
-		let announcement = generate_node_announcement();
+		let mut announcement = generate_node_announcement();
 		receiver.send(GossipMessage::NodeAnnouncement(announcement.clone(), None)).await.unwrap();
+		receiver.send(GossipMessage::NodeAnnouncement(announcement.clone(), Some(12345))).await.unwrap();
+
+		{
+			// modify announcement to contain a bunch of addresses
+			announcement.contents.addresses.push(SocketAddress::Hostname {
+				hostname: "google.com".to_string().try_into().unwrap(),
+				port: 443,
+			});
+			announcement.contents.addresses.push(SocketAddress::TcpIpV4 { addr: [127, 0, 0, 1], port: 9635 });
+			announcement.contents.addresses.push(SocketAddress::TcpIpV6 { addr: [1; 16], port: 1337 });
+			announcement.contents.addresses.push(SocketAddress::OnionV2([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]));
+			announcement.contents.addresses.push(SocketAddress::OnionV3 {
+				ed25519_pubkey: [1; 32],
+				checksum: 2,
+				version: 3,
+				port: 4,
+			});
+		}
 		receiver.send(GossipMessage::NodeAnnouncement(announcement, Some(12345))).await.unwrap();
+
 		drop(receiver);
 		persister.persist_gossip().await;
 

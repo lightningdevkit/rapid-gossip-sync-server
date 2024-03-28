@@ -47,10 +47,10 @@ pub(crate) fn db_test_schema() -> String {
 	})
 }
 
-fn generate_node_announcement() -> NodeAnnouncement {
+fn generate_node_announcement(private_key: Option<SecretKey>) -> NodeAnnouncement {
 	let secp_context = Secp256k1::new();
 
-	let random_private_key = SecretKey::from_slice(&[1; 32]).unwrap();
+	let random_private_key = private_key.unwrap_or(SecretKey::from_slice(&[1; 32]).unwrap());
 	let random_public_key = random_private_key.public_key(&secp_context);
 	let node_id = NodeId::from_pubkey(&random_public_key);
 
@@ -302,7 +302,7 @@ async fn test_node_announcement_persistence() {
 	let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
 
 	{ // seed the db
-		let mut announcement = generate_node_announcement();
+		let mut announcement = generate_node_announcement(None);
 		receiver.send(GossipMessage::NodeAnnouncement(announcement.clone(), None)).await.unwrap();
 		receiver.send(GossipMessage::NodeAnnouncement(announcement.clone(), Some(12345))).await.unwrap();
 

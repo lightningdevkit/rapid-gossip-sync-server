@@ -136,6 +136,9 @@ impl Drop for SchemaSanitizer {
 		IS_TEST_SCHEMA_CLEAN.with(|cleanliness_reference| {
 			let is_clean_option = cleanliness_reference.borrow();
 			if let Some(is_clean) = *is_clean_option {
+				if std::thread::panicking() {
+					return;
+				}
 				assert_eq!(is_clean, true);
 			}
 		});

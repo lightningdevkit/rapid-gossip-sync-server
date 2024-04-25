@@ -1,16 +1,17 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Cursor;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, UnsignedChannelAnnouncement, UnsignedChannelUpdate};
-use lightning::routing::gossip::NetworkGraph;
+use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, NodeAnnouncement, SocketAddress, UnsignedChannelAnnouncement, UnsignedChannelUpdate};
+use lightning::routing::gossip::{NetworkGraph, NodeId};
 use lightning::util::ser::Readable;
 use tokio_postgres::Client;
 
 use futures::StreamExt;
 use lightning::{log_debug, log_gossip, log_info};
+use lightning::ln::features::NodeFeatures;
 use lightning::util::logger::Logger;
 
 use crate::config;
@@ -19,6 +20,7 @@ use crate::serialization::MutatedProperties;
 /// The delta set needs to be a BTreeMap so the keys are sorted.
 /// That way, the scids in the response automatically grow monotonically
 pub(super) type DeltaSet = BTreeMap<u64, ChannelDelta>;
+pub(super) type NodeDeltaSet = HashMap<NodeId, NodeDelta>;
 
 pub(super) struct AnnouncementDelta {
 	pub(super) seen: u32,
@@ -50,6 +52,31 @@ pub(super) struct ChannelDelta {
 	pub(super) requires_reminder: bool,
 }
 
+pub(super) struct NodeDelta {
+	/// The most recently received, but new-to-the-client, node details
+	pub(super) latest_details_after_seen: Option<NodeDetails>,
+
+	/// Between last_details_before_seen and latest_details_after_seen, including any potential
+	/// intermediate updates that are not kept track of here, has the set of features this node
+	/// supports changed?
+	pub(super) has_feature_set_changed: bool,
+
+	/// Between last_details_before_seen and latest_details_after_seen, including any potential
+	/// intermediate updates that are not kept track of here, has the set of socket addresses this
+	/// node listens on changed?
+	pub(super) has_address_set_changed: bool,
+
+	/// The most recent node details that the client would have seen already
+	pub(super) last_details_before_seen: Option<NodeDetails>
+}
+
+pub(super) struct NodeDetails {
+	#[allow(unused)]
+	pub(super) seen: u32,
+	pub(super) features: NodeFeatures,
+	pub(super) addresses: HashSet<SocketAddress>
+}
+
 impl Default for ChannelDelta {
 	fn default() -> Self {
 		Self {
@@ -57,6 +84,17 @@ impl Default for ChannelDelta {
 			updates: (None, None),
 			first_bidirectional_updates_seen: None,
 			requires_reminder: false,
+		}
+	}
+}
+
+impl Default for NodeDelta {
+	fn default() -> Self {
+		Self {
+			latest_details_after_seen: None,
+			has_feature_set_changed: false,
+			has_address_set_changed: false,
+			last_details_before_seen: None,
 		}
 	}
 }
@@ -434,6 +472,108 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 		}
 	}
 	log_info!(logger, "Processed intermediate rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
+}
+
+pub(super) async fn fetch_node_updates<L: Deref>(client: &Client, last_sync_timestamp: u32, logger: L) -> NodeDeltaSet where L::Target: Logger {
+	let start = Instant::now();
+	let last_sync_timestamp_float = last_sync_timestamp as f64;
+
+	let mut delta_set = NodeDeltaSet::new();
+
+	// get the latest node updates prior to last_sync_timestamp
+	let reference_rows = client.query_raw("
+		SELECT DISTINCT ON (public_key) public_key, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen, announcement_signed
+		FROM node_announcements
+		WHERE seen < TO_TIMESTAMP($1)
+		ORDER BY public_key ASC, seen DESC
+		", [last_sync_timestamp_float]).await.unwrap();
+	let mut pinned_rows = Box::pin(reference_rows);
+
+	log_info!(logger, "Fetched node announcement reference rows in {:?}", start.elapsed());
+
+	let mut reference_row_count = 0;
+
+	while let Some(row_res) = pinned_rows.next().await {
+		let current_reference = row_res.unwrap();
+
+		let seen = current_reference.get::<_, i64>("seen") as u32;
+		let blob: Vec<u8> = current_reference.get("announcement_signed");
+		let mut readable = Cursor::new(blob);
+		let unsigned_node_announcement = NodeAnnouncement::read(&mut readable).unwrap().contents;
+		let node_id = unsigned_node_announcement.node_id;
+
+		let current_node_delta = delta_set.entry(node_id).or_insert(NodeDelta::default());
+		(*current_node_delta).last_details_before_seen.get_or_insert_with(|| {
+			let address_set: HashSet<SocketAddress> = unsigned_node_announcement.addresses.into_iter().collect();
+			NodeDetails {
+				seen,
+				features: unsigned_node_announcement.features,
+				addresses: address_set,
+			}
+		});
+		log_gossip!(logger, "Node {} last update before seen: {} (seen at {})", node_id, unsigned_node_announcement.timestamp, seen);
+
+		reference_row_count += 1;
+	}
+
+
+	log_info!(logger, "Processed {} node announcement reference rows (delta size: {}) in {:?}",
+		reference_row_count, delta_set.len(), start.elapsed());
+
+	// get all the intermediate node updates
+	// (to calculate the set of mutated fields for snapshotting, where intermediate updates may
+	// have been omitted)
+	let intermediate_updates = client.query_raw("
+		SELECT announcement_signed, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen
+		FROM node_announcements
+		WHERE seen >= TO_TIMESTAMP($1)
+		ORDER BY public_key ASC, timestamp DESC
+		", [last_sync_timestamp_float]).await.unwrap();
+	let mut pinned_updates = Box::pin(intermediate_updates);
+	log_info!(logger, "Fetched intermediate node announcement rows in {:?}", start.elapsed());
+
+	let mut previous_node_id: Option<NodeId> = None;
+
+	let mut intermediate_update_count = 0;
+	while let Some(row_res) = pinned_updates.next().await {
+		let intermediate_update = row_res.unwrap();
+		intermediate_update_count += 1;
+
+		let current_seen_timestamp = intermediate_update.get::<_, i64>("seen") as u32;
+		let blob: Vec<u8> = intermediate_update.get("announcement_signed");
+		let mut readable = Cursor::new(blob);
+		let unsigned_node_announcement = NodeAnnouncement::read(&mut readable).unwrap().contents;
+
+		let node_id = unsigned_node_announcement.node_id;
+		let is_previously_processed_node_id = Some(node_id) == previous_node_id;
+
+		// get this node's address set
+		let current_node_delta = delta_set.entry(node_id).or_insert(NodeDelta::default());
+		let address_set: HashSet<SocketAddress> = unsigned_node_announcement.addresses.into_iter().collect();
+
+		// determine mutations
+		if let Some(last_seen_update) = current_node_delta.last_details_before_seen.as_ref() {
+			if unsigned_node_announcement.features != last_seen_update.features {
+				current_node_delta.has_feature_set_changed = true;
+			}
+			if address_set != last_seen_update.addresses {
+				current_node_delta.has_address_set_changed = true;
+			}
+		}
+
+		if !is_previously_processed_node_id {
+			(*current_node_delta).latest_details_after_seen.get_or_insert(NodeDetails {
+				seen: current_seen_timestamp,
+				features: unsigned_node_announcement.features,
+				addresses: address_set,
+			});
+		}
+
+		previous_node_id = Some(node_id);
+	}
+	log_info!(logger, "Processed intermediate node announcement rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
+
+	delta_set
 }
 
 pub(super) fn filter_delta_set<L: Deref>(delta_set: &mut DeltaSet, logger: L) where L::Target: Logger {

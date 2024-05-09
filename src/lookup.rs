@@ -10,7 +10,7 @@ use lightning::util::ser::Readable;
 use tokio_postgres::Client;
 
 use futures::StreamExt;
-use lightning::{log_gossip, log_info};
+use lightning::{log_debug, log_gossip, log_info};
 use lightning::util::logger::Logger;
 
 use crate::config;
@@ -92,6 +92,16 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 	log_info!(logger, "Last sync timestamp: {}", last_sync_timestamp);
 	let last_sync_timestamp_float = last_sync_timestamp as f64;
 
+	let current_time = SystemTime::now();
+	let current_timestamp = current_time.duration_since(UNIX_EPOCH).unwrap().as_secs();
+	log_info!(logger, "Current timestamp: {}", current_timestamp);
+
+	let current_day = current_timestamp / (24 * 3600);
+	let snapshot_scope = current_timestamp.saturating_sub(last_sync_timestamp as u64);
+	log_debug!(logger, "Current day index: {}", current_day);
+	log_debug!(logger, "Snapshot scope: {}s", snapshot_scope);
+	let include_reminders = ((current_day % 5) == 0 || snapshot_scope > (40 * 3600));
+
 	log_info!(logger, "Obtaining corresponding database entries");
 	// get all the channel announcements that are currently in the network graph
 	let announcement_rows = client.query_raw("SELECT announcement_signed, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen FROM channel_announcements WHERE short_channel_id = any($1) ORDER BY short_channel_id ASC", [&channel_ids]).await.unwrap();
@@ -162,17 +172,17 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 		log_info!(logger, "Fetched {} update rows of the first update in a new direction", newer_oldest_directional_update_count);
 	}
 
-	{
+	if include_reminders {
 		// THIS STEP IS USED TO DETERMINE IF A REMINDER UPDATE SHOULD BE SENT
 
 		log_info!(logger, "Annotating channel announcements whose latest channel update in a given direction occurred more than six days ago");
 		// Steps:
 		// — Obtain all updates, distinct by (scid, direction), ordered by seen DESC
 		// — From those updates, select distinct by (scid), ordered by seen ASC (to obtain the older one per direction)
-		let reminder_threshold_timestamp = SystemTime::now().checked_sub(config::CHANNEL_REMINDER_AGE).unwrap().duration_since(UNIX_EPOCH).unwrap().as_secs() as f64;
+		let reminder_threshold_timestamp = current_time.checked_sub(config::CHANNEL_REMINDER_AGE).unwrap().duration_since(UNIX_EPOCH).unwrap().as_secs() as f64;
 
 		log_info!(logger, "Fetch first time we saw the current value combination for each direction (prior mutations excepted)");
-		let reminder_lookup_threshold_timestamp = SystemTime::now().checked_sub(config::CHANNEL_REMINDER_AGE * 3).unwrap().duration_since(UNIX_EPOCH).unwrap().as_secs() as f64;
+		let reminder_lookup_threshold_timestamp = current_time.checked_sub(config::CHANNEL_REMINDER_AGE * 3).unwrap().duration_since(UNIX_EPOCH).unwrap().as_secs() as f64;
 		let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] = [&channel_ids, &reminder_lookup_threshold_timestamp];
 
 		/*

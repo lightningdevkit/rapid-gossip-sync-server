@@ -422,26 +422,31 @@ async fn test_channel_reminders() {
 		{ // unmodified but updated channel
 			let short_channel_id = 2;
 			let announcement = generate_announcement(short_channel_id);
-			let update_1 = generate_update(short_channel_id, false, timestamp - channel_reminder_delta - 1, 0, 0, 0, 5, 0);
-			let update_2 = generate_update(short_channel_id, true, timestamp - channel_reminder_delta - 1, 0, 0, 0, 3, 0);
-			let update_3 = generate_update(short_channel_id, false, timestamp - channel_reminder_delta + 10, 0, 0, 0, 5, 0);
-			let update_4 = generate_update(short_channel_id, true, timestamp - channel_reminder_delta + 10, 0, 0, 0, 3, 0);
-			let update_5 = generate_update(short_channel_id, false, timestamp - channel_reminder_delta + 20, 0, 0, 0, 5, 0);
-			let update_6 = generate_update(short_channel_id, true, timestamp - channel_reminder_delta + 20, 0, 0, 0, 3, 0);
+			let update_1 = generate_update(short_channel_id, false, timestamp - channel_reminder_delta - 10, 0, 0, 0, 5, 0);
+			// in the false direction, we have one update that's different prior
+			let update_2 = generate_update(short_channel_id, false, timestamp - channel_reminder_delta - 5, 0, 1, 0, 5, 0);
+			let update_3 = generate_update(short_channel_id, false, timestamp - channel_reminder_delta - 1, 0, 0, 0, 5, 0);
+			let update_4 = generate_update(short_channel_id, true, timestamp - channel_reminder_delta - 1, 0, 0, 0, 3, 0);
+			let update_5 = generate_update(short_channel_id, false, timestamp - channel_reminder_delta + 10, 0, 0, 0, 5, 0);
+			let update_6 = generate_update(short_channel_id, true, timestamp - channel_reminder_delta + 10, 0, 0, 0, 3, 0);
+			let update_7 = generate_update(short_channel_id, false, timestamp - channel_reminder_delta + 20, 0, 0, 0, 5, 0);
+			let update_8 = generate_update(short_channel_id, true, timestamp - channel_reminder_delta + 20, 0, 0, 0, 3, 0);
 
 			network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
-			network_graph_arc.update_channel_unsigned(&update_1.contents).unwrap();
-			network_graph_arc.update_channel_unsigned(&update_2.contents).unwrap();
+			network_graph_arc.update_channel_unsigned(&update_7.contents).unwrap();
+			network_graph_arc.update_channel_unsigned(&update_8.contents).unwrap();
 
 			receiver.send(GossipMessage::ChannelAnnouncement(announcement, Some(timestamp - channel_reminder_delta - 1))).await.unwrap();
-			receiver.send(GossipMessage::ChannelUpdate(update_1, Some(timestamp - channel_reminder_delta - 1))).await.unwrap();
-			receiver.send(GossipMessage::ChannelUpdate(update_2, Some(timestamp - channel_reminder_delta - 1))).await.unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update_1, Some(timestamp - channel_reminder_delta - 10))).await.unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update_2, Some(timestamp - channel_reminder_delta - 5))).await.unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update_3, Some(timestamp - channel_reminder_delta - 1))).await.unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update_4, Some(timestamp - channel_reminder_delta - 1))).await.unwrap();
 
-			receiver.send(GossipMessage::ChannelUpdate(update_3, Some(timestamp - channel_reminder_delta + 10))).await.unwrap();
-			receiver.send(GossipMessage::ChannelUpdate(update_4, Some(timestamp - channel_reminder_delta + 10))).await.unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update_5, Some(timestamp - channel_reminder_delta + 10))).await.unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update_6, Some(timestamp - channel_reminder_delta + 10))).await.unwrap();
 
-			receiver.send(GossipMessage::ChannelUpdate(update_5, Some(timestamp - channel_reminder_delta + 20))).await.unwrap();
-			receiver.send(GossipMessage::ChannelUpdate(update_6, Some(timestamp - channel_reminder_delta + 20))).await.unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update_7, Some(timestamp - channel_reminder_delta + 20))).await.unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update_8, Some(timestamp - channel_reminder_delta + 20))).await.unwrap();
 		}
 		drop(receiver);
 		persister.persist_gossip().await;
@@ -453,14 +458,15 @@ async fn test_channel_reminders() {
 	let serialization = serialize_delta(network_graph_arc.clone(), timestamp - channel_reminder_delta + 15, logger.clone()).await;
 
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 0 update rows of the first update in a new direction", 1);
-	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 1 update rows of the latest update in the less recently updated direction", 1);
+	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 4 update rows of the latest update in the less recently updated direction", 1);
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Processed 2 reference rows", 1);
+	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Processed intermediate rows (2)", 1);
 
-	assert_eq!(serialization.message_count, 2);
+	assert_eq!(serialization.message_count, 4);
 	assert_eq!(serialization.announcement_count, 0);
-	assert_eq!(serialization.update_count, 2);
+	assert_eq!(serialization.update_count, 4);
 	assert_eq!(serialization.update_count_full, 0);
-	assert_eq!(serialization.update_count_incremental, 2);
+	assert_eq!(serialization.update_count_incremental, 4);
 
 	tokio::task::spawn_blocking(move || {
 		drop(persister);

@@ -14,6 +14,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::ops::Deref;
 use std::sync::Arc;
+use std::time::SystemTime;
 use bitcoin::blockdata::constants::ChainHash;
 use lightning::log_info;
 
@@ -171,7 +172,7 @@ fn serialize_empty_blob(current_timestamp: u64) -> Vec<u8> {
 	blob
 }
 
-async fn serialize_delta<L: Deref + Clone>(network_graph: Arc<NetworkGraph<L>>, last_sync_timestamp: u32, logger: L) -> SerializedResponse where L::Target: Logger {
+async fn serialize_delta<L: Deref + Clone>(network_graph: Arc<NetworkGraph<L>>, last_sync_timestamp: u32, snapshot_calculation_time: Option<SystemTime>, logger: L) -> SerializedResponse where L::Target: Logger {
 	let client = connect_to_db().await;
 
 	network_graph.remove_stale_channels_and_tracking();
@@ -200,7 +201,7 @@ async fn serialize_delta<L: Deref + Clone>(network_graph: Arc<NetworkGraph<L>>, 
 	};
 
 	let mut delta_set = DeltaSet::new();
-	lookup::fetch_channel_announcements(&mut delta_set, network_graph, &client, last_sync_timestamp, logger.clone()).await;
+	lookup::fetch_channel_announcements(&mut delta_set, network_graph, &client, last_sync_timestamp, snapshot_calculation_time, logger.clone()).await;
 	log_info!(logger, "announcement channel count: {}", delta_set.len());
 	lookup::fetch_channel_updates(&mut delta_set, &client, last_sync_timestamp, logger.clone()).await;
 	log_info!(logger, "update-fetched channel count: {}", delta_set.len());

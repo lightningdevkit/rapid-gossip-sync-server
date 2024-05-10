@@ -70,7 +70,8 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 		let relative_symlink_to_snapshot_path = "../snapshots";
 
 		// 1. get the current timestamp
-		let snapshot_generation_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+		let snapshot_generation_time = SystemTime::now();
+		let snapshot_generation_timestamp = snapshot_generation_time.duration_since(UNIX_EPOCH).unwrap().as_secs();
 		let reference_timestamp = Self::round_down_to_nearest_multiple(snapshot_generation_timestamp, snapshot_interval as u64);
 		log_info!(self.logger, "Capturing snapshots at {} for: {}", snapshot_generation_timestamp, reference_timestamp);
 
@@ -113,7 +114,7 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 			{
 				log_info!(self.logger, "Calculating {}-second snapshot", current_scope);
 				// calculate the snapshot
-				let snapshot = super::serialize_delta(network_graph_clone, current_last_sync_timestamp.clone() as u32, self.logger.clone()).await;
+				let snapshot = super::serialize_delta(network_graph_clone, current_last_sync_timestamp.clone() as u32, Some(snapshot_generation_time), self.logger.clone()).await;
 
 				// persist the snapshot and update the symlink
 				let snapshot_filename = format!("snapshot__calculated-at:{}__range:{}-scope__previous-sync:{}.lngossip", reference_timestamp, current_scope, current_last_sync_timestamp);

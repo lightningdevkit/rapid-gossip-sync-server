@@ -220,7 +220,7 @@ async fn test_trivial_setup() {
 		persister.persist_gossip().await;
 	}
 
-	let serialization = serialize_delta(network_graph_arc.clone(), 0, logger.clone()).await;
+	let serialization = serialize_delta(network_graph_arc.clone(), 0, None, logger.clone()).await;
 	logger.assert_log_contains("rapid_gossip_sync_server", "announcement channel count: 1", 1);
 	clean_test_db().await;
 
@@ -305,7 +305,7 @@ async fn test_unidirectional_intermediate_update_consideration() {
 	let client_graph_arc = Arc::new(client_graph);
 	let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
 
-	let serialization = serialize_delta(network_graph_arc.clone(), timestamp + 1, logger.clone()).await;
+	let serialization = serialize_delta(network_graph_arc.clone(), timestamp + 1, None, logger.clone()).await;
 
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 1 update rows of the first update in a new direction", 1);
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Processed 1 reference rows", 1);
@@ -372,7 +372,7 @@ async fn test_bidirectional_intermediate_update_consideration() {
 	let channel_count = network_graph_arc.read_only().channels().len();
 	assert_eq!(channel_count, 1);
 
-	let serialization = serialize_delta(network_graph_arc.clone(), timestamp + 1, logger.clone()).await;
+	let serialization = serialize_delta(network_graph_arc.clone(), timestamp + 1, None, logger.clone()).await;
 
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 0 update rows of the first update in a new direction", 1);
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Processed 2 reference rows", 1);
@@ -455,7 +455,7 @@ async fn test_channel_reminders() {
 	let channel_count = network_graph_arc.read_only().channels().len();
 	assert_eq!(channel_count, 2);
 
-	let serialization = serialize_delta(network_graph_arc.clone(), timestamp - channel_reminder_delta + 15, logger.clone()).await;
+	let serialization = serialize_delta(network_graph_arc.clone(), timestamp - channel_reminder_delta + 15, None, logger.clone()).await;
 
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 0 update rows of the first update in a new direction", 1);
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 4 update rows of the latest update in the less recently updated direction", 1);
@@ -524,7 +524,7 @@ async fn test_full_snapshot_recency() {
 	let client_graph_arc = Arc::new(client_graph);
 
 	{ // sync after initial seed
-		let serialization = serialize_delta(network_graph_arc.clone(), 0, logger.clone()).await;
+		let serialization = serialize_delta(network_graph_arc.clone(), 0, None, logger.clone()).await;
 		logger.assert_log_contains("rapid_gossip_sync_server", "announcement channel count: 1", 1);
 
 		let channel_count = network_graph_arc.read_only().channels().len();
@@ -604,7 +604,7 @@ async fn test_full_snapshot_recency_with_wrong_seen_order() {
 	let client_graph_arc = Arc::new(client_graph);
 
 	{ // sync after initial seed
-		let serialization = serialize_delta(network_graph_arc.clone(), 0, logger.clone()).await;
+		let serialization = serialize_delta(network_graph_arc.clone(), 0, None, logger.clone()).await;
 		logger.assert_log_contains("rapid_gossip_sync_server", "announcement channel count: 1", 1);
 
 		let channel_count = network_graph_arc.read_only().channels().len();
@@ -683,7 +683,7 @@ async fn test_full_snapshot_recency_with_wrong_propagation_order() {
 	let client_graph_arc = Arc::new(client_graph);
 
 	{ // sync after initial seed
-		let serialization = serialize_delta(network_graph_arc.clone(), 0, logger.clone()).await;
+		let serialization = serialize_delta(network_graph_arc.clone(), 0, None, logger.clone()).await;
 		logger.assert_log_contains("rapid_gossip_sync_server", "announcement channel count: 1", 1);
 
 		let channel_count = network_graph_arc.read_only().channels().len();
@@ -816,7 +816,7 @@ async fn test_full_snapshot_mutiny_scenario() {
 	let client_graph_arc = Arc::new(client_graph);
 
 	{ // sync after initial seed
-		let serialization = serialize_delta(network_graph_arc.clone(), 0, logger.clone()).await;
+		let serialization = serialize_delta(network_graph_arc.clone(), 0, None, logger.clone()).await;
 		logger.assert_log_contains("rapid_gossip_sync_server", "announcement channel count: 1", 1);
 
 		let channel_count = network_graph_arc.read_only().channels().len();
@@ -929,7 +929,7 @@ async fn test_full_snapshot_interlaced_channel_timestamps() {
 	let client_graph_arc = Arc::new(client_graph);
 
 	{ // sync after initial seed
-		let serialization = serialize_delta(network_graph_arc.clone(), 0, logger.clone()).await;
+		let serialization = serialize_delta(network_graph_arc.clone(), 0, None, logger.clone()).await;
 		logger.assert_log_contains("rapid_gossip_sync_server", "announcement channel count: 2", 1);
 
 		let channel_count = network_graph_arc.read_only().channels().len();

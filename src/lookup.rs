@@ -76,7 +76,7 @@ impl Default for DirectedUpdateDelta {
 /// whether they had been seen before.
 /// Also include all announcements for which the first update was announced
 /// after `last_sync_timestamp`
-pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaSet, network_graph: Arc<NetworkGraph<L>>, client: &Client, last_sync_timestamp: u32, snapshot_calculation_time: Option<SystemTime>, logger: L) where L::Target: Logger {
+pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaSet, network_graph: Arc<NetworkGraph<L>>, client: &Client, last_sync_timestamp: u32, snapshot_reference_timestamp: Option<u64>, logger: L) where L::Target: Logger {
 	log_info!(logger, "Obtaining channel ids from network graph");
 	let channel_ids = {
 		let read_only_graph = network_graph.read_only();
@@ -92,8 +92,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 	log_info!(logger, "Last sync timestamp: {}", last_sync_timestamp);
 	let last_sync_timestamp_float = last_sync_timestamp as f64;
 
-	let current_time = snapshot_calculation_time.unwrap_or(SystemTime::now());
-	let current_timestamp = current_time.duration_since(UNIX_EPOCH).unwrap().as_secs();
+	let current_timestamp = snapshot_reference_timestamp.unwrap_or(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
 	log_info!(logger, "Current timestamp: {}", current_timestamp);
 
 	let include_reminders = {
@@ -103,8 +102,8 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 		log_debug!(logger, "Current day index: {}", current_day);
 		log_debug!(logger, "Current hour: {}", current_hour);
 
-		// anytime between 11pm and 1am
-		let is_reminder_hour = current_hour < 2 || current_hour > 22;
+		// every 5th day at midnight
+		let is_reminder_hour = (current_hour % 24) == 0;
 		let is_reminder_day = (current_day % 5) == 0;
 
 		let snapshot_scope = current_timestamp.saturating_sub(last_sync_timestamp as u64);
@@ -191,10 +190,10 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 		// Steps:
 		// — Obtain all updates, distinct by (scid, direction), ordered by seen DESC
 		// — From those updates, select distinct by (scid), ordered by seen ASC (to obtain the older one per direction)
-		let reminder_threshold_timestamp = current_time.checked_sub(config::CHANNEL_REMINDER_AGE).unwrap().duration_since(UNIX_EPOCH).unwrap().as_secs() as f64;
+		let reminder_threshold_timestamp = current_timestamp.checked_sub(config::CHANNEL_REMINDER_AGE.as_secs()).unwrap() as f64;
 
 		log_info!(logger, "Fetch first time we saw the current value combination for each direction (prior mutations excepted)");
-		let reminder_lookup_threshold_timestamp = current_time.checked_sub(config::CHANNEL_REMINDER_AGE * 3).unwrap().duration_since(UNIX_EPOCH).unwrap().as_secs() as f64;
+		let reminder_lookup_threshold_timestamp = current_timestamp.checked_sub(config::CHANNEL_REMINDER_AGE.as_secs() * 3).unwrap() as f64;
 		let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] = [&channel_ids, &reminder_lookup_threshold_timestamp];
 
 		/*

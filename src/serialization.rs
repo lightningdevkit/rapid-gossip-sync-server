@@ -181,6 +181,10 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 							// we don't count flags as mutated properties
 							serialization_set.updates.push(
 								UpdateSerialization::Incremental(latest_update, mutated_properties));
+						} else if channel_delta.requires_reminder {
+							if let Some(flags) = updates.serialization_update_flags {
+								serialization_set.updates.push(UpdateSerialization::Reminder(scid, flags));
+							}
 						}
 					} else {
 						// serialize the full update

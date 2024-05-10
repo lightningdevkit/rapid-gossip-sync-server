@@ -107,7 +107,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 		let is_reminder_day = (current_day % 5) == 0;
 
 		let snapshot_scope = current_timestamp.saturating_sub(last_sync_timestamp as u64);
-		let is_reminder_scope = snapshot_scope > (40 * 3600);
+		let is_reminder_scope = snapshot_scope > (50 * 3600);
 		log_debug!(logger, "Snapshot scope: {}s", snapshot_scope);
 
 		(is_reminder_hour && is_reminder_day) || is_reminder_scope

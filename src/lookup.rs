@@ -83,7 +83,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 		log_info!(logger, "Retrieved read-only network graph copy");
 		let channel_iterator = read_only_graph.channels().unordered_iter();
 		channel_iterator
-			.filter(|c| c.1.announcement_message.is_some())
+			.filter(|c| c.1.announcement_message.is_some() && c.1.one_to_two.is_some() && c.1.two_to_one.is_some())
 			.map(|c| c.1.announcement_message.as_ref().unwrap().contents.short_channel_id as i64)
 			.collect::<Vec<_>>()
 	};
@@ -365,7 +365,6 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 	let mut previous_scid = u64::MAX;
 	let mut previously_seen_directions = (false, false);
 
-	// let mut previously_seen_directions = (false, false);
 	let mut intermediate_update_count = 0;
 	while let Some(row_res) = pinned_updates.next().await {
 		let intermediate_update = row_res.unwrap();

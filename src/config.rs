@@ -14,7 +14,7 @@ use lightning::util::ser::Readable;
 use lightning_block_sync::http::HttpEndpoint;
 use tokio_postgres::Config;
 
-pub(crate) const SCHEMA_VERSION: i32 = 13;
+pub(crate) const SCHEMA_VERSION: i32 = 14;
 pub(crate) const SYMLINK_GRANULARITY_INTERVAL: u32 = 3600 * 3; // three hours
 pub(crate) const MAX_SNAPSHOT_SCOPE: u32 = 3600 * 24 * 21; // three weeks
 // generate symlinks based on a 3-hour-granularity
@@ -131,6 +131,18 @@ pub(crate) fn db_channel_update_table_creation_query() -> &'static str {
 		fee_proportional_millionths integer NOT NULL,
 		htlc_maximum_msat bigint NOT NULL,
 		blob_signed BYTEA NOT NULL,
+		seen timestamp NOT NULL DEFAULT NOW()
+	)"
+}
+
+pub(crate) fn db_node_announcement_table_creation_query() -> &'static str {
+	"CREATE TABLE IF NOT EXISTS node_announcements (
+		id SERIAL PRIMARY KEY,
+		public_key varchar(66) NOT NULL,
+		features BYTEA NOT NULL,
+		socket_addresses BYTEA NOT NULL,
+		timestamp bigint NOT NULL,
+		announcement_signed BYTEA,
 		seen timestamp NOT NULL DEFAULT NOW()
 	)"
 }

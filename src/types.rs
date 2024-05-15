@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use lightning::sign::KeysManager;
-use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate};
+use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, NodeAnnouncement};
 use lightning::ln::peer_handler::{ErroringMessageHandler, IgnoringMessageHandler, PeerManager};
 use lightning::util::logger::{Logger, Record};
 use crate::config;
@@ -14,6 +14,7 @@ pub(crate) type GossipPeerManager<L> = Arc<PeerManager<lightning_net_tokio::Sock
 
 #[derive(Debug)]
 pub(crate) enum GossipMessage {
+	NodeAnnouncement(NodeAnnouncement, Option<u32>),
 	// the second element is an optional override for the seen value
 	ChannelAnnouncement(ChannelAnnouncement, Option<u32>),
 	ChannelUpdate(ChannelUpdate, Option<u32>),

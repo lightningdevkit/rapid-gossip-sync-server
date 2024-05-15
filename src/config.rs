@@ -299,6 +299,11 @@ pub(crate) async fn upgrade_db(schema: i32, client: &mut tokio_postgres::Client)
 		tx.execute("UPDATE config SET db_schema = 13 WHERE id = 1", &[]).await.unwrap();
 		tx.commit().await.unwrap();
 	}
+	if schema >= 1 && schema <= 13 {
+		let tx = client.transaction().await.unwrap();
+		tx.execute("UPDATE config SET db_schema = 14 WHERE id = 1", &[]).await.unwrap();
+		tx.commit().await.unwrap();
+	}
 	if schema <= 1 || schema > SCHEMA_VERSION {
 		panic!("Unknown schema in db: {}, we support up to {}", schema, SCHEMA_VERSION);
 	}
@@ -384,7 +389,7 @@ mod tests {
 		// Set the environment variable, including a repeated comma, leading space, and trailing comma.
 		std::env::set_var("LN_PEERS", "035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226@170.75.163.209:9735,, 035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc227@170.75.163.210:9735,");
 		let peers = ln_peers();
-		
+
 		// Assert output is as expected
 		assert_eq!(
 			peers,

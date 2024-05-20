@@ -22,6 +22,10 @@ pub(crate) const MAX_SNAPSHOT_SCOPE: u32 = 3600 * 24 * 21; // three weeks
 /// That reminder may be either in the form of a channel announcement, or in the form of empty
 /// updates in both directions.
 pub(crate) const CHANNEL_REMINDER_AGE: Duration = Duration::from_secs(6 * 24 * 60 * 60);
+
+/// Maximum number of default features to calculate for node announcements
+pub(crate) const NODE_DEFAULT_FEATURE_COUNT: u8 = 6;
+
 /// The number of successful peer connections to await prior to continuing to gossip storage.
 /// The application will still work if the number of specified peers is lower, as long as there is
 /// at least one successful peer connection, but it may result in long startup times.

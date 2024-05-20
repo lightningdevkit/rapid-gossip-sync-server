@@ -114,12 +114,13 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 			{
 				log_info!(self.logger, "Calculating {}-second snapshot", current_scope);
 				// calculate the snapshot
-				let snapshot = super::serialize_delta(network_graph_clone, current_last_sync_timestamp.clone() as u32, Some(reference_timestamp), self.logger.clone()).await;
+				let delta = super::calculate_delta(network_graph_clone.clone(), current_last_sync_timestamp.clone() as u32, Some(reference_timestamp), self.logger.clone()).await;
+				let snapshot = super::serialize_delta(&delta, 1, self.logger.clone());
 
 				// persist the snapshot and update the symlink
 				let snapshot_filename = format!("snapshot__calculated-at:{}__range:{}-scope__previous-sync:{}.lngossip", reference_timestamp, current_scope, current_last_sync_timestamp);
 				let snapshot_path = format!("{}/{}", pending_snapshot_directory, snapshot_filename);
-				log_info!(self.logger, "Persisting {}-second snapshot: {} ({} messages, {} announcements, {} updates ({} full, {} incremental))", current_scope, snapshot_filename, snapshot.message_count, snapshot.announcement_count, snapshot.update_count, snapshot.update_count_full, snapshot.update_count_incremental);
+				log_info!(self.logger, "Persisting {}-second snapshot: {} ({} messages, {} announcements, {} updates ({} full, {} incremental))", current_scope, snapshot_filename, snapshot.message_count, snapshot.channel_announcement_count, snapshot.update_count, snapshot.update_count_full, snapshot.update_count_incremental);
 				fs::write(&snapshot_path, snapshot.data).unwrap();
 				snapshot_filenames_by_scope.insert(current_scope.clone(), snapshot_filename);
 			}

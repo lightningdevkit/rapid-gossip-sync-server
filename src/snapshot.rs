@@ -92,8 +92,8 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 		// channel updates
 
 		// purge and recreate the pending directories
-		let suffixes = ["", "/v2"];
-		for suffix in suffixes {
+		let suffixes = [("", ""), ("/v2", "../")];
+		for (suffix, _) in suffixes {
 			let versioned_snapshot_directory = format!("{}{}", pending_snapshot_directory, suffix);
 			let versioned_symlink_directory = format!("{}{}", pending_symlink_directory, suffix);
 
@@ -185,9 +185,9 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 			};
 			log_info!(self.logger, "i: {}, referenced scope: {}", i, referenced_scope);
 
-			for suffix in suffixes {
+			for (suffix, path_to_root) in suffixes {
 				let snapshot_filename = snapshot_filenames_by_scope.get(&referenced_scope).unwrap();
-				let relative_snapshot_path = format!("{}{}/{}", relative_symlink_to_snapshot_path, suffix, snapshot_filename);
+				let relative_snapshot_path = format!("{}{}{}/{}", path_to_root, relative_symlink_to_snapshot_path, suffix, snapshot_filename);
 
 				let canonical_last_sync_timestamp = if i == 0 {
 					// special-case 0 to always refer to a full/initial sync

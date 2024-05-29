@@ -4,16 +4,19 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use bitcoin::Network;
 use bitcoin::blockdata::constants::ChainHash;
+use lightning::ln::features::NodeFeatures;
 use lightning::ln::msgs::{UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::util::ser::{BigSize, Writeable};
 use crate::config;
 
-use crate::lookup::{DeltaSet, DirectedUpdateDelta};
+use crate::lookup::{DeltaSet, DirectedUpdateDelta, NodeDeltaSet};
 
 pub(super) struct SerializationSet {
 	pub(super) announcements: Vec<UnsignedChannelAnnouncement>,
 	pub(super) updates: Vec<UpdateSerialization>,
 	pub(super) full_update_defaults: DefaultUpdateValues,
+	pub(super) node_announcement_feature_defaults: Vec<NodeFeatures>,
+	pub(super) node_mutations: NodeDeltaSet,
 	pub(super) latest_seen: u32,
 	pub(super) chain_hash: ChainHash,
 }
@@ -104,11 +107,13 @@ struct FullUpdateValueHistograms {
 	htlc_maximum_msat: HashMap<u64, usize>,
 }
 
-pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32) -> SerializationSet {
+pub(super) fn serialize_delta_set(channel_delta_set: DeltaSet, node_delta_set: NodeDeltaSet, last_sync_timestamp: u32) -> SerializationSet {
 	let mut serialization_set = SerializationSet {
 		announcements: vec![],
 		updates: vec![],
 		full_update_defaults: Default::default(),
+		node_announcement_feature_defaults: vec![],
+		node_mutations: Default::default(),
 		chain_hash: ChainHash::using_genesis_block(Network::Bitcoin),
 		latest_seen: 0,
 	};
@@ -134,7 +139,7 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 	// if the previous seen update happened more than 6 days ago, the client may have pruned it, and an incremental update wouldn't work
 	let non_incremental_previous_update_threshold_timestamp = SystemTime::now().checked_sub(config::CHANNEL_REMINDER_AGE).unwrap().duration_since(UNIX_EPOCH).unwrap().as_secs() as u32;
 
-	for (scid, channel_delta) in delta_set.into_iter() {
+	for (scid, channel_delta) in channel_delta_set.into_iter() {
 
 		// any announcement chain hash is gonna be the same value. Just set it from the first one.
 		let channel_announcement_delta = channel_delta.announcement.as_ref().unwrap();
@@ -214,6 +219,22 @@ pub(super) fn serialize_delta_set(delta_set: DeltaSet, last_sync_timestamp: u32)
 	};
 
 	serialization_set.full_update_defaults = default_update_values;
+
+	serialization_set.node_mutations = node_delta_set.into_iter().filter(|(_id, delta)| {
+		// either something changed, or this node is new
+		delta.has_feature_set_changed || delta.has_address_set_changed || delta.last_details_before_seen.is_none()
+	}).collect();
+
+	let mut node_feature_histogram: HashMap<&NodeFeatures, usize> = Default::default();
+	for (_id, delta) in serialization_set.node_mutations.iter() {
+		if delta.has_feature_set_changed || delta.last_details_before_seen.is_none() {
+			if let Some(latest_details) = delta.latest_details_after_seen.as_ref() {
+				*node_feature_histogram.entry(&latest_details.features).or_insert(0) += 1;
+			};
+		}
+	}
+	serialization_set.node_announcement_feature_defaults = find_leading_histogram_entries(node_feature_histogram, config::NODE_DEFAULT_FEATURE_COUNT as usize);
+
 	serialization_set
 }
 
@@ -326,4 +347,10 @@ pub(super) fn find_most_common_histogram_entry_with_default<T: Copy>(histogram: 
 	// the default should pretty much always be a 0 as T
 	// though for htlc maximum msat it could be a u64::max
 	default
+}
+
+pub(super) fn find_leading_histogram_entries(histogram: HashMap<&NodeFeatures, usize>, count: usize) -> Vec<NodeFeatures> {
+	let mut entry_counts: Vec<_> = histogram.iter().filter(|&(_, &count)| count > 1).collect();
+	entry_counts.sort_by(|a, b| b.1.cmp(&a.1));
+	entry_counts.into_iter().take(count).map(|(&features, _count)| features.clone()).collect()
 }

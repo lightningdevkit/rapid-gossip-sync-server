@@ -559,6 +559,15 @@ pub(super) async fn fetch_node_updates<L: Deref>(client: &Client, last_sync_time
 			if address_set != last_seen_update.addresses {
 				current_node_delta.has_address_set_changed = true;
 			}
+		} else if !is_previously_processed_node_id {
+			if current_node_delta.last_details_before_seen.is_none() {
+				if !address_set.is_empty() {
+					current_node_delta.has_address_set_changed = true;
+				}
+				if unsigned_node_announcement.features != NodeFeatures::empty() {
+					current_node_delta.has_feature_set_changed = true;
+				}
+			}
 		}
 
 		if !is_previously_processed_node_id {

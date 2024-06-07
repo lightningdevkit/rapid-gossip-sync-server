@@ -338,13 +338,11 @@ fn serialize_delta<L: Deref + Clone>(serialization_details: &SerializationSet, s
 						};
 					}
 
-					if total_address_count > 0 {
-						// signal the presence of node addresses
-						current_node_delta_serialization[0] |= 1 << 2;
-						// serialize the actual addresses and count
-						total_address_count.write(&mut current_node_delta_serialization).unwrap();
-						current_node_delta_serialization.append(&mut address_serialization);
-					}
+					// signal the presence of node addresses
+					current_node_delta_serialization[0] |= 1 << 2;
+					// serialize the actual addresses and count
+					total_address_count.write(&mut current_node_delta_serialization).unwrap();
+					current_node_delta_serialization.append(&mut address_serialization);
 				}
 
 				if node_delta.has_feature_set_changed {

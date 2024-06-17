@@ -221,8 +221,17 @@ pub(super) fn serialize_delta_set(channel_delta_set: DeltaSet, node_delta_set: N
 	serialization_set.full_update_defaults = default_update_values;
 
 	serialization_set.node_mutations = node_delta_set.into_iter().filter(|(_id, delta)| {
-		// either something changed, or this node is new
-		delta.has_feature_set_changed || delta.has_address_set_changed || delta.last_details_before_seen.is_none()
+		if delta.latest_details_after_seen.is_none() {
+			// this entry is vestigial due to the optimized reminder necessity lookup
+			return false;
+		}
+		if delta.last_details_before_seen.is_none() {
+			// this node is new and needs including
+			return true;
+		}
+		// either something changed, or we're sending a reminder
+		// consider restricting snapshots that include reminders in the future
+		delta.has_feature_set_changed || delta.has_address_set_changed || delta.requires_reminder
 	}).collect();
 
 	let mut node_feature_histogram: HashMap<&NodeFeatures, usize> = Default::default();

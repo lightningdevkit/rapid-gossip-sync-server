@@ -191,7 +191,7 @@ async fn calculate_delta<L: Deref + Clone>(network_graph: Arc<NetworkGraph<L>>, 
 	log_info!(logger, "announcement channel count: {}", delta_set.len());
 	lookup::fetch_channel_updates(&mut delta_set, &client, last_sync_timestamp, logger.clone()).await;
 	log_info!(logger, "update-fetched channel count: {}", delta_set.len());
-	let node_delta_set = lookup::fetch_node_updates(&client, last_sync_timestamp, logger.clone()).await;
+	let node_delta_set = lookup::fetch_node_updates(&client, last_sync_timestamp, snapshot_reference_timestamp, logger.clone()).await;
 	log_info!(logger, "update-fetched node count: {}", node_delta_set.len());
 	lookup::filter_delta_set(&mut delta_set, logger.clone());
 	log_info!(logger, "update-filtered channel count: {}", delta_set.len());

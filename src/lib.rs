@@ -362,6 +362,8 @@ fn serialize_delta<L: Deref + Clone>(serialization_details: &SerializationSet, s
 
 				if node_delta.has_address_set_changed || node_delta.has_feature_set_changed {
 					node_update_count += 1;
+				} else if node_delta.requires_reminder {
+					current_node_delta_serialization[0] |= 1 << 6;
 				}
 			}
 		}

@@ -15,7 +15,7 @@ use lightning::ln::features::NodeFeatures;
 use lightning::util::logger::Logger;
 
 use crate::config;
-use crate::serialization::MutatedProperties;
+use crate::serialization::{MutatedProperties, NodeSerializationStrategy};
 
 /// The delta set needs to be a BTreeMap so the keys are sorted.
 /// That way, the scids in the response automatically grow monotonically
@@ -54,7 +54,7 @@ pub(super) struct ChannelDelta {
 
 pub(super) struct NodeDelta {
 	/// The most recently received, but new-to-the-client, node details
-	pub(super) latest_details_after_seen: Option<NodeDetails>,
+	pub(super) latest_known_details: Option<NodeDetails>,
 
 	/// Between last_details_before_seen and latest_details_after_seen, including any potential
 	/// intermediate updates that are not kept track of here, has the set of features this node
@@ -71,7 +71,10 @@ pub(super) struct NodeDelta {
 	pub(super) requires_reminder: bool,
 
 	/// The most recent node details that the client would have seen already
-	pub(super) last_details_before_seen: Option<NodeDetails>
+	pub(super) last_details_before_seen: Option<NodeDetails>,
+
+	/// How should this node be serialized
+	pub(super) strategy: Option<NodeSerializationStrategy>
 }
 
 pub(super) struct NodeDetails {
@@ -95,11 +98,12 @@ impl Default for ChannelDelta {
 impl Default for NodeDelta {
 	fn default() -> Self {
 		Self {
-			latest_details_after_seen: None,
+			latest_known_details: None,
 			has_feature_set_changed: false,
 			has_address_set_changed: false,
 			requires_reminder: false,
 			last_details_before_seen: None,
+			strategy: None
 		}
 	}
 }
@@ -532,7 +536,8 @@ pub(super) async fn fetch_node_updates<L: Deref + Clone>(client: &Client, last_s
 	// have been omitted)
 
 	let current_timestamp = snapshot_reference_timestamp.unwrap_or(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
-	let reminder_lookup_threshold_timestamp = current_timestamp.checked_sub(config::CHANNEL_REMINDER_AGE.as_secs()).unwrap() as u32;
+	let reminder_inclusion_threshold_timestamp = current_timestamp.checked_sub(config::CHANNEL_REMINDER_AGE.as_secs()).unwrap() as u32;
+	let reminder_lookup_threshold_timestamp = current_timestamp.checked_sub(config::CHANNEL_REMINDER_AGE.as_secs() * 3).unwrap() as u32;
 
 	// this is the timestamp we need to fetch all relevant updates
 	let include_reminders = should_snapshot_include_reminders(last_sync_timestamp, current_timestamp, logger.clone());
@@ -586,21 +591,10 @@ pub(super) async fn fetch_node_updates<L: Deref + Clone>(client: &Client, last_s
 					current_node_delta.has_address_set_changed = true;
 					current_node_delta.requires_reminder = false;
 				}
-			} else if !is_previously_processed_node_id {
-				if current_node_delta.last_details_before_seen.is_none() {
-					if !address_set.is_empty() {
-						current_node_delta.has_address_set_changed = true;
-						current_node_delta.requires_reminder = false;
-					}
-					if unsigned_node_announcement.features != NodeFeatures::empty() {
-						current_node_delta.has_feature_set_changed = true;
-						current_node_delta.requires_reminder = false;
-					}
-				}
 			}
 
 			if !is_previously_processed_node_id {
-				(*current_node_delta).latest_details_after_seen.get_or_insert(NodeDetails {
+				(*current_node_delta).latest_known_details.get_or_insert(NodeDetails {
 					seen: current_seen_timestamp,
 					features: unsigned_node_announcement.features,
 					addresses: address_set,
@@ -610,13 +604,31 @@ pub(super) async fn fetch_node_updates<L: Deref + Clone>(client: &Client, last_s
 			// This node update occurred prior to the last_sync_timestamp, which means that this is
 			// purely for the purpose of considering whether a reminder might be necessary. Any
 			// mutation seen within the previous scope would have marked a reminder as unnecessary
-			if let Some(latest_update) = current_node_delta.latest_details_after_seen.as_ref() {
-				if unsigned_node_announcement.features != latest_update.features {
-					current_node_delta.requires_reminder = false;
+
+			// If the most recent mutation occurred prior to the last_sync_timestamp, there are only
+			// two considerations:
+			// If the latest mutation occurred within the last 6 days, ignore
+			// If the latest mutation occurred more than 6 days ago, send a reminder
+
+			// If we are in this current else clause, it already means that no mutation has occurred
+			// between last_sync_timestamp and now.
+			if let Some(latest_update) = current_node_delta.latest_known_details.as_ref() {
+				if current_seen_timestamp > reminder_inclusion_threshold_timestamp {
+					// if this mutation occurred within the last 6 days, no reminder is necessary
+					if unsigned_node_announcement.features != latest_update.features {
+						current_node_delta.requires_reminder = false;
+					}
+					if address_set != latest_update.addresses {
+						current_node_delta.requires_reminder = false;
+					}
 				}
-				if address_set != latest_update.addresses {
-					current_node_delta.requires_reminder = false;
-				}
+			} else {
+				// we're obtaining the latest seen details from before the last snapshot scope
+				current_node_delta.latest_known_details = Some(NodeDetails {
+					seen: current_seen_timestamp,
+					features: unsigned_node_announcement.features,
+					addresses: address_set,
+				});
 			}
 		}
 

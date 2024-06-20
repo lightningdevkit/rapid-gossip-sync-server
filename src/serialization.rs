@@ -99,6 +99,17 @@ impl UpdateSerialization {
 	}
 }
 
+pub(super) enum NodeSerializationStrategy {
+	/// Only serialize the aspects of the node ID that have been mutated. Skip if they haven't been
+	Mutated,
+	/// Whether or not the addresses or features have been mutated, serialize this node in full. It
+	/// may have been purged from the client.
+	Full,
+	/// This node ID has been seen recently enough to not have been pruned, and this update serves
+	/// solely the purpose of delaying any pruning, without applying any mutations
+	Reminder
+}
+
 struct FullUpdateValueHistograms {
 	cltv_expiry_delta: HashMap<u16, usize>,
 	htlc_minimum_msat: HashMap<u64, usize>,
@@ -220,24 +231,41 @@ pub(super) fn serialize_delta_set(channel_delta_set: DeltaSet, node_delta_set: N
 
 	serialization_set.full_update_defaults = default_update_values;
 
-	serialization_set.node_mutations = node_delta_set.into_iter().filter(|(_id, delta)| {
-		if delta.latest_details_after_seen.is_none() {
+	serialization_set.node_mutations = node_delta_set.into_iter().filter_map(|(id, mut delta)| {
+		if delta.latest_known_details.is_none() {
 			// this entry is vestigial due to the optimized reminder necessity lookup
-			return false;
+			return None;
 		}
-		if delta.last_details_before_seen.is_none() {
-			// this node is new and needs including
-			return true;
+
+		let last_details_before_seen = if let Some(last_details_before_seen) = &delta.last_details_before_seen {
+			last_details_before_seen
+		} else {
+			// this node is new and needs full serialization
+			delta.strategy = Some(NodeSerializationStrategy::Full);
+			return Some((id, delta));
+		};
+
+		delta.strategy = Some(NodeSerializationStrategy::Mutated);
+		if delta.has_feature_set_changed || delta.has_address_set_changed {
+			return Some((id, delta));
 		}
+
+		if !delta.requires_reminder {
+			return None;
+		}
+
 		// either something changed, or we're sending a reminder
 		// consider restricting snapshots that include reminders in the future
-		delta.has_feature_set_changed || delta.has_address_set_changed || delta.requires_reminder
+		if last_details_before_seen.seen > non_incremental_previous_update_threshold_timestamp {
+			delta.strategy = Some(NodeSerializationStrategy::Reminder);
+		}
+		Some((id, delta))
 	}).collect();
 
 	let mut node_feature_histogram: HashMap<&NodeFeatures, usize> = Default::default();
 	for (_id, delta) in serialization_set.node_mutations.iter() {
 		if delta.has_feature_set_changed || delta.last_details_before_seen.is_none() {
-			if let Some(latest_details) = delta.latest_details_after_seen.as_ref() {
+			if let Some(latest_details) = delta.latest_known_details.as_ref() {
 				*node_feature_histogram.entry(&latest_details.features).or_insert(0) += 1;
 			};
 		}

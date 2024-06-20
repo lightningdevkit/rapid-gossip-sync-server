@@ -26,7 +26,7 @@ use crate::config::SYMLINK_GRANULARITY_INTERVAL;
 use crate::lookup::DeltaSet;
 
 use crate::persistence::GossipPersister;
-use crate::serialization::{SerializationSet, UpdateSerialization};
+use crate::serialization::{NodeSerializationStrategy, SerializationSet, UpdateSerialization};
 use crate::snapshot::Snapshotter;
 use crate::types::RGSSLogger;
 
@@ -306,6 +306,9 @@ fn serialize_delta<L: Deref + Clone>(serialization_details: &SerializationSet, s
 
 		if serialization_version >= 2 {
 			if let Some(node_delta) = serialization_details.node_mutations.get(&current_node_id) {
+				let strategy = node_delta.strategy.as_ref().unwrap();
+				let mut node_has_update = false;
+
 				/*
 				Bitmap:
 				7: expect extra data after the pubkey (a u16 for the count, and then that number of bytes)
@@ -317,10 +320,8 @@ fn serialize_delta<L: Deref + Clone>(serialization_details: &SerializationSet, s
 				0: used for odd keys
 				*/
 
-				if node_delta.has_address_set_changed {
-					node_address_update_count += 1;
-
-					let address_set = &node_delta.latest_details_after_seen.as_ref().unwrap().addresses;
+				if node_delta.has_address_set_changed || matches!(strategy, NodeSerializationStrategy::Full) {
+					let address_set = &node_delta.latest_known_details.as_ref().unwrap().addresses;
 					let mut address_serialization = Vec::new();
 
 					// we don't know a priori how many are <= 255 bytes
@@ -338,6 +339,9 @@ fn serialize_delta<L: Deref + Clone>(serialization_details: &SerializationSet, s
 						};
 					}
 
+					node_address_update_count += 1;
+					node_has_update = true;
+
 					// signal the presence of node addresses
 					current_node_delta_serialization[0] |= 1 << 2;
 					// serialize the actual addresses and count
@@ -345,10 +349,10 @@ fn serialize_delta<L: Deref + Clone>(serialization_details: &SerializationSet, s
 					current_node_delta_serialization.append(&mut address_serialization);
 				}
 
-				if node_delta.has_feature_set_changed {
+				if node_delta.has_feature_set_changed || matches!(strategy, NodeSerializationStrategy::Full) {
+					let latest_features = &node_delta.latest_known_details.as_ref().unwrap().features;
 					node_feature_update_count += 1;
-
-					let latest_features = &node_delta.latest_details_after_seen.as_ref().unwrap().features;
+					node_has_update = true;
 
 					// are these features among the most common ones?
 					if let Some(index) = serialization_details.node_announcement_feature_defaults.iter().position(|f| f == latest_features) {
@@ -360,9 +364,9 @@ fn serialize_delta<L: Deref + Clone>(serialization_details: &SerializationSet, s
 					}
 				}
 
-				if node_delta.has_address_set_changed || node_delta.has_feature_set_changed {
+				if node_has_update {
 					node_update_count += 1;
-				} else if node_delta.requires_reminder {
+				} else if node_delta.requires_reminder && matches!(strategy, NodeSerializationStrategy::Reminder) {
 					current_node_delta_serialization[0] |= 1 << 6;
 				}
 			}

@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io::Cursor;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+use bitcoin::io::Cursor;
 
 use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, NodeAnnouncement, SocketAddress, UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::routing::gossip::{NetworkGraph, NodeId};
@@ -160,7 +161,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 	while let Some(row_res) = pinned_rows.next().await {
 		let current_announcement_row = row_res.unwrap();
 		let blob: Vec<u8> = current_announcement_row.get("announcement_signed");
-		let mut readable = Cursor::new(blob);
+		let mut readable = Cursor::new(&blob);
 		let unsigned_announcement = ChannelAnnouncement::read(&mut readable).unwrap().contents;
 
 		let scid = unsigned_announcement.short_channel_id;
@@ -287,7 +288,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 
 			if seen < reminder_threshold_timestamp as u32 {
 				let blob: Vec<u8> = current_row.get("blob_signed");
-				let mut readable = Cursor::new(blob);
+				let mut readable = Cursor::new(&blob);
 				let unsigned_channel_update = ChannelUpdate::read(&mut readable).unwrap().contents;
 
 				let scid = unsigned_channel_update.short_channel_id;
@@ -365,7 +366,7 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 		let direction: bool = current_reference.get("direction");
 		let seen = current_reference.get::<_, i64>("seen") as u32;
 		let blob: Vec<u8> = current_reference.get("blob_signed");
-		let mut readable = Cursor::new(blob);
+		let mut readable = Cursor::new(&blob);
 		let unsigned_channel_update = ChannelUpdate::read(&mut readable).unwrap().contents;
 		let scid = unsigned_channel_update.short_channel_id;
 
@@ -415,7 +416,7 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 		let direction: bool = intermediate_update.get("direction");
 		let current_seen_timestamp = intermediate_update.get::<_, i64>("seen") as u32;
 		let blob: Vec<u8> = intermediate_update.get("blob_signed");
-		let mut readable = Cursor::new(blob);
+		let mut readable = Cursor::new(&blob);
 		let unsigned_channel_update = ChannelUpdate::read(&mut readable).unwrap().contents;
 
 		let scid = unsigned_channel_update.short_channel_id;
@@ -451,7 +452,7 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 
 		// determine mutations
 		if let Some(last_seen_update) = update_delta.last_update_before_seen.as_ref() {
-			if unsigned_channel_update.flags != last_seen_update.update.flags {
+			if unsigned_channel_update.channel_flags != last_seen_update.update.channel_flags {
 				update_delta.mutated_properties.flags = true;
 			}
 			if unsigned_channel_update.cltv_expiry_delta != last_seen_update.update.cltv_expiry_delta {
@@ -498,7 +499,7 @@ pub(super) async fn fetch_node_updates<L: Deref>(client: &Client, last_sync_time
 
 		let seen = current_reference.get::<_, i64>("seen") as u32;
 		let blob: Vec<u8> = current_reference.get("announcement_signed");
-		let mut readable = Cursor::new(blob);
+		let mut readable = Cursor::new(&blob);
 		let unsigned_node_announcement = NodeAnnouncement::read(&mut readable).unwrap().contents;
 		let node_id = unsigned_node_announcement.node_id;
 
@@ -541,7 +542,7 @@ pub(super) async fn fetch_node_updates<L: Deref>(client: &Client, last_sync_time
 
 		let current_seen_timestamp = intermediate_update.get::<_, i64>("seen") as u32;
 		let blob: Vec<u8> = intermediate_update.get("announcement_signed");
-		let mut readable = Cursor::new(blob);
+		let mut readable = Cursor::new(&blob);
 		let unsigned_node_announcement = NodeAnnouncement::read(&mut readable).unwrap().contents;
 
 		let node_id = unsigned_node_announcement.node_id;

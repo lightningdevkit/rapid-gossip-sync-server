@@ -93,7 +93,7 @@ impl UpdateSerialization {
 	fn flags(&self) -> u8 {
 		match self {
 			UpdateSerialization::Full(latest_update)|
-			UpdateSerialization::Incremental(latest_update, _) => latest_update.flags,
+			UpdateSerialization::Incremental(latest_update, _) => latest_update.channel_flags,
 			UpdateSerialization::Reminder(_, flags) => *flags,
 		}
 	}

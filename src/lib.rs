@@ -320,7 +320,7 @@ fn serialize_delta<L: Deref + Clone>(serialization_details: &SerializationSet, s
 				if node_delta.has_address_set_changed {
 					node_address_update_count += 1;
 
-					let address_set = &node_delta.latest_details_after_seen.as_ref().unwrap().addresses;
+					let address_set = &node_delta.latest_details.as_ref().unwrap().addresses;
 					let mut address_serialization = Vec::new();
 
 					// we don't know a priori how many are <= 255 bytes
@@ -348,7 +348,7 @@ fn serialize_delta<L: Deref + Clone>(serialization_details: &SerializationSet, s
 				if node_delta.has_feature_set_changed {
 					node_feature_update_count += 1;
 
-					let latest_features = &node_delta.latest_details_after_seen.as_ref().unwrap().features;
+					let latest_features = &node_delta.latest_details.as_ref().unwrap().features;
 
 					// are these features among the most common ones?
 					if let Some(index) = serialization_details.node_announcement_feature_defaults.iter().position(|f| f == latest_features) {

@@ -54,7 +54,7 @@ pub(super) struct ChannelDelta {
 
 pub(super) struct NodeDelta {
 	/// The most recently received, but new-to-the-client, node details
-	pub(super) latest_details_after_seen: Option<NodeDetails>,
+	pub(super) latest_details: Option<NodeDetails>,
 
 	/// Between last_details_before_seen and latest_details_after_seen, including any potential
 	/// intermediate updates that are not kept track of here, has the set of features this node
@@ -91,7 +91,7 @@ impl Default for ChannelDelta {
 impl Default for NodeDelta {
 	fn default() -> Self {
 		Self {
-			latest_details_after_seen: None,
+			latest_details: None,
 			has_feature_set_changed: false,
 			has_address_set_changed: false,
 			last_details_before_seen: None,
@@ -571,7 +571,7 @@ pub(super) async fn fetch_node_updates<L: Deref>(client: &Client, last_sync_time
 		}
 
 		if !is_previously_processed_node_id {
-			(*current_node_delta).latest_details_after_seen.get_or_insert(NodeDetails {
+			(*current_node_delta).latest_details.get_or_insert(NodeDetails {
 				seen: current_seen_timestamp,
 				features: unsigned_node_announcement.features,
 				addresses: address_set,

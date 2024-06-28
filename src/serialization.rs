@@ -228,7 +228,7 @@ pub(super) fn serialize_delta_set(channel_delta_set: DeltaSet, node_delta_set: N
 	let mut node_feature_histogram: HashMap<&NodeFeatures, usize> = Default::default();
 	for (_id, delta) in serialization_set.node_mutations.iter() {
 		if delta.has_feature_set_changed || delta.last_details_before_seen.is_none() {
-			if let Some(latest_details) = delta.latest_details_after_seen.as_ref() {
+			if let Some(latest_details) = delta.latest_details.as_ref() {
 				*node_feature_histogram.entry(&latest_details.features).or_insert(0) += 1;
 			};
 		}

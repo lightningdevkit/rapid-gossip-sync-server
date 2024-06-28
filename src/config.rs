@@ -23,6 +23,10 @@ pub(crate) const MAX_SNAPSHOT_SCOPE: u32 = 3600 * 24 * 21; // three weeks
 /// updates in both directions.
 pub(crate) const CHANNEL_REMINDER_AGE: Duration = Duration::from_secs(6 * 24 * 60 * 60);
 
+/// The interval after which graph data gets pruned after it was first seen
+/// This should match the LDK default pruning interval, which is 14 days
+pub(crate) const PRUNE_INTERVAL: Duration = Duration::from_secs(14 * 24 * 60 * 60);
+
 /// Maximum number of default features to calculate for node announcements
 pub(crate) const NODE_DEFAULT_FEATURE_COUNT: u8 = 6;
 

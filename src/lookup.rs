@@ -112,6 +112,24 @@ impl Default for DirectedUpdateDelta {
 	}
 }
 
+fn should_snapshot_include_reminders<L: Deref>(last_sync_timestamp: u32, current_timestamp: u64, logger: &L) -> bool where L::Target: Logger {
+	let current_hour = current_timestamp / 3600;
+	let current_day = current_timestamp / (24 * 3600);
+
+	log_debug!(logger, "Current day index: {}", current_day);
+	log_debug!(logger, "Current hour: {}", current_hour);
+
+	// every 5th day at midnight
+	let is_reminder_hour = (current_hour % 24) == 0;
+	let is_reminder_day = (current_day % 5) == 0;
+
+	let snapshot_scope = current_timestamp.saturating_sub(last_sync_timestamp as u64);
+	let is_reminder_scope = snapshot_scope > (50 * 3600);
+	log_debug!(logger, "Snapshot scope: {}s", snapshot_scope);
+
+	(is_reminder_hour && is_reminder_day) || is_reminder_scope
+}
+
 /// Fetch all the channel announcements that are presently in the network graph, regardless of
 /// whether they had been seen before.
 /// Also include all announcements for which the first update was announced
@@ -135,23 +153,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 	let current_timestamp = snapshot_reference_timestamp.unwrap_or(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
 	log_info!(logger, "Current timestamp: {}", current_timestamp);
 
-	let include_reminders = {
-		let current_hour = current_timestamp / 3600;
-		let current_day = current_timestamp / (24 * 3600);
-
-		log_debug!(logger, "Current day index: {}", current_day);
-		log_debug!(logger, "Current hour: {}", current_hour);
-
-		// every 5th day at midnight
-		let is_reminder_hour = (current_hour % 24) == 0;
-		let is_reminder_day = (current_day % 5) == 0;
-
-		let snapshot_scope = current_timestamp.saturating_sub(last_sync_timestamp as u64);
-		let is_reminder_scope = snapshot_scope > (50 * 3600);
-		log_debug!(logger, "Snapshot scope: {}s", snapshot_scope);
-
-		(is_reminder_hour && is_reminder_day) || is_reminder_scope
-	};
+	let include_reminders = should_snapshot_include_reminders(last_sync_timestamp, current_timestamp, &logger);
 
 	log_info!(logger, "Obtaining corresponding database entries");
 	// get all the channel announcements that are currently in the network graph

@@ -99,6 +99,22 @@ impl UpdateSerialization {
 	}
 }
 
+pub(super) struct MutatedNodeProperties {
+	pub(super) addresses: bool,
+	pub(super) features: bool,
+}
+
+pub(super) enum NodeSerializationStrategy {
+	/// Only serialize the aspects of the node ID that have been mutated. Skip if they haven't been
+	Mutated(MutatedNodeProperties),
+	/// Whether or not the addresses or features have been mutated, serialize this node in full. It
+	/// may have been purged from the client.
+	Full,
+	/// This node ID has been seen recently enough to not have been pruned, and this update serves
+	/// solely the purpose of delaying any pruning, without applying any mutations
+	Reminder
+}
+
 struct FullUpdateValueHistograms {
 	cltv_expiry_delta: HashMap<u16, usize>,
 	htlc_minimum_msat: HashMap<u64, usize>,
@@ -222,12 +238,18 @@ pub(super) fn serialize_delta_set(channel_delta_set: DeltaSet, node_delta_set: N
 
 	serialization_set.node_mutations = node_delta_set.into_iter().filter(|(_id, delta)| {
 		// either something changed, or this node is new
-		delta.has_feature_set_changed || delta.has_address_set_changed || delta.last_details_before_seen.is_none()
+		delta.strategy.is_some()
 	}).collect();
 
 	let mut node_feature_histogram: HashMap<&NodeFeatures, usize> = Default::default();
 	for (_id, delta) in serialization_set.node_mutations.iter() {
-		if delta.has_feature_set_changed || delta.last_details_before_seen.is_none() {
+		// consider either full or feature-mutating serializations for histogram
+		let mut should_add_to_histogram = matches!(delta.strategy, Some(NodeSerializationStrategy::Full));
+		if let Some(NodeSerializationStrategy::Mutated(mutation)) = delta.strategy.as_ref() {
+			should_add_to_histogram = mutation.features;
+		}
+
+		if should_add_to_histogram {
 			if let Some(latest_details) = delta.latest_details.as_ref() {
 				*node_feature_histogram.entry(&latest_details.features).or_insert(0) += 1;
 			};

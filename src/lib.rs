@@ -26,7 +26,7 @@ use crate::config::SYMLINK_GRANULARITY_INTERVAL;
 use crate::lookup::DeltaSet;
 
 use crate::persistence::GossipPersister;
-use crate::serialization::{SerializationSet, UpdateSerialization};
+use crate::serialization::{MutatedNodeProperties, NodeSerializationStrategy, SerializationSet, UpdateSerialization};
 use crate::snapshot::Snapshotter;
 use crate::types::RGSSLogger;
 
@@ -191,7 +191,7 @@ async fn calculate_delta<L: Deref + Clone>(network_graph: Arc<NetworkGraph<L>>, 
 	log_info!(logger, "announcement channel count: {}", delta_set.len());
 	lookup::fetch_channel_updates(&mut delta_set, &client, last_sync_timestamp, logger.clone()).await;
 	log_info!(logger, "update-fetched channel count: {}", delta_set.len());
-	let node_delta_set = lookup::fetch_node_updates(network_graph, &client, last_sync_timestamp, logger.clone()).await;
+	let node_delta_set = lookup::fetch_node_updates(network_graph, &client, last_sync_timestamp, snapshot_reference_timestamp, logger.clone()).await;
 	log_info!(logger, "update-fetched node count: {}", node_delta_set.len());
 	lookup::filter_delta_set(&mut delta_set, logger.clone());
 	log_info!(logger, "update-filtered channel count: {}", delta_set.len());
@@ -306,6 +306,9 @@ fn serialize_delta<L: Deref + Clone>(serialization_details: &SerializationSet, s
 
 		if serialization_version >= 2 {
 			if let Some(node_delta) = serialization_details.node_mutations.get(&current_node_id) {
+				let strategy = node_delta.strategy.as_ref().unwrap();
+				let mut node_has_update = false;
+
 				/*
 				Bitmap:
 				7: expect extra data after the pubkey (a u16 for the count, and then that number of bytes)
@@ -317,51 +320,60 @@ fn serialize_delta<L: Deref + Clone>(serialization_details: &SerializationSet, s
 				0: used for odd keys
 				*/
 
-				if node_delta.has_address_set_changed {
-					node_address_update_count += 1;
+				match strategy {
+					NodeSerializationStrategy::Mutated(MutatedNodeProperties { addresses: true, .. }) | NodeSerializationStrategy::Full => {
+						let address_set = &node_delta.latest_details.as_ref().unwrap().addresses;
+						let mut address_serialization = Vec::new();
 
-					let address_set = &node_delta.latest_details.as_ref().unwrap().addresses;
-					let mut address_serialization = Vec::new();
+						// we don't know a priori how many are <= 255 bytes
+						let mut total_address_count = 0u8;
 
-					// we don't know a priori how many are <= 255 bytes
-					let mut total_address_count = 0u8;
-
-					for address in address_set.iter() {
-						if total_address_count == u8::MAX {
-							// don't serialize more than 255 addresses
-							break;
+						for address in address_set.iter() {
+							if total_address_count == u8::MAX {
+								// don't serialize more than 255 addresses
+								break;
+							}
+							if let Ok(serialized_length) = u8::try_from(address.serialized_length()) {
+								total_address_count += 1;
+								serialized_length.write(&mut address_serialization).unwrap();
+								address.write(&mut address_serialization).unwrap();
+							};
 						}
-						if let Ok(serialized_length) = u8::try_from(address.serialized_length()) {
-							total_address_count += 1;
-							serialized_length.write(&mut address_serialization).unwrap();
-							address.write(&mut address_serialization).unwrap();
-						};
-					}
 
-					// signal the presence of node addresses
-					current_node_delta_serialization[0] |= 1 << 2;
-					// serialize the actual addresses and count
-					total_address_count.write(&mut current_node_delta_serialization).unwrap();
-					current_node_delta_serialization.append(&mut address_serialization);
+						node_address_update_count += 1;
+						node_has_update = true;
+
+						// signal the presence of node addresses
+						current_node_delta_serialization[0] |= 1 << 2;
+						// serialize the actual addresses and count
+						total_address_count.write(&mut current_node_delta_serialization).unwrap();
+						current_node_delta_serialization.append(&mut address_serialization);
+					},
+					_ => {}
 				}
 
-				if node_delta.has_feature_set_changed {
-					node_feature_update_count += 1;
+				match strategy {
+					NodeSerializationStrategy::Mutated(MutatedNodeProperties { features: true, .. }) | NodeSerializationStrategy::Full => {
+						let latest_features = &node_delta.latest_details.as_ref().unwrap().features;
+						node_feature_update_count += 1;
+						node_has_update = true;
 
-					let latest_features = &node_delta.latest_details.as_ref().unwrap().features;
-
-					// are these features among the most common ones?
-					if let Some(index) = serialization_details.node_announcement_feature_defaults.iter().position(|f| f == latest_features) {
-						// this feature set is among the 6 defaults
-						current_node_delta_serialization[0] |= ((index + 1) as u8) << 3;
-					} else {
-						current_node_delta_serialization[0] |= 0b_0011_1000; // 7 << 3
-						latest_features.write(&mut current_node_delta_serialization).unwrap();
-					}
+						// are these features among the most common ones?
+						if let Some(index) = serialization_details.node_announcement_feature_defaults.iter().position(|f| f == latest_features) {
+							// this feature set is among the 6 defaults
+							current_node_delta_serialization[0] |= ((index + 1) as u8) << 3;
+						} else {
+							current_node_delta_serialization[0] |= 0b_0011_1000; // 7 << 3
+							latest_features.write(&mut current_node_delta_serialization).unwrap();
+						}
+					},
+					_ => {}
 				}
 
-				if node_delta.has_address_set_changed || node_delta.has_feature_set_changed {
+				if node_has_update {
 					node_update_count += 1;
+				} else if let NodeSerializationStrategy::Reminder = strategy {
+					current_node_delta_serialization[0] |= 1 << 6;
 				}
 			}
 		}

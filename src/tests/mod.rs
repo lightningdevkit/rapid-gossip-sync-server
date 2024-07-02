@@ -347,19 +347,41 @@ async fn test_node_announcement_delta_detection() {
 	let timestamp = current_time() - 10;
 
 	{ // seed the db
+
+		{ // necessary for the node announcements to be considered relevant
+			let announcement = generate_channel_announcement(1);
+			let update_1 = generate_update(1, false, timestamp, 0, 0, 0, 6, 0);
+			let update_2 = generate_update(1, true, timestamp, 0, 0, 0, 6, 0);
+
+			network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+			network_graph_arc.update_channel_unsigned(&update_1.contents).unwrap();
+			network_graph_arc.update_channel_unsigned(&update_2.contents).unwrap();
+
+			receiver.send(GossipMessage::ChannelAnnouncement(announcement, Some(timestamp))).await.unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update_1, Some(timestamp))).await.unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update_2, Some(timestamp))).await.unwrap();
+		}
+
 		let mut announcement = generate_node_announcement(None);
-		receiver.send(GossipMessage::NodeAnnouncement(announcement.clone(), Some(timestamp - 10))).await.unwrap();
-		receiver.send(GossipMessage::NodeAnnouncement(announcement.clone(), Some(timestamp - 8))).await.unwrap();
+		announcement.contents.timestamp = timestamp - 10;
+		network_graph_arc.update_node_from_unsigned_announcement(&announcement.contents).unwrap();
+		receiver.send(GossipMessage::NodeAnnouncement(announcement.clone(), Some(announcement.contents.timestamp))).await.unwrap();
+		announcement.contents.timestamp = timestamp - 8;
+		network_graph_arc.update_node_from_unsigned_announcement(&announcement.contents).unwrap();
+		receiver.send(GossipMessage::NodeAnnouncement(announcement.clone(), Some(announcement.contents.timestamp))).await.unwrap();
 
 		{
 			let mut current_announcement = generate_node_announcement(Some(SecretKey::from_slice(&[2; 32]).unwrap()));
 			current_announcement.contents.features = NodeFeatures::from_be_bytes(vec![23, 48]);
+			current_announcement.contents.timestamp = timestamp;
+			network_graph_arc.update_node_from_unsigned_announcement(&current_announcement.contents).unwrap();
 			receiver.send(GossipMessage::NodeAnnouncement(current_announcement, Some(timestamp))).await.unwrap();
 		}
 
 		{
 			let mut current_announcement = generate_node_announcement(Some(SecretKey::from_slice(&[3; 32]).unwrap()));
 			current_announcement.contents.features = NodeFeatures::from_be_bytes(vec![22, 49]);
+			current_announcement.contents.timestamp = timestamp;
 			receiver.send(GossipMessage::NodeAnnouncement(current_announcement, Some(timestamp))).await.unwrap();
 		}
 
@@ -379,22 +401,10 @@ async fn test_node_announcement_delta_detection() {
 				version: 3,
 				port: 4,
 			});
+			announcement.contents.timestamp = timestamp;
 		}
+		network_graph_arc.update_node_from_unsigned_announcement(&announcement.contents).unwrap();
 		receiver.send(GossipMessage::NodeAnnouncement(announcement, Some(timestamp))).await.unwrap();
-
-		{ // necessary for the node announcements to be considered relevant
-			let announcement = generate_channel_announcement(1);
-			let update_1 = generate_update(1, false, timestamp, 0, 0, 0, 6, 0);
-			let update_2 = generate_update(1, true, timestamp, 0, 0, 0, 6, 0);
-
-			network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
-			network_graph_arc.update_channel_unsigned(&update_1.contents).unwrap();
-			network_graph_arc.update_channel_unsigned(&update_2.contents).unwrap();
-
-			receiver.send(GossipMessage::ChannelAnnouncement(announcement, Some(timestamp))).await.unwrap();
-			receiver.send(GossipMessage::ChannelUpdate(update_1, Some(timestamp))).await.unwrap();
-			receiver.send(GossipMessage::ChannelUpdate(update_2, Some(timestamp))).await.unwrap();
-		}
 
 		drop(receiver);
 		persister.persist_gossip().await;
@@ -409,10 +419,10 @@ async fn test_node_announcement_delta_detection() {
 	clean_test_db().await;
 
 	assert_eq!(serialization.message_count, 3);
-	assert_eq!(serialization.node_announcement_count, 3);
-	assert_eq!(serialization.node_update_count, 3);
-	assert_eq!(serialization.node_feature_update_count, 3);
-	assert_eq!(serialization.node_address_update_count, 1);
+	assert_eq!(serialization.node_announcement_count, 2);
+	assert_eq!(serialization.node_update_count, 2);
+	assert_eq!(serialization.node_feature_update_count, 2);
+	assert_eq!(serialization.node_address_update_count, 2);
 }
 
 /// If a channel has only seen updates in one direction, it should not be announced

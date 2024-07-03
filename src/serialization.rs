@@ -236,9 +236,20 @@ pub(super) fn serialize_delta_set(channel_delta_set: DeltaSet, node_delta_set: N
 
 	serialization_set.full_update_defaults = default_update_values;
 
-	serialization_set.node_mutations = node_delta_set.into_iter().filter(|(_id, delta)| {
-		// either something changed, or this node is new
-		delta.strategy.is_some()
+	serialization_set.node_mutations = node_delta_set.into_iter().filter_map(|(id, mut delta)| {
+		if delta.strategy.is_none() {
+			return None;
+		}
+		if let Some(last_details_before_seen) = delta.last_details_before_seen.as_ref() {
+			if let Some(last_details_seen) = last_details_before_seen.seen {
+				if last_details_seen <= non_incremental_previous_update_threshold_timestamp {
+					delta.strategy = Some(NodeSerializationStrategy::Full)
+				}
+			}
+			Some((id, delta))
+		} else {
+			None
+		}
 	}).collect();
 
 	let mut node_feature_histogram: HashMap<&NodeFeatures, usize> = Default::default();

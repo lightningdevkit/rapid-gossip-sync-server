@@ -420,9 +420,9 @@ async fn test_node_announcement_delta_detection() {
 
 	assert_eq!(serialization.message_count, 3);
 	assert_eq!(serialization.node_announcement_count, 2);
-	assert_eq!(serialization.node_update_count, 2);
-	assert_eq!(serialization.node_feature_update_count, 2);
-	assert_eq!(serialization.node_address_update_count, 2);
+	assert_eq!(serialization.node_update_count, 1);
+	assert_eq!(serialization.node_feature_update_count, 1);
+	assert_eq!(serialization.node_address_update_count, 1);
 }
 
 /// If a channel has only seen updates in one direction, it should not be announced

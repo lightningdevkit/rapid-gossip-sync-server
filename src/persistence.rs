@@ -226,8 +226,8 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 
 					let timestamp = update.contents.timestamp as i64;
 
-					let direction = (update.contents.flags & 1) == 1;
-					let disable = (update.contents.flags & 2) > 0;
+					let direction = (update.contents.channel_flags & 1) == 1;
+					let disable = (update.contents.channel_flags & 2) > 0;
 
 					let cltv_expiry_delta = update.contents.cltv_expiry_delta as i32;
 					let htlc_minimum_msat = update.contents.htlc_minimum_msat as i64;
@@ -281,7 +281,7 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 								&timestamp,
 								#[cfg(test)]
 									&_seen_timestamp,
-								&(update.contents.flags as i16),
+								&(update.contents.channel_flags as i16),
 								&direction,
 								&disable,
 								&cltv_expiry_delta,

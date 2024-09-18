@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io::Cursor;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+use bitcoin::io::Cursor;
 
 use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, NodeAnnouncement, SocketAddress, UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::routing::gossip::{NetworkGraph, NodeId};
@@ -10,12 +11,13 @@ use lightning::util::ser::Readable;
 use tokio_postgres::Client;
 
 use futures::StreamExt;
+use hex_conservative::DisplayHex;
 use lightning::{log_debug, log_gossip, log_info};
 use lightning::ln::features::NodeFeatures;
 use lightning::util::logger::Logger;
 
 use crate::config;
-use crate::serialization::MutatedProperties;
+use crate::serialization::{MutatedNodeProperties, MutatedProperties, NodeSerializationStrategy};
 
 /// The delta set needs to be a BTreeMap so the keys are sorted.
 /// That way, the scids in the response automatically grow monotonically
@@ -54,25 +56,17 @@ pub(super) struct ChannelDelta {
 
 pub(super) struct NodeDelta {
 	/// The most recently received, but new-to-the-client, node details
-	pub(super) latest_details_after_seen: Option<NodeDetails>,
+	pub(super) latest_details: Option<NodeDetails>,
 
-	/// Between last_details_before_seen and latest_details_after_seen, including any potential
-	/// intermediate updates that are not kept track of here, has the set of features this node
-	/// supports changed?
-	pub(super) has_feature_set_changed: bool,
-
-	/// Between last_details_before_seen and latest_details_after_seen, including any potential
-	/// intermediate updates that are not kept track of here, has the set of socket addresses this
-	/// node listens on changed?
-	pub(super) has_address_set_changed: bool,
+	/// How should this delta be serialized?
+	pub(super) strategy: Option<NodeSerializationStrategy>,
 
 	/// The most recent node details that the client would have seen already
 	pub(super) last_details_before_seen: Option<NodeDetails>
 }
 
 pub(super) struct NodeDetails {
-	#[allow(unused)]
-	pub(super) seen: u32,
+	pub(super) seen: Option<u32>,
 	pub(super) features: NodeFeatures,
 	pub(super) addresses: HashSet<SocketAddress>
 }
@@ -91,10 +85,9 @@ impl Default for ChannelDelta {
 impl Default for NodeDelta {
 	fn default() -> Self {
 		Self {
-			latest_details_after_seen: None,
-			has_feature_set_changed: false,
-			has_address_set_changed: false,
+			latest_details: None,
 			last_details_before_seen: None,
+			strategy: None,
 		}
 	}
 }
@@ -108,6 +101,24 @@ impl Default for DirectedUpdateDelta {
 			serialization_update_flags: None,
 		}
 	}
+}
+
+fn should_snapshot_include_reminders<L: Deref>(last_sync_timestamp: u32, current_timestamp: u64, logger: &L) -> bool where L::Target: Logger {
+	let current_hour = current_timestamp / 3600;
+	let current_day = current_timestamp / (24 * 3600);
+
+	log_debug!(logger, "Current day index: {}", current_day);
+	log_debug!(logger, "Current hour: {}", current_hour);
+
+	// every 5th day at midnight
+	let is_reminder_hour = (current_hour % 24) == 0;
+	let is_reminder_day = (current_day % 5) == 0;
+
+	let snapshot_scope = current_timestamp.saturating_sub(last_sync_timestamp as u64);
+	let is_reminder_scope = snapshot_scope > (50 * 3600);
+	log_debug!(logger, "Snapshot scope: {}s", snapshot_scope);
+
+	(is_reminder_hour && is_reminder_day) || is_reminder_scope
 }
 
 /// Fetch all the channel announcements that are presently in the network graph, regardless of
@@ -133,23 +144,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 	let current_timestamp = snapshot_reference_timestamp.unwrap_or(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
 	log_info!(logger, "Current timestamp: {}", current_timestamp);
 
-	let include_reminders = {
-		let current_hour = current_timestamp / 3600;
-		let current_day = current_timestamp / (24 * 3600);
-
-		log_debug!(logger, "Current day index: {}", current_day);
-		log_debug!(logger, "Current hour: {}", current_hour);
-
-		// every 5th day at midnight
-		let is_reminder_hour = (current_hour % 24) == 0;
-		let is_reminder_day = (current_day % 5) == 0;
-
-		let snapshot_scope = current_timestamp.saturating_sub(last_sync_timestamp as u64);
-		let is_reminder_scope = snapshot_scope > (50 * 3600);
-		log_debug!(logger, "Snapshot scope: {}s", snapshot_scope);
-
-		(is_reminder_hour && is_reminder_day) || is_reminder_scope
-	};
+	let include_reminders = should_snapshot_include_reminders(last_sync_timestamp, current_timestamp, &logger);
 
 	log_info!(logger, "Obtaining corresponding database entries");
 	// get all the channel announcements that are currently in the network graph
@@ -160,7 +155,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 	while let Some(row_res) = pinned_rows.next().await {
 		let current_announcement_row = row_res.unwrap();
 		let blob: Vec<u8> = current_announcement_row.get("announcement_signed");
-		let mut readable = Cursor::new(blob);
+		let mut readable = Cursor::new(&blob);
 		let unsigned_announcement = ChannelAnnouncement::read(&mut readable).unwrap().contents;
 
 		let scid = unsigned_announcement.short_channel_id;
@@ -231,7 +226,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 		let reminder_threshold_timestamp = current_timestamp.checked_sub(config::CHANNEL_REMINDER_AGE.as_secs()).unwrap() as f64;
 
 		log_info!(logger, "Fetch first time we saw the current value combination for each direction (prior mutations excepted)");
-		let reminder_lookup_threshold_timestamp = current_timestamp.checked_sub(config::CHANNEL_REMINDER_AGE.as_secs() * 3).unwrap() as f64;
+		let reminder_lookup_threshold_timestamp = current_timestamp.checked_sub(config::PRUNE_INTERVAL.as_secs()).unwrap() as f64;
 		let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] = [&channel_ids, &reminder_lookup_threshold_timestamp];
 
 		/*
@@ -287,7 +282,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 
 			if seen < reminder_threshold_timestamp as u32 {
 				let blob: Vec<u8> = current_row.get("blob_signed");
-				let mut readable = Cursor::new(blob);
+				let mut readable = Cursor::new(&blob);
 				let unsigned_channel_update = ChannelUpdate::read(&mut readable).unwrap().contents;
 
 				let scid = unsigned_channel_update.short_channel_id;
@@ -365,7 +360,7 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 		let direction: bool = current_reference.get("direction");
 		let seen = current_reference.get::<_, i64>("seen") as u32;
 		let blob: Vec<u8> = current_reference.get("blob_signed");
-		let mut readable = Cursor::new(blob);
+		let mut readable = Cursor::new(&blob);
 		let unsigned_channel_update = ChannelUpdate::read(&mut readable).unwrap().contents;
 		let scid = unsigned_channel_update.short_channel_id;
 
@@ -415,7 +410,7 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 		let direction: bool = intermediate_update.get("direction");
 		let current_seen_timestamp = intermediate_update.get::<_, i64>("seen") as u32;
 		let blob: Vec<u8> = intermediate_update.get("blob_signed");
-		let mut readable = Cursor::new(blob);
+		let mut readable = Cursor::new(&blob);
 		let unsigned_channel_update = ChannelUpdate::read(&mut readable).unwrap().contents;
 
 		let scid = unsigned_channel_update.short_channel_id;
@@ -451,7 +446,7 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 
 		// determine mutations
 		if let Some(last_seen_update) = update_delta.last_update_before_seen.as_ref() {
-			if unsigned_channel_update.flags != last_seen_update.update.flags {
+			if unsigned_channel_update.channel_flags != last_seen_update.update.channel_flags {
 				update_delta.mutated_properties.flags = true;
 			}
 			if unsigned_channel_update.cltv_expiry_delta != last_seen_update.update.cltv_expiry_delta {
@@ -474,19 +469,44 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 	log_info!(logger, "Processed intermediate rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
 }
 
-pub(super) async fn fetch_node_updates<L: Deref>(client: &Client, last_sync_timestamp: u32, logger: L) -> NodeDeltaSet where L::Target: Logger {
+pub(super) async fn fetch_node_updates<L: Deref + Clone>(network_graph: Arc<NetworkGraph<L>>, client: &Client, last_sync_timestamp: u32, snapshot_reference_timestamp: Option<u64>, logger: L) -> NodeDeltaSet where L::Target: Logger {
 	let start = Instant::now();
 	let last_sync_timestamp_float = last_sync_timestamp as f64;
 
-	let mut delta_set = NodeDeltaSet::new();
+	let mut delta_set: NodeDeltaSet = {
+		let read_only_graph = network_graph.read_only();
+		read_only_graph.nodes().unordered_iter().flat_map(|(node_id, node_info)| {
+			let details: NodeDetails = if let Some(details) = node_info.announcement_info.as_ref() {
+				NodeDetails {
+					seen: None,
+					features: details.features().clone(),
+					addresses: details.addresses().into_iter().cloned().collect(),
+				}
+			} else {
+				return None;
+			};
+			Some((node_id.clone(), NodeDelta {
+				latest_details: Some(details),
+				strategy: None,
+				last_details_before_seen: None,
+			}))
+		}).collect()
+	};
+
+	let node_ids: Vec<String> = delta_set.keys().into_iter().map(|id| id.as_slice().to_lower_hex_string()).collect();
+	#[cfg(test)]
+	log_info!(logger, "Node IDs: {:?}", node_ids);
 
 	// get the latest node updates prior to last_sync_timestamp
+	let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] = [&node_ids, &last_sync_timestamp_float];
 	let reference_rows = client.query_raw("
 		SELECT DISTINCT ON (public_key) public_key, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen, announcement_signed
 		FROM node_announcements
-		WHERE seen < TO_TIMESTAMP($1)
+		WHERE
+			public_key = ANY($1) AND
+			seen < TO_TIMESTAMP($2)
 		ORDER BY public_key ASC, seen DESC
-		", [last_sync_timestamp_float]).await.unwrap();
+		", params).await.unwrap();
 	let mut pinned_rows = Box::pin(reference_rows);
 
 	log_info!(logger, "Fetched node announcement reference rows in {:?}", start.elapsed());
@@ -498,7 +518,7 @@ pub(super) async fn fetch_node_updates<L: Deref>(client: &Client, last_sync_time
 
 		let seen = current_reference.get::<_, i64>("seen") as u32;
 		let blob: Vec<u8> = current_reference.get("announcement_signed");
-		let mut readable = Cursor::new(blob);
+		let mut readable = Cursor::new(&blob);
 		let unsigned_node_announcement = NodeAnnouncement::read(&mut readable).unwrap().contents;
 		let node_id = unsigned_node_announcement.node_id;
 
@@ -506,7 +526,7 @@ pub(super) async fn fetch_node_updates<L: Deref>(client: &Client, last_sync_time
 		(*current_node_delta).last_details_before_seen.get_or_insert_with(|| {
 			let address_set: HashSet<SocketAddress> = unsigned_node_announcement.addresses.into_iter().collect();
 			NodeDetails {
-				seen,
+				seen: Some(seen),
 				features: unsigned_node_announcement.features,
 				addresses: address_set,
 			}
@@ -520,62 +540,106 @@ pub(super) async fn fetch_node_updates<L: Deref>(client: &Client, last_sync_time
 	log_info!(logger, "Processed {} node announcement reference rows (delta size: {}) in {:?}",
 		reference_row_count, delta_set.len(), start.elapsed());
 
+	let current_timestamp = snapshot_reference_timestamp.unwrap_or(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
+	let reminder_inclusion_threshold_timestamp = current_timestamp.checked_sub(config::CHANNEL_REMINDER_AGE.as_secs()).unwrap() as u32;
+	let reminder_lookup_threshold_timestamp = current_timestamp.checked_sub(config::PRUNE_INTERVAL.as_secs()).unwrap() as u32;
+
+	// this is the timestamp we need to fetch all relevant updates
+	let include_reminders = should_snapshot_include_reminders(last_sync_timestamp, current_timestamp, &logger);
+	let effective_threshold_timestamp = if include_reminders {
+		std::cmp::min(last_sync_timestamp, reminder_lookup_threshold_timestamp) as f64
+	} else {
+		// If we include reminders, the decision logic is as follows:
+		// If the pre-sync update was more than 6 days ago, serialize in full.
+		// Otherwise:
+		// If the last mutation occurred  after the last sync, serialize the mutated properties.
+		// Otherwise:
+		// If the last mutation occurred more than 6 days ago, serialize as a reminder.
+		// Otherwise, don't serialize at all.
+		last_sync_timestamp as f64
+	};
+
 	// get all the intermediate node updates
 	// (to calculate the set of mutated fields for snapshotting, where intermediate updates may
 	// have been omitted)
+	let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] = [&node_ids, &effective_threshold_timestamp];
 	let intermediate_updates = client.query_raw("
 		SELECT announcement_signed, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen
 		FROM node_announcements
-		WHERE seen >= TO_TIMESTAMP($1)
+		WHERE
+			public_key = ANY($1) AND
+			seen >= TO_TIMESTAMP($2)
 		ORDER BY public_key ASC, timestamp DESC
-		", [last_sync_timestamp_float]).await.unwrap();
+		", params).await.unwrap();
 	let mut pinned_updates = Box::pin(intermediate_updates);
 	log_info!(logger, "Fetched intermediate node announcement rows in {:?}", start.elapsed());
 
 	let mut previous_node_id: Option<NodeId> = None;
 
 	let mut intermediate_update_count = 0;
+	let mut has_address_set_changed = false;
+	let mut has_feature_set_changed = false;
+	let mut latest_mutation_timestamp = None;
 	while let Some(row_res) = pinned_updates.next().await {
 		let intermediate_update = row_res.unwrap();
 		intermediate_update_count += 1;
 
 		let current_seen_timestamp = intermediate_update.get::<_, i64>("seen") as u32;
 		let blob: Vec<u8> = intermediate_update.get("announcement_signed");
-		let mut readable = Cursor::new(blob);
+		let mut readable = Cursor::new(&blob);
 		let unsigned_node_announcement = NodeAnnouncement::read(&mut readable).unwrap().contents;
 
 		let node_id = unsigned_node_announcement.node_id;
-		let is_previously_processed_node_id = Some(node_id) == previous_node_id;
 
 		// get this node's address set
 		let current_node_delta = delta_set.entry(node_id).or_insert(NodeDelta::default());
 		let address_set: HashSet<SocketAddress> = unsigned_node_announcement.addresses.into_iter().collect();
 
-		// determine mutations
-		if let Some(last_seen_update) = current_node_delta.last_details_before_seen.as_ref() {
-			if unsigned_node_announcement.features != last_seen_update.features {
-				current_node_delta.has_feature_set_changed = true;
-			}
-			if address_set != last_seen_update.addresses {
-				current_node_delta.has_address_set_changed = true;
-			}
-		} else if !is_previously_processed_node_id {
-			if current_node_delta.last_details_before_seen.is_none() {
-				if !address_set.is_empty() {
-					current_node_delta.has_address_set_changed = true;
-				}
-				if unsigned_node_announcement.features != NodeFeatures::empty() {
-					current_node_delta.has_feature_set_changed = true;
-				}
-			}
+		if previous_node_id != Some(node_id) {
+			// we're traversing a new node id, initialize the values
+			has_address_set_changed = false;
+			has_feature_set_changed = false;
+			latest_mutation_timestamp = None;
+
+			// this is the highest timestamp value, so set the seen timestamp accordingly
+			current_node_delta.latest_details.as_mut().map(|mut d| d.seen.replace(current_seen_timestamp));
 		}
 
-		if !is_previously_processed_node_id {
-			(*current_node_delta).latest_details_after_seen.get_or_insert(NodeDetails {
-				seen: current_seen_timestamp,
-				features: unsigned_node_announcement.features,
-				addresses: address_set,
-			});
+		if let Some(last_seen_update) = current_node_delta.last_details_before_seen.as_ref() {
+			{ // determine the latest mutation timestamp
+				if address_set != last_seen_update.addresses {
+					has_address_set_changed = true;
+					if latest_mutation_timestamp.is_none() {
+						latest_mutation_timestamp = Some(current_seen_timestamp);
+					}
+				}
+				if unsigned_node_announcement.features != last_seen_update.features {
+					has_feature_set_changed = true;
+					if latest_mutation_timestamp.is_none() {
+						latest_mutation_timestamp = Some(current_seen_timestamp);
+					}
+				}
+			}
+
+			if current_seen_timestamp >= last_sync_timestamp {
+				if has_address_set_changed || has_feature_set_changed {
+					// if the last mutation occurred since the last sync, send the mutation variant
+					current_node_delta.strategy = Some(NodeSerializationStrategy::Mutated(MutatedNodeProperties {
+						addresses: has_address_set_changed,
+						features: has_feature_set_changed,
+					}));
+				}
+			} else if include_reminders && latest_mutation_timestamp.unwrap_or(u32::MAX) <= reminder_inclusion_threshold_timestamp {
+				// only send a reminder if the latest mutation occurred at least 6 days ago
+				current_node_delta.strategy = Some(NodeSerializationStrategy::Reminder);
+			}
+
+			// Note that we completely ignore the case when the last mutation occurred less than
+			// 6 days ago, but prior to the last sync. In that scenario, we send nothing.
+
+		} else {
+			// absent any update that was seen prior to the last sync, send the full version
+			current_node_delta.strategy = Some(NodeSerializationStrategy::Full);
 		}
 
 		previous_node_id = Some(node_id);

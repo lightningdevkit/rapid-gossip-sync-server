@@ -1,10 +1,10 @@
 use crate::hex_utils;
 
 use std::env;
-use std::io::Cursor;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::time::Duration;
 
+use bitcoin::io::Cursor;
 use bitcoin::Network;
 use bitcoin::hashes::hex::FromHex;
 use bitcoin::secp256k1::PublicKey;
@@ -22,6 +22,10 @@ pub(crate) const MAX_SNAPSHOT_SCOPE: u32 = 3600 * 24 * 21; // three weeks
 /// That reminder may be either in the form of a channel announcement, or in the form of empty
 /// updates in both directions.
 pub(crate) const CHANNEL_REMINDER_AGE: Duration = Duration::from_secs(6 * 24 * 60 * 60);
+
+/// The interval after which graph data gets pruned after it was first seen
+/// This should match the LDK default pruning interval, which is 14 days
+pub(crate) const PRUNE_INTERVAL: Duration = Duration::from_secs(14 * 24 * 60 * 60);
 
 /// Maximum number of default features to calculate for node announcements
 pub(crate) const NODE_DEFAULT_FEATURE_COUNT: u8 = 6;
@@ -219,7 +223,7 @@ pub(crate) async fn upgrade_db(schema: i32, client: &mut tokio_postgres::Client)
 				let announcement: Vec<u8> = row.get("announcement_signed");
 				let tx_ref = &tx;
 				updates.push(async move {
-					let scid = ChannelAnnouncement::read(&mut Cursor::new(announcement)).unwrap().contents.short_channel_id as i64;
+					let scid = ChannelAnnouncement::read(&mut Cursor::new(&announcement)).unwrap().contents.short_channel_id as i64;
 					assert!(scid > 0); // Will roll over in some 150 years or so
 					tx_ref.execute("UPDATE channel_announcements SET short_channel_id = $1 WHERE id = $2", &[&scid, &id]).await.unwrap();
 				});

@@ -35,6 +35,7 @@ jobs:
         run: |
           cargo update -p tokio --precise "1.37.0" --verbose
           cargo update -p tokio-macros --precise "2.2.0" --verbose
+          cargo update -p postgres-types --precise "0.2.6" --verbose
       - name: Build on Rust ${{ matrix.toolchain }}
         run: |
           cargo build --verbose --color always

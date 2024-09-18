@@ -54,7 +54,7 @@ impl<L: Deref + Clone + Send + Sync + 'static> ChainVerifier<L> where L::Target:
 		}
 		let mut transaction = block.txdata.swap_remove(transaction_index as usize);
 		if output_index as usize >= transaction.output.len() {
-			log_error!(logger, "Could't find output {} in transaction {}", output_index, transaction.txid());
+			log_error!(logger, "Could't find output {} in transaction {}", output_index, transaction.compute_txid());
 			return Err(UtxoLookupError::UnknownTx);
 		}
 		Ok(transaction.output.swap_remove(output_index as usize))

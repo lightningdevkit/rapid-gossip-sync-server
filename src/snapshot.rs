@@ -4,7 +4,7 @@ use std::ops::Deref;
 use std::os::unix::fs::symlink;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use lightning::log_info;
+use lightning::{log_info, log_error};
 
 use lightning::routing::gossip::NetworkGraph;
 use lightning::util::logger::Logger;
@@ -129,8 +129,14 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 				let snapshot_path_v1 = format!("{}/{}", pending_snapshot_directory, snapshot_filename);
 				let snapshot_path_v2 = format!("{}/v2/{}", pending_snapshot_directory, snapshot_filename);
 				log_info!(self.logger, "Persisting {}-second snapshot: {} ({} messages, {} announcements, {} updates ({} full, {} incremental))", current_scope, snapshot_filename, snapshot_v1.message_count, snapshot_v1.channel_announcement_count, snapshot_v1.update_count, snapshot_v1.update_count_full, snapshot_v1.update_count_incremental);
-				fs::write(&snapshot_path_v1, snapshot_v1.data).unwrap();
-				fs::write(&snapshot_path_v2, snapshot_v2.data).unwrap();
+				match fs::write(&snapshot_path_v1, snapshot_v1.data) {
+					Ok(_) => log_info!(self.logger, "Successfully wrote: {}", snapshot_path_v1),
+					Err(e) => log_error!(self.logger, "FAILED to write {}: {}", snapshot_path_v1, e),
+				}				
+				match fs::write(&snapshot_path_v2, snapshot_v2.data) {
+					Ok(_) => log_info!(self.logger, "Successfully wrote: {}", snapshot_path_v2),
+					Err(e) => log_error!(self.logger, "FAILED to write {}: {}", snapshot_path_v2, e),
+				}
 				snapshot_filenames_by_scope.insert(current_scope.clone(), snapshot_filename);
 			}
 		}
@@ -207,7 +213,11 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 
 		let update_time_path = format!("{}/update_time.txt", pending_symlink_directory);
 		let update_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-		fs::write(&update_time_path, format!("{}", update_time)).unwrap();
+		log_info!(self.logger, "Updating update_time.txt at: {}", update_time_path);
+		match fs::write(&update_time_path, format!("{}", update_time)) {
+			Ok(_) => log_info!(self.logger, "Successfully updated update_time.txt to {}", update_time),
+			Err(e) => log_error!(self.logger, "FAILED to update update_time.txt: {}", e),
+		}
 
 		if fs::metadata(&finalized_snapshot_directory).is_ok() {
 			fs::remove_dir_all(&finalized_snapshot_directory).expect("Failed to remove finalized snapshot directory.");
@@ -215,8 +225,16 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 		if fs::metadata(&finalized_symlink_directory).is_ok() {
 			fs::remove_dir_all(&finalized_symlink_directory).expect("Failed to remove pending symlink directory.");
 		}
-		fs::rename(&pending_snapshot_directory, &finalized_snapshot_directory).expect("Failed to finalize snapshot directory.");
-		fs::rename(&pending_symlink_directory, &finalized_symlink_directory).expect("Failed to finalize symlink directory.");
+		log_info!(self.logger, "Moving snapshots from {} to {}", pending_snapshot_directory, finalized_snapshot_directory);
+		match fs::rename(&pending_snapshot_directory, &finalized_snapshot_directory) {
+			Ok(_) => log_info!(self.logger, "Successfully moved snapshots to finalized directory"),
+			Err(e) => log_error!(self.logger, "FAILED to move snapshots: {}", e),
+		}
+		log_info!(self.logger, "Moving snapshots from {} to {}", pending_snapshot_directory, finalized_snapshot_directory);
+		match fs::rename(&pending_symlink_directory, &finalized_symlink_directory) {
+			Ok(_) => log_info!(self.logger, "Successfully moved snapshots to finalized directory"),
+			Err(e) => log_error!(self.logger, "FAILED to move snapshots: {}", e),
+		}
 	}
 
 	pub(super) fn round_down_to_nearest_multiple(number: u64, multiple: u64) -> u64 {

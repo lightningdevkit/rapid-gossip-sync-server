@@ -163,6 +163,10 @@ impl<L: Deref + Clone + Send + Sync> RoutingMessageHandler for GossipRouter<L> w
 	}
 
 	fn peer_connected(&self, their_node_id: PublicKey, init: &Init, inbound: bool) -> Result<(), ()> {
+		log::info!(
+			"Peer connected: node_id = {}, inbound = {}",
+			their_node_id, inbound
+		);
 		self.native_router.peer_connected(their_node_id, init, inbound)
 	}
 

@@ -1,7 +1,10 @@
 use crate::hex_utils;
+use crate::verifier::ChainVerifier;
 
 use std::env;
 use std::net::{SocketAddr, ToSocketAddrs};
+use std::ops::Deref;
+use std::sync::Arc;
 use std::time::Duration;
 
 use bitcoin::io::Cursor;
@@ -10,9 +13,13 @@ use bitcoin::hashes::hex::FromHex;
 use bitcoin::secp256k1::PublicKey;
 use futures::stream::{FuturesUnordered, StreamExt};
 use lightning::ln::msgs::ChannelAnnouncement;
+use lightning::util::logger::Logger;
 use lightning::util::ser::Readable;
 use lightning_block_sync::http::HttpEndpoint;
+use lightning_block_sync::rest::RestClient;
 use tokio_postgres::Config;
+
+use tokio::sync::Semaphore;
 
 pub(crate) const SCHEMA_VERSION: i32 = 15;
 pub(crate) const SYMLINK_GRANULARITY_INTERVAL: u32 = 3600 * 3; // three hours
@@ -168,7 +175,9 @@ pub(crate) fn db_index_creation_query() -> &'static str {
 	"
 }
 
-pub(crate) async fn upgrade_db(schema: i32, client: &mut tokio_postgres::Client) {
+pub(crate) async fn upgrade_db<L: Deref + Clone + Send + Sync + 'static>(
+	schema: i32, client: &mut tokio_postgres::Client, logger: L,
+) where L::Target: Logger {
 	if schema == 1 {
 		let tx = client.transaction().await.unwrap();
 		tx.execute("ALTER TABLE channel_updates DROP COLUMN chain_hash", &[]).await.unwrap();
@@ -315,7 +324,31 @@ pub(crate) async fn upgrade_db(schema: i32, client: &mut tokio_postgres::Client)
 		tx.commit().await.unwrap();
 	}
 	if schema >= 1 && schema <= 14 {
-		client.execute("ALTER TABLE channel_announcements ADD COLUMN funding_amount_sats bigint DEFAULT null", &[]).await.unwrap();
+		println!("Upgrading to schema 15 requiring UTXO lookups for each historical channel announcement. This may take some time");
+		// Note that we don't bother doing this one in a transaction, and as such need to support
+		// resuming on a crash.
+		let _ = client.execute("ALTER TABLE channel_announcements ADD COLUMN funding_amount_sats bigint DEFAULT null", &[]).await;
+		tokio::spawn(async move {
+			let client = crate::connect_to_db().await;
+			let mut scids = Box::pin(client.query_raw("SELECT DISTINCT ON (short_channel_id) short_channel_id FROM channel_announcements WHERE funding_amount_sats IS NULL;", &[0i64][1..]).await.unwrap());
+			let sem = Arc::new(Semaphore::new(16));
+			while let Some(scid_res) = scids.next().await {
+				let scid: i64 = scid_res.unwrap().get(0);
+				let permit = Arc::clone(&sem).acquire_owned().await.unwrap();
+				let logger = logger.clone();
+				tokio::spawn(async move {
+					let rest_client = Arc::new(RestClient::new(bitcoin_rest_endpoint()).unwrap());
+					let txo = ChainVerifier::retrieve_txo(rest_client, scid as u64, logger).await
+						.expect("We shouldn't have accepted a channel announce with a bad TXO");
+					let client = crate::connect_to_db().await;
+					client.execute("UPDATE channel_announcements SET funding_amount_sats = $1 WHERE short_channel_id = $2", &[&(txo.value.to_sat() as i64), &scid]).await.unwrap();
+					std::mem::drop(permit);
+				});
+			}
+			let _all_updates_complete = sem.acquire_many(16).await.unwrap();
+			client.execute("ALTER TABLE channel_announcements ALTER funding_amount_sats SET NOT NULL", &[]).await.unwrap();
+			client.execute("UPDATE config SET db_schema = 15 WHERE id = 1", &[]).await.unwrap();
+		});
 	}
 	if schema <= 1 || schema > SCHEMA_VERSION {
 		panic!("Unknown schema in db: {}, we support up to {}", schema, SCHEMA_VERSION);

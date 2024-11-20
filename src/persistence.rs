@@ -23,7 +23,7 @@ pub(crate) struct GossipPersister<L: Deref> where L::Target: Logger {
 	logger: L
 }
 
-impl<L: Deref> GossipPersister<L> where L::Target: Logger {
+impl<L: Deref + Clone + Send + Sync + 'static> GossipPersister<L> where L::Target: Logger {
 	pub fn new(network_graph: Arc<NetworkGraph<L>>, logger: L) -> (Self, mpsc::Sender<GossipMessage>) {
 		let (gossip_persistence_sender, gossip_persistence_receiver) =
 			mpsc::channel::<GossipMessage>(100);
@@ -50,7 +50,7 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 
 			let cur_schema = client.query("SELECT db_schema FROM config WHERE id = $1", &[&1]).await.unwrap();
 			if !cur_schema.is_empty() {
-				config::upgrade_db(cur_schema[0].get(0), &mut client).await;
+				config::upgrade_db(cur_schema[0].get(0), &mut client, self.logger.clone()).await;
 			}
 
 			let preparation = client.execute("set time zone UTC", &[]).await;

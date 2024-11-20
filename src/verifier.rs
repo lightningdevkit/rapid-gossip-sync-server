@@ -56,6 +56,10 @@ impl<L: Deref + Clone + Send + Sync + 'static> ChainVerifier<L> where L::Target:
 			.await.map(|txo| txo.value.to_sat())
 	}
 
+	pub(crate) async fn retrieve_txo(client: Arc<RestClient>, short_channel_id: u64, logger: L) -> Result<TxOut, UtxoLookupError> {
+		Self::retrieve_cache_txo(client, None, short_channel_id, logger).await
+	}
+
 	async fn retrieve_cache_txo(client: Arc<RestClient>, channel_funding_amounts: Option<Arc<Mutex<HashMap<u64, u64>>>>, short_channel_id: u64, logger: L) -> Result<TxOut, UtxoLookupError> {
 		let block_height = (short_channel_id >> 5 * 8) as u32; // block height is most significant three bytes
 		let transaction_index = ((short_channel_id >> 2 * 8) & 0xffffff) as u32;

@@ -185,7 +185,7 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 					#[cfg(test)]
 					tasks_spawned.push(_task);
 				},
-				GossipMessage::ChannelAnnouncement(announcement, seen_override) => {
+				GossipMessage::ChannelAnnouncement(announcement, funding_value, seen_override) => {
 					let scid = announcement.contents.short_channel_id as i64;
 
 					// start with the type prefix, which is already known a priori
@@ -197,10 +197,12 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 							tokio::time::timeout(POSTGRES_INSERT_TIMEOUT, client
 								.execute("INSERT INTO channel_announcements (\
 								short_channel_id, \
+								funding_amount_sats, \
 								announcement_signed, \
 								seen \
-							) VALUES ($1, $2, TO_TIMESTAMP($3)) ON CONFLICT (short_channel_id) DO NOTHING", &[
+							) VALUES ($1, $2, $3, TO_TIMESTAMP($4)) ON CONFLICT (short_channel_id) DO NOTHING", &[
 									&scid,
+									&(funding_value as i64),
 									&announcement_signed,
 									&(seen_override.unwrap() as f64)
 								])).await.unwrap().unwrap();
@@ -208,9 +210,11 @@ impl<L: Deref> GossipPersister<L> where L::Target: Logger {
 							tokio::time::timeout(POSTGRES_INSERT_TIMEOUT, client
 								.execute("INSERT INTO channel_announcements (\
 								short_channel_id, \
+								funding_amount_sats, \
 								announcement_signed \
-							) VALUES ($1, $2) ON CONFLICT (short_channel_id) DO NOTHING", &[
+							) VALUES ($1, $2, $3) ON CONFLICT (short_channel_id) DO NOTHING", &[
 									&scid,
+									&(funding_value as i64),
 									&announcement_signed
 								])).await.unwrap().unwrap();
 						}

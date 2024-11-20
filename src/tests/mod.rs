@@ -242,7 +242,7 @@ async fn test_trivial_setup() {
 		network_graph_arc.update_channel_unsigned(&update_1.contents).unwrap();
 		network_graph_arc.update_channel_unsigned(&update_2.contents).unwrap();
 
-		receiver.send(GossipMessage::ChannelAnnouncement(announcement, None)).await.unwrap();
+		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
 		receiver.send(GossipMessage::ChannelUpdate(update_1, None)).await.unwrap();
 		receiver.send(GossipMessage::ChannelUpdate(update_2, None)).await.unwrap();
 		drop(receiver);
@@ -357,7 +357,7 @@ async fn test_node_announcement_delta_detection() {
 			network_graph_arc.update_channel_unsigned(&update_1.contents).unwrap();
 			network_graph_arc.update_channel_unsigned(&update_2.contents).unwrap();
 
-			receiver.send(GossipMessage::ChannelAnnouncement(announcement, Some(timestamp))).await.unwrap();
+			receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, Some(timestamp))).await.unwrap();
 			receiver.send(GossipMessage::ChannelUpdate(update_1, Some(timestamp))).await.unwrap();
 			receiver.send(GossipMessage::ChannelUpdate(update_2, Some(timestamp))).await.unwrap();
 		}
@@ -450,7 +450,7 @@ async fn test_unidirectional_intermediate_update_consideration() {
 		network_graph_arc.update_channel_unsigned(&update_2.contents).unwrap();
 		network_graph_arc.update_channel_unsigned(&update_3.contents).unwrap();
 
-		receiver.send(GossipMessage::ChannelAnnouncement(announcement, Some(timestamp))).await.unwrap();
+		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, Some(timestamp))).await.unwrap();
 		receiver.send(GossipMessage::ChannelUpdate(update_1, None)).await.unwrap();
 		receiver.send(GossipMessage::ChannelUpdate(update_2, None)).await.unwrap();
 		receiver.send(GossipMessage::ChannelUpdate(update_3, None)).await.unwrap();
@@ -521,7 +521,7 @@ async fn test_bidirectional_intermediate_update_consideration() {
 		network_graph_arc.update_channel_unsigned(&update_3.contents).unwrap();
 		network_graph_arc.update_channel_unsigned(&update_4.contents).unwrap();
 
-		receiver.send(GossipMessage::ChannelAnnouncement(announcement, Some(timestamp))).await.unwrap();
+		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, Some(timestamp))).await.unwrap();
 		receiver.send(GossipMessage::ChannelUpdate(update_1, None)).await.unwrap();
 		receiver.send(GossipMessage::ChannelUpdate(update_2, None)).await.unwrap();
 		receiver.send(GossipMessage::ChannelUpdate(update_3, None)).await.unwrap();
@@ -577,7 +577,7 @@ async fn test_channel_reminders() {
 			network_graph_arc.update_channel_unsigned(&update_1.contents).unwrap();
 			network_graph_arc.update_channel_unsigned(&update_2.contents).unwrap();
 
-			receiver.send(GossipMessage::ChannelAnnouncement(announcement, Some(timestamp - channel_reminder_delta - 1))).await.unwrap();
+			receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, Some(timestamp - channel_reminder_delta - 1))).await.unwrap();
 			receiver.send(GossipMessage::ChannelUpdate(update_1, Some(timestamp - channel_reminder_delta - 1))).await.unwrap();
 			receiver.send(GossipMessage::ChannelUpdate(update_2, Some(timestamp - channel_reminder_delta - 1))).await.unwrap();
 		}
@@ -598,7 +598,7 @@ async fn test_channel_reminders() {
 			network_graph_arc.update_channel_unsigned(&update_7.contents).unwrap();
 			network_graph_arc.update_channel_unsigned(&update_8.contents).unwrap();
 
-			receiver.send(GossipMessage::ChannelAnnouncement(announcement, Some(timestamp - channel_reminder_delta - 1))).await.unwrap();
+			receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, Some(timestamp - channel_reminder_delta - 1))).await.unwrap();
 			receiver.send(GossipMessage::ChannelUpdate(update_1, Some(timestamp - channel_reminder_delta - 10))).await.unwrap();
 			receiver.send(GossipMessage::ChannelUpdate(update_2, Some(timestamp - channel_reminder_delta - 5))).await.unwrap();
 			receiver.send(GossipMessage::ChannelUpdate(update_3, Some(timestamp - channel_reminder_delta - 1))).await.unwrap();
@@ -653,7 +653,7 @@ async fn test_full_snapshot_recency() {
 		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
 		let announcement = generate_channel_announcement(short_channel_id);
 		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
-		receiver.send(GossipMessage::ChannelAnnouncement(announcement, None)).await.unwrap();
+		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
 
 		{ // direction false
 			{ // first update
@@ -734,7 +734,7 @@ async fn test_full_snapshot_recency_with_wrong_seen_order() {
 		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
 		let announcement = generate_channel_announcement(short_channel_id);
 		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
-		receiver.send(GossipMessage::ChannelAnnouncement(announcement, None)).await.unwrap();
+		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
 
 		{ // direction false
 			{ // first update, seen latest
@@ -815,7 +815,7 @@ async fn test_full_snapshot_recency_with_wrong_propagation_order() {
 		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
 		let announcement = generate_channel_announcement(short_channel_id);
 		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
-		receiver.send(GossipMessage::ChannelAnnouncement(announcement, None)).await.unwrap();
+		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
 
 		{ // direction false
 			// apply updates in their timestamp order
@@ -898,7 +898,7 @@ async fn test_full_snapshot_mutiny_scenario() {
 		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
 		let announcement = generate_channel_announcement(short_channel_id);
 		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
-		receiver.send(GossipMessage::ChannelAnnouncement(announcement, None)).await.unwrap();
+		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
 
 		{ // direction false
 			{
@@ -1036,13 +1036,13 @@ async fn test_full_snapshot_interlaced_channel_timestamps() {
 		{ // main channel
 			let announcement = generate_channel_announcement(main_channel_id);
 			network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
-			receiver.send(GossipMessage::ChannelAnnouncement(announcement, None)).await.unwrap();
+			receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
 		}
 
 		{ // secondary channel
 			let announcement = generate_channel_announcement(secondary_channel_id);
 			network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
-			receiver.send(GossipMessage::ChannelAnnouncement(announcement, None)).await.unwrap();
+			receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
 		}
 
 		{ // main channel
@@ -1145,7 +1145,7 @@ async fn test_full_snapshot_persistence() {
 		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
 		let announcement = generate_channel_announcement(short_channel_id);
 		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
-		receiver.send(GossipMessage::ChannelAnnouncement(announcement, None)).await.unwrap();
+		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
 
 		{ // direction true
 			let update = generate_update(short_channel_id, true, timestamp, 0, 0, 0, 0, 10);

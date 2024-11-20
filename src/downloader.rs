@@ -64,7 +64,16 @@ impl<L: Deref + Clone + Send + Sync> GossipRouter<L> where L::Target: Logger {
 			counter.channel_announcements += 1;
 		}
 
-		let gossip_message = GossipMessage::ChannelAnnouncement(msg, None);
+		let mut funding_amount_sats = self.verifier.get_cached_funding_value(msg.contents.short_channel_id);
+		if funding_amount_sats.is_none() {
+			tokio::task::block_in_place(move || { tokio::runtime::Handle::current().block_on(async {
+				funding_amount_sats = self.verifier.retrieve_funding_value(msg.contents.short_channel_id).await.ok();
+			})});
+		}
+		let funding_amount_sats = funding_amount_sats
+			.expect("If we've accepted a ChannelAnnouncement, we must be able to fetch the TXO for it");
+
+		let gossip_message = GossipMessage::ChannelAnnouncement(msg, funding_amount_sats, None);
 		if let Err(err) = self.sender.try_send(gossip_message) {
 			let gossip_message = match err { TrySendError::Full(msg)|TrySendError::Closed(msg) => msg };
 			tokio::task::block_in_place(move || { tokio::runtime::Handle::current().block_on(async move {

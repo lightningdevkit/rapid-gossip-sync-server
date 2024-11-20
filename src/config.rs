@@ -14,7 +14,7 @@ use lightning::util::ser::Readable;
 use lightning_block_sync::http::HttpEndpoint;
 use tokio_postgres::Config;
 
-pub(crate) const SCHEMA_VERSION: i32 = 14;
+pub(crate) const SCHEMA_VERSION: i32 = 15;
 pub(crate) const SYMLINK_GRANULARITY_INTERVAL: u32 = 3600 * 3; // three hours
 pub(crate) const MAX_SNAPSHOT_SCOPE: u32 = 3600 * 24 * 21; // three weeks
 // generate symlinks based on a 3-hour-granularity
@@ -120,6 +120,7 @@ pub(crate) fn db_announcement_table_creation_query() -> &'static str {
 	"CREATE TABLE IF NOT EXISTS channel_announcements (
 		id SERIAL PRIMARY KEY,
 		short_channel_id bigint NOT NULL UNIQUE,
+		funding_amount_sats bigint NOT NULL,
 		announcement_signed BYTEA,
 		seen timestamp NOT NULL DEFAULT NOW()
 	)"
@@ -312,6 +313,9 @@ pub(crate) async fn upgrade_db(schema: i32, client: &mut tokio_postgres::Client)
 		let tx = client.transaction().await.unwrap();
 		tx.execute("UPDATE config SET db_schema = 14 WHERE id = 1", &[]).await.unwrap();
 		tx.commit().await.unwrap();
+	}
+	if schema >= 1 && schema <= 14 {
+		client.execute("ALTER TABLE channel_announcements ADD COLUMN funding_amount_sats bigint DEFAULT null", &[]).await.unwrap();
 	}
 	if schema <= 1 || schema > SCHEMA_VERSION {
 		panic!("Unknown schema in db: {}, we support up to {}", schema, SCHEMA_VERSION);

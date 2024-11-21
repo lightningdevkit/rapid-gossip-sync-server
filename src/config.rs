@@ -163,6 +163,7 @@ pub(crate) fn db_index_creation_query() -> &'static str {
 	CREATE UNIQUE INDEX IF NOT EXISTS channel_updates_key ON channel_updates (short_channel_id, direction, timestamp);
 	CREATE INDEX IF NOT EXISTS channel_updates_seen ON channel_updates(seen);
 	CREATE INDEX IF NOT EXISTS channel_updates_scid_asc_timestamp_desc ON channel_updates(short_channel_id ASC, timestamp DESC);
+	CREATE INDEX IF NOT EXISTS node_announcements_seen_pubkey ON node_announcements(seen, public_key);
 	"
 }
 

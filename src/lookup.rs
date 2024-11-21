@@ -602,7 +602,7 @@ pub(super) async fn fetch_node_updates<L: Deref + Clone>(network_graph: Arc<Netw
 			latest_mutation_timestamp = None;
 
 			// this is the highest timestamp value, so set the seen timestamp accordingly
-			current_node_delta.latest_details.as_mut().map(|mut d| d.seen.replace(current_seen_timestamp));
+			current_node_delta.latest_details.as_mut().map(|d| d.seen.replace(current_seen_timestamp));
 		}
 
 		if let Some(last_seen_update) = current_node_delta.last_details_before_seen.as_ref() {

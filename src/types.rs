@@ -16,7 +16,7 @@ pub(crate) type GossipPeerManager<L> = Arc<PeerManager<lightning_net_tokio::Sock
 pub(crate) enum GossipMessage {
 	NodeAnnouncement(NodeAnnouncement, Option<u32>),
 	// the second element is an optional override for the seen value
-	ChannelAnnouncement(ChannelAnnouncement, Option<u32>),
+	ChannelAnnouncement(ChannelAnnouncement, u64, Option<u32>),
 	ChannelUpdate(ChannelUpdate, Option<u32>),
 }
 

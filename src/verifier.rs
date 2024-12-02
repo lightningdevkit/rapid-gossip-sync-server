@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -23,6 +24,9 @@ pub(crate) struct ChainVerifier<L: Deref + Clone + Send + Sync + 'static> where 
 	graph: Arc<NetworkGraph<L>>,
 	outbound_gossiper: Arc<P2PGossipSync<Arc<NetworkGraph<L>>, Arc<Self>, L>>,
 	peer_handler: Mutex<Option<GossipPeerManager<L>>>,
+	/// A cache on the funding amounts for each channel that we've looked up, mapping from SCID to
+	/// funding satoshis.
+	channel_funding_amounts: Arc<Mutex<HashMap<u64, u64>>>,
 	logger: L
 }
 
@@ -35,14 +39,28 @@ impl<L: Deref + Clone + Send + Sync + 'static> ChainVerifier<L> where L::Target:
 			outbound_gossiper,
 			graph,
 			peer_handler: Mutex::new(None),
-			logger
+			channel_funding_amounts: Arc::new(Mutex::new(HashMap::new())),
+			logger,
 		}
 	}
 	pub(crate) fn set_ph(&self, peer_handler: GossipPeerManager<L>) {
 		*self.peer_handler.lock().unwrap() = Some(peer_handler);
 	}
 
-	async fn retrieve_utxo(client: Arc<RestClient>, short_channel_id: u64, logger: L) -> Result<TxOut, UtxoLookupError> {
+	pub(crate) fn get_cached_funding_value(&self, scid: u64) -> Option<u64> {
+		self.channel_funding_amounts.lock().unwrap().get(&scid).map(|v| *v)
+	}
+
+	pub(crate) async fn retrieve_funding_value(&self, scid: u64) -> Result<u64, UtxoLookupError> {
+		Self::retrieve_cache_txo(Arc::clone(&self.rest_client), Some(Arc::clone(&self.channel_funding_amounts)), scid, self.logger.clone())
+			.await.map(|txo| txo.value.to_sat())
+	}
+
+	pub(crate) async fn retrieve_txo(client: Arc<RestClient>, short_channel_id: u64, logger: L) -> Result<TxOut, UtxoLookupError> {
+		Self::retrieve_cache_txo(client, None, short_channel_id, logger).await
+	}
+
+	async fn retrieve_cache_txo(client: Arc<RestClient>, channel_funding_amounts: Option<Arc<Mutex<HashMap<u64, u64>>>>, short_channel_id: u64, logger: L) -> Result<TxOut, UtxoLookupError> {
 		let block_height = (short_channel_id >> 5 * 8) as u32; // block height is most significant three bytes
 		let transaction_index = ((short_channel_id >> 2 * 8) & 0xffffff) as u32;
 		let output_index = (short_channel_id & 0xffff) as u16;
@@ -57,7 +75,11 @@ impl<L: Deref + Clone + Send + Sync + 'static> ChainVerifier<L> where L::Target:
 			log_error!(logger, "Could't find output {} in transaction {}", output_index, transaction.compute_txid());
 			return Err(UtxoLookupError::UnknownTx);
 		}
-		Ok(transaction.output.swap_remove(output_index as usize))
+		let txo = transaction.output.swap_remove(output_index as usize);
+		if let Some(channel_funding_amounts) = channel_funding_amounts {
+			channel_funding_amounts.lock().unwrap().insert(short_channel_id, txo.value.to_sat());
+		}
+		Ok(txo)
 	}
 
 	async fn retrieve_block(client: Arc<RestClient>, block_height: u32, logger: L) -> Result<Block, UtxoLookupError> {
@@ -99,10 +121,11 @@ impl<L: Deref + Clone + Send + Sync + 'static> UtxoLookup for ChainVerifier<L> w
 		let graph_ref = Arc::clone(&self.graph);
 		let client_ref = Arc::clone(&self.rest_client);
 		let gossip_ref = Arc::clone(&self.outbound_gossiper);
+		let channel_funding_amounts_cache_ref = Arc::clone(&self.channel_funding_amounts);
 		let pm_ref = self.peer_handler.lock().unwrap().clone();
 		let logger_ref = self.logger.clone();
 		tokio::spawn(async move {
-			let res = Self::retrieve_utxo(client_ref, short_channel_id, logger_ref).await;
+			let res = Self::retrieve_cache_txo(client_ref, Some(channel_funding_amounts_cache_ref), short_channel_id, logger_ref).await;
 			fut.resolve(&*graph_ref, &*gossip_ref, res);
 			if let Some(pm) = pm_ref { pm.process_events(); }
 		});

@@ -13,7 +13,7 @@ use tokio_postgres::Client;
 use futures::StreamExt;
 use hex_conservative::DisplayHex;
 use lightning::{log_debug, log_gossip, log_info};
-use lightning::ln::features::NodeFeatures;
+use lightning::types::features::NodeFeatures;
 use lightning::util::logger::Logger;
 
 use crate::config;

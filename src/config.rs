@@ -337,7 +337,7 @@ pub(crate) async fn upgrade_db<L: Deref + Clone + Send + Sync + 'static>(
 				let permit = Arc::clone(&sem).acquire_owned().await.unwrap();
 				let logger = logger.clone();
 				tokio::spawn(async move {
-					let rest_client = Arc::new(RestClient::new(bitcoin_rest_endpoint()).unwrap());
+					let rest_client = Arc::new(RestClient::new(bitcoin_rest_endpoint()));
 					let txo = ChainVerifier::retrieve_txo(rest_client, scid as u64, logger).await
 						.expect("We shouldn't have accepted a channel announce with a bad TXO");
 					let client = crate::connect_to_db().await;

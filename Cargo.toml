@@ -6,16 +6,16 @@ edition = "2021"
 [dependencies]
 bitcoin = "0.32.2"
 hex-conservative = "0.2.1"
-lightning = { version = "0.0.125" }
-lightning-block-sync = { version = "0.0.125", features=["rest-client"] }
-lightning-net-tokio = { version = "0.0.125" }
+lightning = { version = "0.1.0" }
+lightning-block-sync = { version = "0.1.0", features=["rest-client"] }
+lightning-net-tokio = { version = "0.1.0" }
 tokio = { version = "1.25", features = ["full"] }
 tokio-postgres = { version = "=0.7.5" }
 futures = "0.3"
 
 [dev-dependencies]
-lightning = { version = "0.0.125", features = ["_test_utils"] }
-lightning-rapid-gossip-sync = { version = "0.0.125" }
+lightning = { version = "0.1.0", features = ["_test_utils"] }
+lightning-rapid-gossip-sync = { version = "0.1.0" }
 
 [profile.dev]
 panic = "abort"

@@ -4,8 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use bitcoin::Network;
 use bitcoin::blockdata::constants::ChainHash;
-use lightning::ln::features::NodeFeatures;
 use lightning::ln::msgs::{UnsignedChannelAnnouncement, UnsignedChannelUpdate};
+use lightning::types::features::NodeFeatures;
 use lightning::util::ser::{BigSize, Writeable};
 use crate::config;
 

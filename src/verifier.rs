@@ -35,7 +35,7 @@ struct RestBinaryResponse(Vec<u8>);
 impl<L: Deref + Clone + Send + Sync + 'static> ChainVerifier<L> where L::Target: Logger {
 	pub(crate) fn new(graph: Arc<NetworkGraph<L>>, outbound_gossiper: Arc<P2PGossipSync<Arc<NetworkGraph<L>>, Arc<Self>, L>>, logger: L) -> Self {
 		ChainVerifier {
-			rest_client: Arc::new(RestClient::new(config::bitcoin_rest_endpoint()).unwrap()),
+			rest_client: Arc::new(RestClient::new(config::bitcoin_rest_endpoint())),
 			outbound_gossiper,
 			graph,
 			peer_handler: Mutex::new(None),

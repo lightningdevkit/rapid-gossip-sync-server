@@ -3,9 +3,9 @@ use std::sync::{Arc, RwLock};
 
 use bitcoin::secp256k1::PublicKey;
 use lightning::events::{MessageSendEvent, MessageSendEventsProvider};
-use lightning::ln::features::{InitFeatures, NodeFeatures};
 use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, Init, LightningError, NodeAnnouncement, QueryChannelRange, QueryShortChannelIds, ReplyChannelRange, ReplyShortChannelIdsEnd, RoutingMessageHandler};
 use lightning::routing::gossip::{NetworkGraph, NodeId, P2PGossipSync};
+use lightning::types::features::{InitFeatures, NodeFeatures};
 use lightning::util::logger::Logger;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
@@ -132,20 +132,20 @@ impl<L: Deref + Clone + Send + Sync> MessageSendEventsProvider for GossipRouter<
 }
 
 impl<L: Deref + Clone + Send + Sync> RoutingMessageHandler for GossipRouter<L> where L::Target: Logger {
-	fn handle_node_announcement(&self, msg: &NodeAnnouncement) -> Result<bool, LightningError> {
-		let res = self.native_router.handle_node_announcement(msg)?;
+	fn handle_node_announcement(&self, their_node_id: Option<PublicKey>, msg: &NodeAnnouncement) -> Result<bool, LightningError> {
+		let res = self.native_router.handle_node_announcement(their_node_id, msg)?;
 		self.new_node_announcement(msg.clone());
 		Ok(res)
 	}
 
-	fn handle_channel_announcement(&self, msg: &ChannelAnnouncement) -> Result<bool, LightningError> {
-		let res = self.native_router.handle_channel_announcement(msg)?;
+	fn handle_channel_announcement(&self, their_node_id: Option<PublicKey>, msg: &ChannelAnnouncement) -> Result<bool, LightningError> {
+		let res = self.native_router.handle_channel_announcement(their_node_id, msg)?;
 		self.new_channel_announcement(msg.clone());
 		Ok(res)
 	}
 
-	fn handle_channel_update(&self, msg: &ChannelUpdate) -> Result<bool, LightningError> {
-		let res = self.native_router.handle_channel_update(msg)?;
+	fn handle_channel_update(&self, their_node_id: Option<PublicKey>, msg: &ChannelUpdate) -> Result<bool, LightningError> {
+		let res = self.native_router.handle_channel_update(their_node_id, msg)?;
 		self.new_channel_update(msg.clone());
 		Ok(res)
 	}
@@ -162,27 +162,27 @@ impl<L: Deref + Clone + Send + Sync> RoutingMessageHandler for GossipRouter<L> w
 		self.native_router.get_next_node_announcement(starting_point)
 	}
 
-	fn peer_connected(&self, their_node_id: &PublicKey, init: &Init, inbound: bool) -> Result<(), ()> {
+	fn peer_connected(&self, their_node_id: PublicKey, init: &Init, inbound: bool) -> Result<(), ()> {
 		self.native_router.peer_connected(their_node_id, init, inbound)
 	}
 
-	fn handle_reply_channel_range(&self, their_node_id: &PublicKey, msg: ReplyChannelRange) -> Result<(), LightningError> {
+	fn handle_reply_channel_range(&self, their_node_id: PublicKey, msg: ReplyChannelRange) -> Result<(), LightningError> {
 		self.native_router.handle_reply_channel_range(their_node_id, msg)
 	}
 
-	fn handle_reply_short_channel_ids_end(&self, their_node_id: &PublicKey, msg: ReplyShortChannelIdsEnd) -> Result<(), LightningError> {
+	fn handle_reply_short_channel_ids_end(&self, their_node_id: PublicKey, msg: ReplyShortChannelIdsEnd) -> Result<(), LightningError> {
 		self.native_router.handle_reply_short_channel_ids_end(their_node_id, msg)
 	}
 
-	fn handle_query_channel_range(&self, their_node_id: &PublicKey, msg: QueryChannelRange) -> Result<(), LightningError> {
+	fn handle_query_channel_range(&self, their_node_id: PublicKey, msg: QueryChannelRange) -> Result<(), LightningError> {
 		self.native_router.handle_query_channel_range(their_node_id, msg)
 	}
 
-	fn handle_query_short_channel_ids(&self, their_node_id: &PublicKey, msg: QueryShortChannelIds) -> Result<(), LightningError> {
+	fn handle_query_short_channel_ids(&self, their_node_id: PublicKey, msg: QueryShortChannelIds) -> Result<(), LightningError> {
 		self.native_router.handle_query_short_channel_ids(their_node_id, msg)
 	}
 
-	fn provided_init_features(&self, their_node_id: &PublicKey) -> InitFeatures {
+	fn provided_init_features(&self, their_node_id: PublicKey) -> InitFeatures {
 		self.native_router.provided_init_features(their_node_id)
 	}
 

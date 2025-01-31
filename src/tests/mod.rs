@@ -16,7 +16,7 @@ use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, NodeAnnouncement, 
 use lightning::routing::gossip::{NetworkGraph, NodeAlias, NodeId};
 use lightning::util::ser::Writeable;
 use lightning_rapid_gossip_sync::RapidGossipSync;
-use crate::{calculate_delta, config, serialize_delta};
+use crate::{calculate_delta, config, serialize_delta, serialize_empty_blob};
 use crate::persistence::GossipPersister;
 use crate::snapshot::Snapshotter;
 use crate::types::{GossipMessage, tests::TestLogger};
@@ -220,6 +220,19 @@ async fn test_persistence_runtime() {
 	clean_test_db().await;
 }
 
+
+#[test]
+fn test_no_op() {
+	let logger = Arc::new(TestLogger::with_id("test_no_op".to_string()));
+	for serialization_version in 1..3 {
+		let serialization = serialize_empty_blob(current_time() as u64, serialization_version);
+
+		let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
+		let client_graph_arc = Arc::new(client_graph);
+		let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
+		rgs.update_network_graph(&serialization).unwrap();
+	}
+}
 
 #[tokio::test]
 async fn test_trivial_setup() {

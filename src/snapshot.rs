@@ -138,9 +138,12 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 		{
 			// create dummy symlink
 			let dummy_filename = "empty_delta.lngossip";
-			let dummy_snapshot = super::serialize_empty_blob(reference_timestamp);
-			let dummy_snapshot_path = format!("{}/{}", pending_snapshot_directory, dummy_filename);
-			fs::write(&dummy_snapshot_path, dummy_snapshot).unwrap();
+			let dummy_snapshot_v1 = super::serialize_empty_blob(reference_timestamp, 1);
+			let dummy_snapshot_v2 = super::serialize_empty_blob(reference_timestamp, 2);
+			let dummy_snapshot_path_v1 = format!("{}/{}", pending_snapshot_directory, dummy_filename);
+			let dummy_snapshot_path_v2 = format!("{}/v2/{}", pending_snapshot_directory, dummy_filename);
+			fs::write(&dummy_snapshot_path_v1, dummy_snapshot_v1).unwrap();
+			fs::write(&dummy_snapshot_path_v2, dummy_snapshot_v2).unwrap();
 
 			let dummy_symlink_path = format!("{}/{}.bin", pending_symlink_directory, reference_timestamp);
 			let relative_dummy_snapshot_path = format!("{}/{}", relative_symlink_to_snapshot_path, dummy_filename);

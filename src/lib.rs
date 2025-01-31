@@ -160,8 +160,9 @@ pub(crate) async fn connect_to_db() -> Client {
 /// of our granularity constant. Note that for that purpose, this method could be very dangerous,
 /// because if consumed, the `timestamp` value calculated here will overwrite the timestamp that
 /// the client previously had, which could result in duplicated or omitted gossip down the line.
-fn serialize_empty_blob(current_timestamp: u64) -> Vec<u8> {
+fn serialize_empty_blob(current_timestamp: u64, serialization_version: u8) -> Vec<u8> {
 	let mut blob = GOSSIP_PREFIX.to_vec();
+	serialization_version.write(&mut blob).unwrap();
 
 	let network = config::network();
 	let chain_hash = ChainHash::using_genesis_block(network);
@@ -169,6 +170,10 @@ fn serialize_empty_blob(current_timestamp: u64) -> Vec<u8> {
 
 	let blob_timestamp = Snapshotter::<Arc<RGSSLogger>>::round_down_to_nearest_multiple(current_timestamp, SYMLINK_GRANULARITY_INTERVAL as u64) as u32;
 	blob_timestamp.write(&mut blob).unwrap();
+
+	if serialization_version >= 2 {
+		0u8.write(&mut blob).unwrap(); // default node feature count
+	}
 
 	0u32.write(&mut blob).unwrap(); // node count
 	0u32.write(&mut blob).unwrap(); // announcement count

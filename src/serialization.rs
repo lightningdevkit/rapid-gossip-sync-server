@@ -2,7 +2,6 @@ use std::cmp::max;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bitcoin::Network;
 use bitcoin::blockdata::constants::ChainHash;
 use lightning::ln::msgs::{UnsignedChannelAnnouncement, UnsignedChannelUpdate};
 use lightning::types::features::NodeFeatures;
@@ -130,11 +129,9 @@ pub(super) fn serialize_delta_set(channel_delta_set: DeltaSet, node_delta_set: N
 		full_update_defaults: Default::default(),
 		node_announcement_feature_defaults: vec![],
 		node_mutations: Default::default(),
-		chain_hash: ChainHash::using_genesis_block(Network::Bitcoin),
+		chain_hash: ChainHash::using_genesis_block(config::network()),
 		latest_seen: 0,
 	};
-
-	let mut chain_hash_set = false;
 
 	let mut full_update_histograms = FullUpdateValueHistograms {
 		cltv_expiry_delta: Default::default(),
@@ -156,13 +153,8 @@ pub(super) fn serialize_delta_set(channel_delta_set: DeltaSet, node_delta_set: N
 	let non_incremental_previous_update_threshold_timestamp = SystemTime::now().checked_sub(config::CHANNEL_REMINDER_AGE).unwrap().duration_since(UNIX_EPOCH).unwrap().as_secs() as u32;
 
 	for (scid, channel_delta) in channel_delta_set.into_iter() {
-
 		// any announcement chain hash is gonna be the same value. Just set it from the first one.
 		let channel_announcement_delta = channel_delta.announcement.as_ref().unwrap();
-		if !chain_hash_set {
-			chain_hash_set = true;
-			serialization_set.chain_hash = channel_announcement_delta.announcement.chain_hash;
-		}
 
 		let current_announcement_seen = channel_announcement_delta.seen;
 		let is_new_announcement = current_announcement_seen >= last_sync_timestamp;

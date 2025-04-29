@@ -20,7 +20,7 @@ services:
       - BITCOIN_REST_DOMAIN=bitcoin-core
       - BITCOIN_REST_PORT=8332
       - BITCOIN_REST_PATH=/rest/
-    command: 'cargo run'
+    command: 'rapid-gossip-sync-server'
 
   postgres:
     image: 'postgres:12-alpine'

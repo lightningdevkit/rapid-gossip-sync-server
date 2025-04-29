@@ -203,7 +203,9 @@ async fn calculate_delta<L: Deref + Clone>(network_graph: Arc<NetworkGraph<L>>, 
 	serialization::serialize_delta_set(delta_set, node_delta_set, last_sync_timestamp)
 }
 
-fn serialize_delta<L: Deref + Clone>(serialization_details: &SerializationSet, serialization_version: u8, logger: L) -> SerializedResponse where L::Target: Logger {
+fn serialize_delta<L: Deref + Clone>(
+	serialization_details: &SerializationSet, serialization_time: u32, serialization_version: u8, logger: L,
+) -> SerializedResponse where L::Target: Logger {
 	let mut output: Vec<u8> = vec![];
 	let snapshot_interval = config::snapshot_generation_interval();
 
@@ -277,11 +279,9 @@ fn serialize_delta<L: Deref + Clone>(serialization_details: &SerializationSet, s
 
 	// always write the chain hash
 	serialization_details.chain_hash.write(&mut prefixed_output).unwrap();
-	// always write the latest seen timestamp
-	let latest_seen_timestamp = serialization_details.latest_seen;
-	let overflow_seconds = latest_seen_timestamp % snapshot_interval;
-	let serialized_seen_timestamp = latest_seen_timestamp.saturating_sub(overflow_seconds);
-	serialized_seen_timestamp.write(&mut prefixed_output).unwrap();
+	// always write the time we're generating this object
+	assert_eq!(serialization_time % snapshot_interval, 0);
+	serialization_time.write(&mut prefixed_output).unwrap();
 
 	if serialization_version >= 2 { // serialize the most common node features
 		for mutated_node_id in serialization_details.node_mutations.keys() {
@@ -389,7 +389,7 @@ fn serialize_delta<L: Deref + Clone>(serialization_details: &SerializationSet, s
 	prefixed_output.append(&mut output);
 
 	log_info!(logger, "duplicated node ids: {}", duplicate_node_ids);
-	log_info!(logger, "latest seen timestamp: {:?}", serialization_details.latest_seen);
+	log_info!(logger, "generated at: {}", serialization_time);
 
 	SerializedResponse {
 		data: prefixed_output,

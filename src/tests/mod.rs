@@ -263,7 +263,8 @@ async fn test_trivial_setup() {
 	}
 
 	let delta = calculate_delta(network_graph_arc.clone(), 0, None, logger.clone()).await;
-	let serialization = serialize_delta(&delta, 1, logger.clone());
+	let delta_time = timestamp % config::snapshot_generation_interval();
+	let serialization = serialize_delta(&delta, delta_time, 1, logger.clone());
 	logger.assert_log_contains("rapid_gossip_sync_server", "announcement channel count: 1", 1);
 	clean_test_db().await;
 
@@ -280,8 +281,7 @@ async fn test_trivial_setup() {
 	let update_result = rgs.update_network_graph(&serialization.data).unwrap();
 	println!("update result: {}", update_result);
 	// the update result must be a multiple of our snapshot granularity
-	assert_eq!(update_result % config::snapshot_generation_interval(), 0);
-	assert!(update_result < timestamp);
+	assert_eq!(update_result, delta_time);
 
 	let timestamp_delta = timestamp - update_result;
 	println!("timestamp delta: {}", timestamp_delta);
@@ -428,7 +428,7 @@ async fn test_node_announcement_delta_detection() {
 	}
 
 	let delta = calculate_delta(network_graph_arc.clone(), timestamp - 5, None, logger.clone()).await;
-	let serialization = serialize_delta(&delta, 2, logger.clone());
+	let serialization = serialize_delta(&delta, timestamp, 2, logger.clone());
 	clean_test_db().await;
 
 	assert_eq!(serialization.message_count, 3);
@@ -479,7 +479,7 @@ async fn test_unidirectional_intermediate_update_consideration() {
 	let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
 
 	let delta = calculate_delta(network_graph_arc.clone(), timestamp + 1, None, logger.clone()).await;
-	let serialization = serialize_delta(&delta, 1, logger.clone());
+	let serialization = serialize_delta(&delta, current_time(), 1, logger.clone());
 
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 1 update rows of the first update in a new direction", 1);
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Processed 1 reference rows", 1);
@@ -547,7 +547,7 @@ async fn test_bidirectional_intermediate_update_consideration() {
 	assert_eq!(channel_count, 1);
 
 	let delta = calculate_delta(network_graph_arc.clone(), timestamp + 1, None, logger.clone()).await;
-	let serialization = serialize_delta(&delta, 1, logger.clone());
+	let serialization = serialize_delta(&delta, current_time(), 1, logger.clone());
 
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 0 update rows of the first update in a new direction", 1);
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Processed 2 reference rows", 1);
@@ -631,7 +631,7 @@ async fn test_channel_reminders() {
 	assert_eq!(channel_count, 2);
 
 	let delta = calculate_delta(network_graph_arc.clone(), timestamp - channel_reminder_delta + 15, None, logger.clone()).await;
-	let serialization = serialize_delta(&delta, 1, logger.clone());
+	let serialization = serialize_delta(&delta, current_time(), 1, logger.clone());
 
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 0 update rows of the first update in a new direction", 1);
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 4 update rows of the latest update in the less recently updated direction", 1);
@@ -701,7 +701,8 @@ async fn test_full_snapshot_recency() {
 
 	{ // sync after initial seed
 		let delta = calculate_delta(network_graph_arc.clone(), 0, None, logger.clone()).await;
-		let serialization = serialize_delta(&delta, 1, logger.clone());
+		let delta_time = current_time() % config::snapshot_generation_interval();
+		let serialization = serialize_delta(&delta, current_time(), 1, logger.clone());
 		logger.assert_log_contains("rapid_gossip_sync_server", "announcement channel count: 1", 1);
 
 		let channel_count = network_graph_arc.read_only().channels().len();
@@ -714,8 +715,7 @@ async fn test_full_snapshot_recency() {
 		let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
 		let update_result = rgs.update_network_graph(&serialization.data).unwrap();
 		// the update result must be a multiple of our snapshot granularity
-		assert_eq!(update_result % config::snapshot_generation_interval(), 0);
-		assert!(update_result < timestamp);
+		assert_eq!(update_result, delta_time);
 
 		let readonly_graph = client_graph_arc.read_only();
 		let channels = readonly_graph.channels();
@@ -782,7 +782,8 @@ async fn test_full_snapshot_recency_with_wrong_seen_order() {
 
 	{ // sync after initial seed
 		let delta = calculate_delta(network_graph_arc.clone(), 0, None, logger.clone()).await;
-		let serialization = serialize_delta(&delta, 1, logger.clone());
+		let delta_time = current_time() % config::snapshot_generation_interval();
+		let serialization = serialize_delta(&delta, delta_time, 1, logger.clone());
 		logger.assert_log_contains("rapid_gossip_sync_server", "announcement channel count: 1", 1);
 
 		let channel_count = network_graph_arc.read_only().channels().len();
@@ -795,8 +796,7 @@ async fn test_full_snapshot_recency_with_wrong_seen_order() {
 		let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
 		let update_result = rgs.update_network_graph(&serialization.data).unwrap();
 		// the update result must be a multiple of our snapshot granularity
-		assert_eq!(update_result % config::snapshot_generation_interval(), 0);
-		assert!(update_result < timestamp);
+		assert_eq!(update_result, delta_time);
 
 		let readonly_graph = client_graph_arc.read_only();
 		let channels = readonly_graph.channels();
@@ -862,7 +862,8 @@ async fn test_full_snapshot_recency_with_wrong_propagation_order() {
 
 	{ // sync after initial seed
 		let delta = calculate_delta(network_graph_arc.clone(), 0, None, logger.clone()).await;
-		let serialization = serialize_delta(&delta, 1, logger.clone());
+		let delta_time = current_time() % config::snapshot_generation_interval();
+		let serialization = serialize_delta(&delta, delta_time, 1, logger.clone());
 		logger.assert_log_contains("rapid_gossip_sync_server", "announcement channel count: 1", 1);
 
 		let channel_count = network_graph_arc.read_only().channels().len();
@@ -875,8 +876,7 @@ async fn test_full_snapshot_recency_with_wrong_propagation_order() {
 		let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
 		let update_result = rgs.update_network_graph(&serialization.data).unwrap();
 		// the update result must be a multiple of our snapshot granularity
-		assert_eq!(update_result % config::snapshot_generation_interval(), 0);
-		assert!(update_result < timestamp);
+		assert_eq!(update_result, delta_time);
 
 		let readonly_graph = client_graph_arc.read_only();
 		let channels = readonly_graph.channels();
@@ -996,7 +996,8 @@ async fn test_full_snapshot_mutiny_scenario() {
 
 	{ // sync after initial seed
 		let delta = calculate_delta(network_graph_arc.clone(), 0, None, logger.clone()).await;
-		let serialization = serialize_delta(&delta, 1, logger.clone());
+		let delta_time = current_time() % config::snapshot_generation_interval();
+		let serialization = serialize_delta(&delta, delta_time, 1, logger.clone());
 		logger.assert_log_contains("rapid_gossip_sync_server", "announcement channel count: 1", 1);
 
 		let channel_count = network_graph_arc.read_only().channels().len();
@@ -1010,8 +1011,7 @@ async fn test_full_snapshot_mutiny_scenario() {
 		let update_result = rgs.update_network_graph(&serialization.data).unwrap();
 		println!("update result: {}", update_result);
 		// the update result must be a multiple of our snapshot granularity
-		assert_eq!(update_result % config::snapshot_generation_interval(), 0);
-		assert!(update_result < timestamp);
+		assert_eq!(update_result, delta_time);
 
 		let timestamp_delta = timestamp - update_result;
 		println!("timestamp delta: {}", timestamp_delta);
@@ -1110,7 +1110,8 @@ async fn test_full_snapshot_interlaced_channel_timestamps() {
 
 	{ // sync after initial seed
 		let delta = calculate_delta(network_graph_arc.clone(), 0, None, logger.clone()).await;
-		let serialization = serialize_delta(&delta, 1, logger.clone());
+		let delta_time = current_time() % config::snapshot_generation_interval();
+		let serialization = serialize_delta(&delta, delta_time, 1, logger.clone());
 		logger.assert_log_contains("rapid_gossip_sync_server", "announcement channel count: 2", 1);
 
 		let channel_count = network_graph_arc.read_only().channels().len();
@@ -1123,8 +1124,7 @@ async fn test_full_snapshot_interlaced_channel_timestamps() {
 		let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
 		let update_result = rgs.update_network_graph(&serialization.data).unwrap();
 		// the update result must be a multiple of our snapshot granularity
-		assert_eq!(update_result % config::snapshot_generation_interval(), 0);
-		assert!(update_result < timestamp);
+		assert_eq!(update_result, delta_time);
 
 		let readonly_graph = client_graph_arc.read_only();
 		let channels = readonly_graph.channels();

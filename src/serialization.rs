@@ -1,4 +1,3 @@
-use std::cmp::max;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -16,7 +15,6 @@ pub(super) struct SerializationSet {
 	pub(super) full_update_defaults: DefaultUpdateValues,
 	pub(super) node_announcement_feature_defaults: Vec<NodeFeatures>,
 	pub(super) node_mutations: NodeDeltaSet,
-	pub(super) latest_seen: u32,
 	pub(super) chain_hash: ChainHash,
 }
 
@@ -130,7 +128,6 @@ pub(super) fn serialize_delta_set(channel_delta_set: DeltaSet, node_delta_set: N
 		node_announcement_feature_defaults: vec![],
 		node_mutations: Default::default(),
 		chain_hash: ChainHash::using_genesis_block(config::network()),
-		latest_seen: 0,
 	};
 
 	let mut full_update_histograms = FullUpdateValueHistograms {
@@ -165,7 +162,6 @@ pub(super) fn serialize_delta_set(channel_delta_set: DeltaSet, node_delta_set: N
 		};
 		let send_announcement = is_new_announcement || is_newly_included_announcement;
 		if send_announcement {
-			serialization_set.latest_seen = max(serialization_set.latest_seen, current_announcement_seen);
 			serialization_set.announcements.push(channel_delta.announcement.unwrap().announcement);
 		}
 
@@ -177,10 +173,6 @@ pub(super) fn serialize_delta_set(channel_delta_set: DeltaSet, node_delta_set: N
 				if let Some(latest_update_delta) = updates.latest_update_after_seen {
 					let latest_update = latest_update_delta.update;
 					assert_eq!(latest_update.short_channel_id, scid, "Update in DB had wrong SCID column");
-
-					// the returned seen timestamp should be the latest of all the returned
-					// announcements and latest updates
-					serialization_set.latest_seen = max(serialization_set.latest_seen, latest_update_delta.seen);
 
 					if let Some(update_delta) = updates.last_update_before_seen {
 						let mutated_properties = updates.mutated_properties;

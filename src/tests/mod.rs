@@ -211,7 +211,7 @@ async fn test_persistence_runtime() {
 	let logger = Arc::new(TestLogger::new());
 	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
 	let network_graph_arc = Arc::new(network_graph);
-	let (_persister, _receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+	let (_persister, _receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone()).await;
 
 	tokio::task::spawn_blocking(move || {
 		drop(_persister);
@@ -240,7 +240,7 @@ async fn test_trivial_setup() {
 	let logger = Arc::new(TestLogger::new());
 	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
 	let network_graph_arc = Arc::new(network_graph);
-	let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+	let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone()).await;
 
 	let short_channel_id = 1;
 	let timestamp = current_time() - 10;
@@ -314,7 +314,7 @@ async fn test_node_announcement_persistence() {
 	let logger = Arc::new(TestLogger::new());
 	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
 	let network_graph_arc = Arc::new(network_graph);
-	let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+	let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone()).await;
 
 	{ // seed the db
 		let mut announcement = generate_node_announcement(None);
@@ -355,7 +355,7 @@ async fn test_node_announcement_delta_detection() {
 	let logger = Arc::new(TestLogger::new());
 	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
 	let network_graph_arc = Arc::new(network_graph);
-	let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+	let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone()).await;
 
 	let timestamp = current_time() - 10;
 
@@ -446,7 +446,7 @@ async fn test_unidirectional_intermediate_update_consideration() {
 	let logger = Arc::new(TestLogger::new());
 	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
 	let network_graph_arc = Arc::new(network_graph);
-	let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+	let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone()).await;
 
 	let short_channel_id = 1;
 	let timestamp = current_time() - 10;
@@ -515,7 +515,7 @@ async fn test_bidirectional_intermediate_update_consideration() {
 	let logger = Arc::new(TestLogger::new());
 	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
 	let network_graph_arc = Arc::new(network_graph);
-	let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+	let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone()).await;
 
 	let short_channel_id = 1;
 	let timestamp = current_time() - 10;
@@ -573,7 +573,7 @@ async fn test_channel_reminders() {
 	let logger = Arc::new(TestLogger::new());
 	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
 	let network_graph_arc = Arc::new(network_graph);
-	let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+	let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone()).await;
 
 	let timestamp = current_time();
 	println!("timestamp: {}", timestamp);
@@ -663,7 +663,7 @@ async fn test_full_snapshot_recency() {
 	println!("timestamp: {}", timestamp);
 
 	{ // seed the db
-		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone()).await;
 		let announcement = generate_channel_announcement(short_channel_id);
 		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
 		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
@@ -744,7 +744,7 @@ async fn test_full_snapshot_recency_with_wrong_seen_order() {
 	println!("timestamp: {}", timestamp);
 
 	{ // seed the db
-		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone()).await;
 		let announcement = generate_channel_announcement(short_channel_id);
 		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
 		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
@@ -825,7 +825,7 @@ async fn test_full_snapshot_recency_with_wrong_propagation_order() {
 	println!("timestamp: {}", timestamp);
 
 	{ // seed the db
-		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone()).await;
 		let announcement = generate_channel_announcement(short_channel_id);
 		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
 		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
@@ -908,7 +908,7 @@ async fn test_full_snapshot_mutiny_scenario() {
 	println!("timestamp: {}", timestamp);
 
 	{ // seed the db
-		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone()).await;
 		let announcement = generate_channel_announcement(short_channel_id);
 		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
 		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
@@ -1043,7 +1043,7 @@ async fn test_full_snapshot_interlaced_channel_timestamps() {
 	println!("timestamp: {}", timestamp);
 
 	{ // seed the db
-		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone()).await;
 		let secondary_channel_id = main_channel_id + 1;
 
 		{ // main channel
@@ -1155,7 +1155,7 @@ async fn test_full_snapshot_persistence() {
 	println!("timestamp: {}", timestamp);
 
 	{ // seed the db
-		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone()).await;
 		let announcement = generate_channel_announcement(short_channel_id);
 		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
 		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
@@ -1210,7 +1210,7 @@ async fn test_full_snapshot_persistence() {
 	}
 
 	{ // update the db
-		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone());
+		let (mut persister, receiver) = GossipPersister::new(network_graph_arc.clone(), logger.clone()).await;
 
 		{ // second update
 			let update = generate_update(short_channel_id, false, timestamp + 30, 0, 0, 0, 0, 39);

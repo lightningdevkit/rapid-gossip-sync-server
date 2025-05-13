@@ -28,7 +28,7 @@ use crate::lookup::DeltaSet;
 use crate::persistence::GossipPersister;
 use crate::serialization::{MutatedNodeProperties, NodeSerializationStrategy, SerializationSet, UpdateSerialization};
 use crate::snapshot::Snapshotter;
-use crate::types::RGSSLogger;
+use crate::types::{RGSSLogger, GossipMessage};
 
 mod downloader;
 mod tracking;
@@ -103,13 +103,33 @@ impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Ta
 		let (sync_completion_sender, mut sync_completion_receiver) = mpsc::channel::<()>(1);
 
 		if config::DOWNLOAD_NEW_GOSSIP {
-			let (mut persister, persistence_sender) = GossipPersister::new(self.network_graph.clone(), self.logger.clone());
+			let (mut persister, persistence_sender) =
+				GossipPersister::new(self.network_graph.clone(), self.logger.clone()).await;
+			log_info!(self.logger, "Starting gossip db persistence listener");
+			tokio::spawn(async move { persister.persist_gossip().await; });
+
+			{
+				log_info!(self.logger, "Backfilling latest gossip from cached network graph…");
+				let graph = self.network_graph.read_only();
+				for (_, chan) in graph.channels().unordered_iter() {
+					if let Some(announcement) = &chan.announcement_message {
+						if let Some(funding) = chan.capacity_sats {
+							let gossip_msg = GossipMessage::ChannelAnnouncement(announcement.clone(), funding, None);
+							persistence_sender.send(gossip_msg).await.unwrap();
+						}
+					}
+					if let Some(update) = chan.one_to_two.as_ref().map(|i| i.last_update_message.as_ref()).flatten() {
+						persistence_sender.send(GossipMessage::ChannelUpdate(update.clone(), None)).await.unwrap();
+					}
+					if let Some(update) = chan.two_to_one.as_ref().map(|i| i.last_update_message.as_ref()).flatten() {
+						persistence_sender.send(GossipMessage::ChannelUpdate(update.clone(), None)).await.unwrap();
+					}
+				}
+			}
 
 			log_info!(self.logger, "Starting gossip download");
 			tokio::spawn(tracking::download_gossip(persistence_sender, sync_completion_sender,
 				Arc::clone(&self.network_graph), self.logger.clone()));
-			log_info!(self.logger, "Starting gossip db persistence listener");
-			tokio::spawn(async move { persister.persist_gossip().await; });
 		} else {
 			sync_completion_sender.send(()).await.unwrap();
 		}

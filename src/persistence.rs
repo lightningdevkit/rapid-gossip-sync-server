@@ -24,19 +24,7 @@ pub(crate) struct GossipPersister<L: Deref> where L::Target: Logger {
 }
 
 impl<L: Deref + Clone + Send + Sync + 'static> GossipPersister<L> where L::Target: Logger {
-	pub fn new(network_graph: Arc<NetworkGraph<L>>, logger: L) -> (Self, mpsc::Sender<GossipMessage>) {
-		let (gossip_persistence_sender, gossip_persistence_receiver) =
-			mpsc::channel::<GossipMessage>(100);
-		let runtime = Runtime::new().unwrap();
-		(GossipPersister {
-			gossip_persistence_receiver,
-			network_graph,
-			tokio_runtime: runtime,
-			logger
-		}, gossip_persistence_sender)
-	}
-
-	pub(crate) async fn persist_gossip(&mut self) {
+	pub async fn new(network_graph: Arc<NetworkGraph<L>>, logger: L) -> (Self, mpsc::Sender<GossipMessage>) {
 		{ // initialize the database
 			// this client instance is only used once
 			let mut client = crate::connect_to_db().await;
@@ -50,7 +38,7 @@ impl<L: Deref + Clone + Send + Sync + 'static> GossipPersister<L> where L::Targe
 
 			let cur_schema = client.query("SELECT db_schema FROM config WHERE id = $1", &[&1]).await.unwrap();
 			if !cur_schema.is_empty() {
-				config::upgrade_db(cur_schema[0].get(0), &mut client, self.logger.clone()).await;
+				config::upgrade_db(cur_schema[0].get(0), &mut client, logger.clone()).await;
 			}
 
 			let preparation = client.execute("set time zone UTC", &[]).await;
@@ -93,6 +81,18 @@ impl<L: Deref + Clone + Send + Sync + 'static> GossipPersister<L> where L::Targe
 			}
 		}
 
+		let (gossip_persistence_sender, gossip_persistence_receiver) =
+			mpsc::channel::<GossipMessage>(100);
+		let runtime = Runtime::new().unwrap();
+		(GossipPersister {
+			gossip_persistence_receiver,
+			network_graph,
+			tokio_runtime: runtime,
+			logger
+		}, gossip_persistence_sender)
+	}
+
+	pub(crate) async fn persist_gossip(&mut self) {
 		// print log statement every minute
 		let mut latest_persistence_log = Instant::now() - Duration::from_secs(60);
 		let mut i = 0u32;

@@ -240,7 +240,10 @@ pub(super) fn serialize_delta_set(channel_delta_set: DeltaSet, node_delta_set: N
 			}
 			Some((id, delta))
 		} else {
-			None
+			// If the node details didn't exist before the last-update timestamp, send a full
+			// update.
+			delta.strategy = Some(NodeSerializationStrategy::Full);
+			Some((id, delta))
 		}
 	}).collect();
 

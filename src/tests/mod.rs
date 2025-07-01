@@ -75,14 +75,12 @@ fn generate_node_announcement(private_key: Option<SecretKey>) -> NodeAnnouncemen
 }
 
 
-fn generate_channel_announcement(short_channel_id: u64) -> ChannelAnnouncement {
+fn generate_channel_announcement_between_nodes(short_channel_id: u64, random_private_key_1: &SecretKey, random_private_key_2: &SecretKey) -> ChannelAnnouncement {
 	let secp_context = Secp256k1::new();
 
-	let random_private_key_1 = SecretKey::from_slice(&[1; 32]).unwrap();
 	let random_public_key_1 = random_private_key_1.public_key(&secp_context);
 	let node_id_1 = NodeId::from_pubkey(&random_public_key_1);
 
-	let random_private_key_2 = SecretKey::from_slice(&[2; 32]).unwrap();
 	let random_public_key_2 = random_private_key_2.public_key(&secp_context);
 	let node_id_2 = NodeId::from_pubkey(&random_public_key_2);
 
@@ -98,8 +96,8 @@ fn generate_channel_announcement(short_channel_id: u64) -> ChannelAnnouncement {
 	};
 
 	let msg_hash = bitcoin::secp256k1::Message::from_slice(&Sha256dHash::hash(&announcement.encode()[..])[..]).unwrap();
-	let node_signature_1 = secp_context.sign_ecdsa(&msg_hash, &random_private_key_1);
-	let node_signature_2 = secp_context.sign_ecdsa(&msg_hash, &random_private_key_2);
+	let node_signature_1 = secp_context.sign_ecdsa(&msg_hash, random_private_key_1);
+	let node_signature_2 = secp_context.sign_ecdsa(&msg_hash, random_private_key_2);
 
 	ChannelAnnouncement {
 		node_signature_1,
@@ -108,6 +106,12 @@ fn generate_channel_announcement(short_channel_id: u64) -> ChannelAnnouncement {
 		bitcoin_signature_2: node_signature_2,
 		contents: announcement,
 	}
+}
+
+fn generate_channel_announcement(short_channel_id: u64) -> ChannelAnnouncement {
+	let random_private_key_1 = SecretKey::from_slice(&[1; 32]).unwrap();
+	let random_private_key_2 = SecretKey::from_slice(&[2; 32]).unwrap();
+	generate_channel_announcement_between_nodes(short_channel_id, &random_private_key_1, &random_private_key_2)
 }
 
 fn generate_update(scid: u64, direction: bool, timestamp: u32, expiry_delta: u16, min_msat: u64, max_msat: u64, base_msat: u32, fee_rate: u32) -> ChannelUpdate {
@@ -360,30 +364,59 @@ async fn test_node_announcement_delta_detection() {
 	let timestamp = current_time() - 10;
 
 	{ // seed the db
+		let third_node = SecretKey::from_slice(&[3; 32]).unwrap();
+		let fourth_node = SecretKey::from_slice(&[4; 32]).unwrap();
 
 		{ // necessary for the node announcements to be considered relevant
 			let announcement = generate_channel_announcement(1);
-			let update_1 = generate_update(1, false, timestamp, 0, 0, 0, 6, 0);
-			let update_2 = generate_update(1, true, timestamp, 0, 0, 0, 6, 0);
+			let update_1 = generate_update(1, false, timestamp - 10, 0, 0, 0, 6, 0);
+			let update_2 = generate_update(1, true, timestamp - 10, 0, 0, 0, 6, 0);
 
 			network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
 			network_graph_arc.update_channel_unsigned(&update_1.contents).unwrap();
 			network_graph_arc.update_channel_unsigned(&update_2.contents).unwrap();
 
-			receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, Some(timestamp))).await.unwrap();
-			receiver.send(GossipMessage::ChannelUpdate(update_1, Some(timestamp))).await.unwrap();
-			receiver.send(GossipMessage::ChannelUpdate(update_2, Some(timestamp))).await.unwrap();
+			receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, Some(timestamp - 10))).await.unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update_1, Some(timestamp - 10))).await.unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update_2, Some(timestamp - 10))).await.unwrap();
 		}
 
-		let mut announcement = generate_node_announcement(None);
-		announcement.contents.timestamp = timestamp - 10;
-		network_graph_arc.update_node_from_unsigned_announcement(&announcement.contents).unwrap();
-		receiver.send(GossipMessage::NodeAnnouncement(announcement.clone(), Some(announcement.contents.timestamp))).await.unwrap();
-		announcement.contents.timestamp = timestamp - 8;
-		network_graph_arc.update_node_from_unsigned_announcement(&announcement.contents).unwrap();
-		receiver.send(GossipMessage::NodeAnnouncement(announcement.clone(), Some(announcement.contents.timestamp))).await.unwrap();
+		{ // necessary for the second node announcements to be considered relevant
+			let announcement = generate_channel_announcement_between_nodes(2, &third_node, &fourth_node);
+			let update_1 = generate_update(2, false, timestamp - 10, 0, 0, 0, 6, 0);
+			let update_2 = generate_update(2, true, timestamp - 10, 0, 0, 0, 6, 0);
+
+			network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+			network_graph_arc.update_channel_unsigned(&update_1.contents).unwrap();
+			network_graph_arc.update_channel_unsigned(&update_2.contents).unwrap();
+
+			receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, Some(timestamp - 10))).await.unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update_1, Some(timestamp - 10))).await.unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update_2, Some(timestamp - 10))).await.unwrap();
+		}
 
 		{
+			// Add some node announcements from before the last sync for node 1.
+			let mut announcement = generate_node_announcement(None);
+			announcement.contents.timestamp = timestamp - 10;
+			network_graph_arc.update_node_from_unsigned_announcement(&announcement.contents).unwrap();
+			receiver.send(GossipMessage::NodeAnnouncement(announcement.clone(), Some(announcement.contents.timestamp))).await.unwrap();
+			announcement.contents.timestamp = timestamp - 8;
+			network_graph_arc.update_node_from_unsigned_announcement(&announcement.contents).unwrap();
+			receiver.send(GossipMessage::NodeAnnouncement(announcement.clone(), Some(announcement.contents.timestamp))).await.unwrap();
+		}
+
+		{
+			// Add a node announcement from before the last sync for node 4.
+			let mut announcement = generate_node_announcement(Some(fourth_node.clone()));
+			announcement.contents.timestamp = timestamp - 10;
+			network_graph_arc.update_node_from_unsigned_announcement(&announcement.contents).unwrap();
+			receiver.send(GossipMessage::NodeAnnouncement(announcement.clone(), Some(announcement.contents.timestamp))).await.unwrap();
+		}
+
+		{
+			// Add current announcement for node two, which should be included in its entirety as
+			// its new since the last sync time
 			let mut current_announcement = generate_node_announcement(Some(SecretKey::from_slice(&[2; 32]).unwrap()));
 			current_announcement.contents.features = NodeFeatures::from_be_bytes(vec![23, 48]);
 			current_announcement.contents.timestamp = timestamp;
@@ -392,19 +425,22 @@ async fn test_node_announcement_delta_detection() {
 		}
 
 		{
-			let mut current_announcement = generate_node_announcement(Some(SecretKey::from_slice(&[3; 32]).unwrap()));
+			// Note that we do *not* add the node announcement for node three to the network graph,
+			// simulating its channels having timed out, and thus the node announcement (which is
+			// new) will not be included.
+			let mut current_announcement = generate_node_announcement(Some(third_node));
 			current_announcement.contents.features = NodeFeatures::from_be_bytes(vec![22, 49]);
 			current_announcement.contents.timestamp = timestamp;
 			receiver.send(GossipMessage::NodeAnnouncement(current_announcement, Some(timestamp))).await.unwrap();
 		}
 
 		{
-			// modify announcement to contain a bunch of addresses
+			// modify announcement of node 1 to contain a bunch of addresses
+			let mut announcement = generate_node_announcement(None);
 			announcement.contents.addresses.push(SocketAddress::Hostname {
 				hostname: "google.com".to_string().try_into().unwrap(),
 				port: 443,
 			});
-			announcement.contents.features = NodeFeatures::from_be_bytes(vec![23, 48]);
 			announcement.contents.addresses.push(SocketAddress::TcpIpV4 { addr: [127, 0, 0, 1], port: 9635 });
 			announcement.contents.addresses.push(SocketAddress::TcpIpV6 { addr: [1; 16], port: 1337 });
 			announcement.contents.addresses.push(SocketAddress::OnionV2([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]));
@@ -415,9 +451,9 @@ async fn test_node_announcement_delta_detection() {
 				port: 4,
 			});
 			announcement.contents.timestamp = timestamp;
+			network_graph_arc.update_node_from_unsigned_announcement(&announcement.contents).unwrap();
+			receiver.send(GossipMessage::NodeAnnouncement(announcement, Some(timestamp))).await.unwrap();
 		}
-		network_graph_arc.update_node_from_unsigned_announcement(&announcement.contents).unwrap();
-		receiver.send(GossipMessage::NodeAnnouncement(announcement, Some(timestamp))).await.unwrap();
 
 		drop(receiver);
 		persister.persist_gossip().await;
@@ -431,11 +467,14 @@ async fn test_node_announcement_delta_detection() {
 	let serialization = serialize_delta(&delta, 2, logger.clone());
 	clean_test_db().await;
 
-	assert_eq!(serialization.message_count, 3);
+	// All channel updates completed prior to the last sync timestamp, so none are included.
+	assert_eq!(serialization.message_count, 0);
+	// We should have updated addresses for node 1, full announcements for node 2 and 3, and no
+	// announcement for node 4.
 	assert_eq!(serialization.node_announcement_count, 2);
-	assert_eq!(serialization.node_update_count, 1);
+	assert_eq!(serialization.node_update_count, 2);
 	assert_eq!(serialization.node_feature_update_count, 1);
-	assert_eq!(serialization.node_address_update_count, 1);
+	assert_eq!(serialization.node_address_update_count, 2);
 }
 
 /// If a channel has only seen updates in one direction, it should not be announced

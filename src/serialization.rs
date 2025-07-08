@@ -11,7 +11,7 @@ use crate::config;
 use crate::lookup::{DeltaSet, DirectedUpdateDelta, NodeDeltaSet};
 
 pub(super) struct SerializationSet {
-	pub(super) announcements: Vec<UnsignedChannelAnnouncement>,
+	pub(super) announcements: Vec<(UnsignedChannelAnnouncement, u64)>,
 	pub(super) updates: Vec<UpdateSerialization>,
 	pub(super) full_update_defaults: DefaultUpdateValues,
 	pub(super) node_announcement_feature_defaults: Vec<NodeFeatures>,
@@ -166,7 +166,8 @@ pub(super) fn serialize_delta_set(channel_delta_set: DeltaSet, node_delta_set: N
 		let send_announcement = is_new_announcement || is_newly_included_announcement;
 		if send_announcement {
 			serialization_set.latest_seen = max(serialization_set.latest_seen, current_announcement_seen);
-			serialization_set.announcements.push(channel_delta.announcement.unwrap().announcement);
+			let announcement_delta = channel_delta.announcement.unwrap();
+			serialization_set.announcements.push((announcement_delta.announcement, announcement_delta.funding_sats));
 		}
 
 		let direction_a_updates = channel_delta.updates.0;
@@ -266,7 +267,7 @@ pub(super) fn serialize_delta_set(channel_delta_set: DeltaSet, node_delta_set: N
 	serialization_set
 }
 
-pub fn serialize_stripped_channel_announcement(announcement: &UnsignedChannelAnnouncement, node_id_a_index: usize, node_id_b_index: usize, previous_scid: u64) -> Vec<u8> {
+pub fn serialize_stripped_channel_announcement(announcement: &UnsignedChannelAnnouncement, funding_sats: u64, node_id_a_index: usize, node_id_b_index: usize, previous_scid: u64, version: u8) -> Vec<u8> {
 	let mut stripped_announcement = vec![];
 
 	announcement.features.write(&mut stripped_announcement).unwrap();
@@ -279,7 +280,19 @@ pub fn serialize_stripped_channel_announcement(announcement: &UnsignedChannelAnn
 
 	// write indices of node ids rather than the node IDs themselves
 	BigSize(node_id_a_index as u64).write(&mut stripped_announcement).unwrap();
-	BigSize(node_id_b_index as u64).write(&mut stripped_announcement).unwrap();
+
+	let mut node_id_b_index = node_id_b_index as u64;
+	if version >= 2 {
+		// Set the "extra data" bit so that we can write the funding amount below.
+		node_id_b_index |= 1 << 63;
+	}
+	BigSize(node_id_b_index).write(&mut stripped_announcement).unwrap();
+
+	if version >= 2 {
+		let mut funding_sats_vec = Vec::with_capacity(8);
+		BigSize(funding_sats).write(&mut funding_sats_vec).unwrap();
+		funding_sats_vec.write(&mut stripped_announcement).unwrap();
+	}
 
 	// println!("serialized CA: {}, \n{:?}\n{:?}\n", announcement.short_channel_id, announcement.node_id_1, announcement.node_id_2);
 	stripped_announcement

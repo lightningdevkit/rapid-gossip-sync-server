@@ -248,10 +248,10 @@ fn serialize_delta<L: Deref + Clone>(serialization_details: &SerializationSet, s
 	let announcement_count = serialization_details.announcements.len() as u32;
 	announcement_count.write(&mut output).unwrap();
 	let mut previous_announcement_scid = 0;
-	for current_announcement in &serialization_details.announcements {
+	for (current_announcement, funding_sats) in &serialization_details.announcements {
 		let id_index_1 = get_node_id_index(current_announcement.node_id_1);
 		let id_index_2 = get_node_id_index(current_announcement.node_id_2);
-		let mut stripped_announcement = serialization::serialize_stripped_channel_announcement(&current_announcement, id_index_1, id_index_2, previous_announcement_scid);
+		let mut stripped_announcement = serialization::serialize_stripped_channel_announcement(&current_announcement, *funding_sats, id_index_1, id_index_2, previous_announcement_scid, serialization_version);
 		output.append(&mut stripped_announcement);
 
 		previous_announcement_scid = current_announcement.short_channel_id;

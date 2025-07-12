@@ -33,9 +33,11 @@ jobs:
       - name: Pin dependencies
         if: ${{ matrix.toolchain == '1.63.0' }}
         run: |
-          cargo update -p tokio --precise "1.37.0" --verbose
-          cargo update -p tokio-macros --precise "2.2.0" --verbose
+          cargo update -p tokio --precise "1.38.1" --verbose
           cargo update -p postgres-types --precise "0.2.6" --verbose
+          cargo update -p parking_lot@0.12.4 --precise "0.12.3" --verbose
+          cargo update -p parking_lot_core@0.9.11 --precise "0.9.10" --verbose
+          cargo update -p lock_api --precise "0.4.12" --verbose
       - name: Build on Rust ${{ matrix.toolchain }}
         run: |
           cargo build --verbose --color always

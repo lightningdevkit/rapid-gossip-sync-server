@@ -27,6 +27,7 @@ pub(super) type NodeDeltaSet = HashMap<NodeId, NodeDelta>;
 pub(super) struct AnnouncementDelta {
 	pub(super) seen: u32,
 	pub(super) announcement: UnsignedChannelAnnouncement,
+	pub(super) funding_sats: u64,
 }
 
 pub(super) struct UpdateDelta {
@@ -148,7 +149,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 
 	log_info!(logger, "Obtaining corresponding database entries");
 	// get all the channel announcements that are currently in the network graph
-	let announcement_rows = client.query_raw("SELECT announcement_signed, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen FROM channel_announcements WHERE short_channel_id = any($1) ORDER BY short_channel_id ASC", [&channel_ids]).await.unwrap();
+	let announcement_rows = client.query_raw("SELECT announcement_signed, funding_amount_sats, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen FROM channel_announcements WHERE short_channel_id = any($1) ORDER BY short_channel_id ASC", [&channel_ids]).await.unwrap();
 	let mut pinned_rows = Box::pin(announcement_rows);
 
 	let mut announcement_count = 0;
@@ -159,11 +160,13 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 		let unsigned_announcement = ChannelAnnouncement::read(&mut readable).unwrap().contents;
 
 		let scid = unsigned_announcement.short_channel_id;
+		let funding_sats = current_announcement_row.get::<_, i64>("funding_amount_sats") as u64;
 		let current_seen_timestamp = current_announcement_row.get::<_, i64>("seen") as u32;
 
 		let current_channel_delta = delta_set.entry(scid).or_insert(ChannelDelta::default());
 		(*current_channel_delta).announcement = Some(AnnouncementDelta {
 			announcement: unsigned_announcement,
+			funding_sats,
 			seen: current_seen_timestamp,
 		});
 

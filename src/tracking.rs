@@ -5,6 +5,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use bitcoin::constants::ChainHash;
 use bitcoin::secp256k1::PublicKey;
 use hex_conservative::display::DisplayHex;
 use lightning::ln::peer_handler::{
@@ -38,6 +39,7 @@ pub(crate) async fn download_gossip<L: Deref + Clone + Send + Sync + 'static>(pe
 
 	let keys_manager = Arc::new(KeysManager::new(&key, 0xdeadbeef, 0xdeadbeef));
 
+	let chain_hash = network_graph.get_chain_hash();
 	let router = Arc::new(GossipRouter::new(network_graph, persistence_sender.clone(), logger.clone()));
 
 	let message_handler = MessageHandler {
@@ -118,7 +120,14 @@ pub(crate) async fn download_gossip<L: Deref + Clone + Send + Sync + 'static>(pe
 
 			let was_previously_caught_up_with_gossip = is_caught_up_with_gossip;
 			// TODO: make new message threshold (20) adjust based on connected peer count
-			is_caught_up_with_gossip = new_message_count < 20 && previous_announcement_count > 0 && previous_update_count > 0;
+			if chain_hash == ChainHash::REGTEST {
+				// There must be two channel updates (one for each end)
+				// to generate a snapshot with information about the channel.
+				is_caught_up_with_gossip = new_message_count < 20 && previous_announcement_count > 0 && previous_update_count > 0 && counter.channel_updates > 1;
+			} else {
+				is_caught_up_with_gossip = new_message_count < 20 && previous_announcement_count > 0 && previous_update_count > 0;
+			}
+
 			if new_message_count > 0 {
 				latest_new_gossip_time = Instant::now();
 			}

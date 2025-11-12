@@ -1,10 +1,7 @@
-use std::fs::OpenOptions;
-use std::io::{BufWriter, Write};
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use lightning::log_info;
-use lightning::routing::gossip::NetworkGraph;
 use lightning::util::logger::Logger;
 use lightning::util::ser::Writeable;
 use tokio::runtime::Runtime;
@@ -18,13 +15,12 @@ const INSERT_PARALELLISM: usize = 16;
 
 pub(crate) struct GossipPersister<L: Deref> where L::Target: Logger {
 	gossip_persistence_receiver: mpsc::Receiver<GossipMessage>,
-	network_graph: Arc<NetworkGraph<L>>,
 	tokio_runtime: Runtime,
 	logger: L
 }
 
 impl<L: Deref + Clone + Send + Sync + 'static> GossipPersister<L> where L::Target: Logger {
-	pub async fn new(network_graph: Arc<NetworkGraph<L>>, logger: L) -> (Self, mpsc::Sender<GossipMessage>) {
+	pub async fn new(logger: L) -> (Self, mpsc::Sender<GossipMessage>) {
 		{ // initialize the database
 			// this client instance is only used once
 			let mut client = crate::connect_to_db().await;
@@ -86,7 +82,6 @@ impl<L: Deref + Clone + Send + Sync + 'static> GossipPersister<L> where L::Targe
 		let runtime = Runtime::new().unwrap();
 		(GossipPersister {
 			gossip_persistence_receiver,
-			network_graph,
 			tokio_runtime: runtime,
 			logger
 		}, gossip_persistence_sender)
@@ -96,7 +91,6 @@ impl<L: Deref + Clone + Send + Sync + 'static> GossipPersister<L> where L::Targe
 		// print log statement every minute
 		let mut latest_persistence_log = Instant::now() - Duration::from_secs(60);
 		let mut i = 0u32;
-		let mut latest_graph_cache_time = Instant::now();
 		let insert_limiter = Arc::new(Semaphore::new(INSERT_PARALELLISM));
 		let connections_cache = Arc::new(Mutex::new(Vec::with_capacity(INSERT_PARALELLISM)));
 		#[cfg(test)]
@@ -112,11 +106,6 @@ impl<L: Deref + Clone + Send + Sync + 'static> GossipPersister<L> where L::Targe
 				latest_persistence_log = Instant::now();
 			}
 
-			// has it been ten minutes? Just cache it
-			if latest_graph_cache_time.elapsed().as_secs() >= 600 {
-				self.persist_network_graph();
-				latest_graph_cache_time = Instant::now();
-			}
 			insert_limiter.acquire().await.unwrap().forget();
 
 			let limiter_ref = Arc::clone(&insert_limiter);
@@ -308,21 +297,5 @@ impl<L: Deref + Clone + Send + Sync + 'static> GossipPersister<L> where L::Targe
 		for task in tasks_spawned {
 			task.await.unwrap();
 		}
-	}
-
-	fn persist_network_graph(&self) {
-		log_info!(self.logger, "Caching network graph…");
-		let cache_path = config::network_graph_cache_path();
-		let file = OpenOptions::new()
-			.create(true)
-			.write(true)
-			.truncate(true)
-			.open(&cache_path)
-			.unwrap();
-		self.network_graph.remove_stale_channels_and_tracking();
-		let mut writer = BufWriter::new(file);
-		self.network_graph.write(&mut writer).unwrap();
-		writer.flush().unwrap();
-		log_info!(self.logger, "Cached network graph!");
 	}
 }

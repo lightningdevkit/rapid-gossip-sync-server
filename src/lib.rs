@@ -11,9 +11,10 @@ extern crate core;
 
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, BufWriter, Write};
 use std::ops::Deref;
 use std::sync::Arc;
+use std::time::Duration;
 use bitcoin::blockdata::constants::ChainHash;
 use lightning::log_info;
 
@@ -104,7 +105,7 @@ impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Ta
 
 		if config::DOWNLOAD_NEW_GOSSIP {
 			let (mut persister, persistence_sender) =
-				GossipPersister::new(self.network_graph.clone(), self.logger.clone()).await;
+				GossipPersister::new(self.logger.clone()).await;
 			log_info!(self.logger, "Starting gossip db persistence listener");
 			tokio::spawn(async move { persister.persist_gossip().await; });
 
@@ -130,6 +131,16 @@ impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Ta
 			log_info!(self.logger, "Starting gossip download");
 			tokio::spawn(tracking::download_gossip(persistence_sender, sync_completion_sender,
 				Arc::clone(&self.network_graph), self.logger.clone()));
+
+			let graph = Arc::clone(&self.network_graph);
+			let logger = self.logger.clone();
+			tokio::spawn(async move {
+				let mut intvl = tokio::time::interval(Duration::from_secs(60 * 10));
+				loop {
+					intvl.tick().await;
+					persist_network_graph(&logger, &*graph);
+				}
+			});
 		} else {
 			sync_completion_sender.send(()).await.unwrap();
 		}
@@ -143,6 +154,22 @@ impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Ta
 		// start the gossip snapshotting service
 		Snapshotter::new(Arc::clone(&self.network_graph), self.logger.clone()).snapshot_gossip().await;
 	}
+}
+
+fn persist_network_graph<L: Deref>(logger: &L, graph: &NetworkGraph<L>) where L::Target: Logger {
+	log_info!(logger, "Caching network graph…");
+	let cache_path = config::network_graph_cache_path();
+	let file = std::fs::OpenOptions::new()
+		.create(true)
+		.write(true)
+		.truncate(true)
+		.open(&cache_path)
+		.unwrap();
+	graph.remove_stale_channels_and_tracking();
+	let mut writer = BufWriter::new(file);
+	graph.write(&mut writer).unwrap();
+	writer.flush().unwrap();
+	log_info!(logger, "Cached network graph!");
 }
 
 pub(crate) async fn connect_to_db() -> Client {

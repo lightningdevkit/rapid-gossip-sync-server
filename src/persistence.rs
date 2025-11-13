@@ -194,7 +194,7 @@ impl<L: Deref + Clone + Send + Sync + 'static> GossipPersister<L> where L::Targe
 								short_channel_id, \
 								funding_amount_sats, \
 								announcement_signed \
-							) VALUES ($1, $2, $3) ON CONFLICT (short_channel_id) DO NOTHING", &[
+							) VALUES ($1, $2, $3) ON CONFLICT (short_channel_id) DO UPDATE SET funding_amount_sats = $2", &[
 									&scid,
 									&(funding_value as i64),
 									&announcement_signed

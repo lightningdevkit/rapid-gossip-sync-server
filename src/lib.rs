@@ -109,7 +109,12 @@ impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Ta
 		if config::DOWNLOAD_NEW_GOSSIP {
 			let (mut persister, persistence_sender) =
 				GossipPersister::new(self.logger.clone()).await;
+
 			log_info!(self.logger, "Starting gossip db persistence listener");
+			// We persist gossip to postgres in a separate runtime as we can end up blocking on it
+			// (indirectly via the async queue getting full) with sync mutexes held (esp
+			// PeerManager's peers mutex). Otherwise, blocking on it could result in blocking the
+			// tokio reactor which we're waiting on to complete postgres writes.
 			let runtime = Builder::new_multi_thread()
 				.enable_all().worker_threads(2).thread_name("postgres-writer") .build().unwrap();
 			runtime.spawn(async move { persister.persist_gossip().await; });

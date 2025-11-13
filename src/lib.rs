@@ -15,17 +15,20 @@ use std::io::{BufReader, BufWriter, Write};
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
-use bitcoin::blockdata::constants::ChainHash;
-use lightning::log_info;
 
+use bitcoin::blockdata::constants::ChainHash;
+
+use lightning::log_info;
 use lightning::routing::gossip::{NetworkGraph, NodeId};
 use lightning::util::logger::Logger;
 use lightning::util::ser::{ReadableArgs, Writeable};
+
+use tokio::runtime::Builder;
 use tokio::sync::mpsc;
 use tokio_postgres::{Client, NoTls};
+
 use crate::config::SYMLINK_GRANULARITY_INTERVAL;
 use crate::lookup::DeltaSet;
-
 use crate::persistence::GossipPersister;
 use crate::serialization::{MutatedNodeProperties, NodeSerializationStrategy, SerializationSet, UpdateSerialization};
 use crate::snapshot::Snapshotter;
@@ -107,7 +110,10 @@ impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Ta
 			let (mut persister, persistence_sender) =
 				GossipPersister::new(self.logger.clone()).await;
 			log_info!(self.logger, "Starting gossip db persistence listener");
-			tokio::spawn(async move { persister.persist_gossip().await; });
+			let runtime = Builder::new_multi_thread()
+				.enable_all().worker_threads(2).thread_name("postgres-writer") .build().unwrap();
+			runtime.spawn(async move { persister.persist_gossip().await; });
+			Box::leak(Box::new(runtime));
 
 			{
 				log_info!(self.logger, "Backfilling latest gossip from cached network graph…");

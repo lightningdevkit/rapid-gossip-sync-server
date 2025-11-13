@@ -4,7 +4,6 @@ use std::time::{Duration, Instant};
 use lightning::log_info;
 use lightning::util::logger::Logger;
 use lightning::util::ser::Writeable;
-use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, Mutex, Semaphore};
 
 use crate::config;
@@ -15,7 +14,6 @@ const INSERT_PARALELLISM: usize = 16;
 
 pub(crate) struct GossipPersister<L: Deref> where L::Target: Logger {
 	gossip_persistence_receiver: mpsc::Receiver<GossipMessage>,
-	tokio_runtime: Runtime,
 	logger: L
 }
 
@@ -79,10 +77,8 @@ impl<L: Deref + Clone + Send + Sync + 'static> GossipPersister<L> where L::Targe
 
 		let (gossip_persistence_sender, gossip_persistence_receiver) =
 			mpsc::channel::<GossipMessage>(100);
-		let runtime = Runtime::new().unwrap();
 		(GossipPersister {
 			gossip_persistence_receiver,
-			tokio_runtime: runtime,
 			logger
 		}, gossip_persistence_sender)
 	}
@@ -95,9 +91,6 @@ impl<L: Deref + Clone + Send + Sync + 'static> GossipPersister<L> where L::Targe
 		let connections_cache = Arc::new(Mutex::new(Vec::with_capacity(INSERT_PARALELLISM)));
 		#[cfg(test)]
 		let mut tasks_spawned = Vec::new();
-		// TODO: it would be nice to have some sort of timeout here so after 10 seconds of
-		// inactivity, some sort of message could be broadcast signaling the activation of request
-		// processing
 		while let Some(gossip_message) = self.gossip_persistence_receiver.recv().await {
 			i += 1; // count the persisted gossip messages
 
@@ -133,7 +126,7 @@ impl<L: Deref + Clone + Send + Sync + 'static> GossipPersister<L> where L::Targe
 					let mut serialized_addresses = Vec::new();
 					announcement.contents.addresses.write(&mut serialized_addresses).unwrap();
 
-					let _task = self.tokio_runtime.spawn(async move {
+					let _task = tokio::spawn(async move {
 						if cfg!(test) && seen_override.is_some() {
 							tokio::time::timeout(POSTGRES_INSERT_TIMEOUT, client
 								.execute("INSERT INTO node_announcements (\
@@ -181,7 +174,7 @@ impl<L: Deref + Clone + Send + Sync + 'static> GossipPersister<L> where L::Targe
 					let mut announcement_signed = Vec::new();
 					announcement.write(&mut announcement_signed).unwrap();
 
-					let _task = self.tokio_runtime.spawn(async move {
+					let _task = tokio::spawn(async move {
 						if cfg!(test) && seen_override.is_some() {
 							tokio::time::timeout(POSTGRES_INSERT_TIMEOUT, client
 								.execute("INSERT INTO channel_announcements (\
@@ -267,7 +260,7 @@ impl<L: Deref + Clone + Send + Sync + 'static> GossipPersister<L> where L::Targe
 					// this may not be used outside test cfg
 					let _seen_timestamp = seen_override.unwrap_or(timestamp as u32) as f64;
 
-					let _task = self.tokio_runtime.spawn(async move {
+					let _task = tokio::spawn(async move {
 						tokio::time::timeout(POSTGRES_INSERT_TIMEOUT, client
 							.execute(insertion_statement, &[
 								&scid,

@@ -230,8 +230,7 @@ fn test_no_op() {
 		let serialization = serialize_empty_blob(current_time() as u64, serialization_version);
 
 		let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-		let client_graph_arc = Arc::new(client_graph);
-		let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
+		let rgs = RapidGossipSync::new(&client_graph, logger.clone());
 		rgs.update_network_graph(&serialization).unwrap();
 	}
 }
@@ -241,7 +240,6 @@ async fn test_trivial_setup() {
 	let _sanitizer = SchemaSanitizer::new();
 	let logger = Arc::new(TestLogger::new());
 	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-	let network_graph_arc = Arc::new(network_graph);
 	let (mut persister, receiver) = GossipPersister::new(logger.clone()).await;
 
 	let short_channel_id = 1;
@@ -253,9 +251,9 @@ async fn test_trivial_setup() {
 		let update_1 = generate_update(short_channel_id, false, timestamp, 0, 0, 0, 5, 0);
 		let update_2 = generate_update(short_channel_id, true, timestamp, 0, 0, 0, 10, 0);
 
-		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
-		network_graph_arc.update_channel_unsigned(&update_1.contents).unwrap();
-		network_graph_arc.update_channel_unsigned(&update_2.contents).unwrap();
+		network_graph.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+		network_graph.update_channel_unsigned(&update_1.contents).unwrap();
+		network_graph.update_channel_unsigned(&update_2.contents).unwrap();
 
 		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
 		receiver.send(GossipMessage::ChannelUpdate(update_1, None)).await.unwrap();
@@ -264,12 +262,12 @@ async fn test_trivial_setup() {
 		persister.persist_gossip().await;
 	}
 
-	let delta = calculate_delta(network_graph_arc.clone(), 0, None, logger.clone()).await;
+	let delta = calculate_delta(&network_graph, 0, None, logger.clone()).await;
 	let serialization = serialize_delta(&delta, 1, logger.clone());
 	logger.assert_log_contains("rapid_gossip_sync_server", "announcement channel count: 1", 1);
 	clean_test_db().await;
 
-	let channel_count = network_graph_arc.read_only().channels().len();
+	let channel_count = network_graph.read_only().channels().len();
 
 	assert_eq!(channel_count, 1);
 	assert_eq!(serialization.message_count, 3);
@@ -277,8 +275,7 @@ async fn test_trivial_setup() {
 	assert_eq!(serialization.update_count, 2);
 
 	let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-	let client_graph_arc = Arc::new(client_graph);
-	let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
+	let rgs = RapidGossipSync::new(&client_graph, logger.clone());
 	let update_result = rgs.update_network_graph(&serialization.data).unwrap();
 	println!("update result: {}", update_result);
 	// the update result must be a multiple of our snapshot granularity
@@ -289,7 +286,7 @@ async fn test_trivial_setup() {
 	println!("timestamp delta: {}", timestamp_delta);
 	assert!(timestamp_delta < config::snapshot_generation_interval());
 
-	let readonly_graph = client_graph_arc.read_only();
+	let readonly_graph = client_graph.read_only();
 	let channels = readonly_graph.channels();
 	let client_channel_count = channels.len();
 	assert_eq!(client_channel_count, 1);
@@ -354,7 +351,6 @@ async fn test_node_announcement_delta_detection() {
 	let _sanitizer = SchemaSanitizer::new();
 	let logger = Arc::new(TestLogger::new());
 	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-	let network_graph_arc = Arc::new(network_graph);
 	let (mut persister, receiver) = GossipPersister::new(logger.clone()).await;
 
 	let timestamp = current_time() - 10;
@@ -368,9 +364,9 @@ async fn test_node_announcement_delta_detection() {
 			let update_1 = generate_update(1, false, timestamp - 10, 0, 0, 0, 6, 0);
 			let update_2 = generate_update(1, true, timestamp - 10, 0, 0, 0, 6, 0);
 
-			network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
-			network_graph_arc.update_channel_unsigned(&update_1.contents).unwrap();
-			network_graph_arc.update_channel_unsigned(&update_2.contents).unwrap();
+			network_graph.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+			network_graph.update_channel_unsigned(&update_1.contents).unwrap();
+			network_graph.update_channel_unsigned(&update_2.contents).unwrap();
 
 			receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, Some(timestamp - 10))).await.unwrap();
 			receiver.send(GossipMessage::ChannelUpdate(update_1, Some(timestamp - 10))).await.unwrap();
@@ -382,9 +378,9 @@ async fn test_node_announcement_delta_detection() {
 			let update_1 = generate_update(2, false, timestamp - 10, 0, 0, 0, 6, 0);
 			let update_2 = generate_update(2, true, timestamp - 10, 0, 0, 0, 6, 0);
 
-			network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
-			network_graph_arc.update_channel_unsigned(&update_1.contents).unwrap();
-			network_graph_arc.update_channel_unsigned(&update_2.contents).unwrap();
+			network_graph.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+			network_graph.update_channel_unsigned(&update_1.contents).unwrap();
+			network_graph.update_channel_unsigned(&update_2.contents).unwrap();
 
 			receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, Some(timestamp - 10))).await.unwrap();
 			receiver.send(GossipMessage::ChannelUpdate(update_1, Some(timestamp - 10))).await.unwrap();
@@ -395,10 +391,10 @@ async fn test_node_announcement_delta_detection() {
 			// Add some node announcements from before the last sync for node 1.
 			let mut announcement = generate_node_announcement(None);
 			announcement.contents.timestamp = timestamp - 10;
-			network_graph_arc.update_node_from_unsigned_announcement(&announcement.contents).unwrap();
+			network_graph.update_node_from_unsigned_announcement(&announcement.contents).unwrap();
 			receiver.send(GossipMessage::NodeAnnouncement(announcement.clone(), Some(announcement.contents.timestamp))).await.unwrap();
 			announcement.contents.timestamp = timestamp - 8;
-			network_graph_arc.update_node_from_unsigned_announcement(&announcement.contents).unwrap();
+			network_graph.update_node_from_unsigned_announcement(&announcement.contents).unwrap();
 			receiver.send(GossipMessage::NodeAnnouncement(announcement.clone(), Some(announcement.contents.timestamp))).await.unwrap();
 		}
 
@@ -406,7 +402,7 @@ async fn test_node_announcement_delta_detection() {
 			// Add a node announcement from before the last sync for node 4.
 			let mut announcement = generate_node_announcement(Some(fourth_node.clone()));
 			announcement.contents.timestamp = timestamp - 10;
-			network_graph_arc.update_node_from_unsigned_announcement(&announcement.contents).unwrap();
+			network_graph.update_node_from_unsigned_announcement(&announcement.contents).unwrap();
 			receiver.send(GossipMessage::NodeAnnouncement(announcement.clone(), Some(announcement.contents.timestamp))).await.unwrap();
 		}
 
@@ -416,7 +412,7 @@ async fn test_node_announcement_delta_detection() {
 			let mut current_announcement = generate_node_announcement(Some(SecretKey::from_slice(&[2; 32]).unwrap()));
 			current_announcement.contents.features = NodeFeatures::from_be_bytes(vec![23, 48]);
 			current_announcement.contents.timestamp = timestamp;
-			network_graph_arc.update_node_from_unsigned_announcement(&current_announcement.contents).unwrap();
+			network_graph.update_node_from_unsigned_announcement(&current_announcement.contents).unwrap();
 			receiver.send(GossipMessage::NodeAnnouncement(current_announcement, Some(timestamp))).await.unwrap();
 		}
 
@@ -447,7 +443,7 @@ async fn test_node_announcement_delta_detection() {
 				port: 4,
 			});
 			announcement.contents.timestamp = timestamp;
-			network_graph_arc.update_node_from_unsigned_announcement(&announcement.contents).unwrap();
+			network_graph.update_node_from_unsigned_announcement(&announcement.contents).unwrap();
 			receiver.send(GossipMessage::NodeAnnouncement(announcement, Some(timestamp))).await.unwrap();
 		}
 
@@ -459,7 +455,7 @@ async fn test_node_announcement_delta_detection() {
 		}).await.unwrap();
 	}
 
-	let delta = calculate_delta(network_graph_arc.clone(), timestamp - 5, None, logger.clone()).await;
+	let delta = calculate_delta(&network_graph, timestamp - 5, None, logger.clone()).await;
 	let serialization = serialize_delta(&delta, 2, logger.clone());
 	clean_test_db().await;
 
@@ -480,7 +476,6 @@ async fn test_unidirectional_intermediate_update_consideration() {
 
 	let logger = Arc::new(TestLogger::new());
 	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-	let network_graph_arc = Arc::new(network_graph);
 	let (mut persister, receiver) = GossipPersister::new(logger.clone()).await;
 
 	let short_channel_id = 1;
@@ -493,10 +488,10 @@ async fn test_unidirectional_intermediate_update_consideration() {
 		let update_2 = generate_update(short_channel_id, true, timestamp + 1, 0, 0, 0, 3, 0);
 		let update_3 = generate_update(short_channel_id, true, timestamp + 2, 0, 0, 0, 4, 0);
 
-		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
-		network_graph_arc.update_channel_unsigned(&update_1.contents).unwrap();
-		network_graph_arc.update_channel_unsigned(&update_2.contents).unwrap();
-		network_graph_arc.update_channel_unsigned(&update_3.contents).unwrap();
+		network_graph.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+		network_graph.update_channel_unsigned(&update_1.contents).unwrap();
+		network_graph.update_channel_unsigned(&update_2.contents).unwrap();
+		network_graph.update_channel_unsigned(&update_3.contents).unwrap();
 
 		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, Some(timestamp))).await.unwrap();
 		receiver.send(GossipMessage::ChannelUpdate(update_1, None)).await.unwrap();
@@ -506,14 +501,13 @@ async fn test_unidirectional_intermediate_update_consideration() {
 		persister.persist_gossip().await;
 	}
 
-	let channel_count = network_graph_arc.read_only().channels().len();
+	let channel_count = network_graph.read_only().channels().len();
 	assert_eq!(channel_count, 1);
 
 	let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-	let client_graph_arc = Arc::new(client_graph);
-	let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
+	let rgs = RapidGossipSync::new(&client_graph, logger.clone());
 
-	let delta = calculate_delta(network_graph_arc.clone(), timestamp + 1, None, logger.clone()).await;
+	let delta = calculate_delta(&network_graph, timestamp + 1, None, logger.clone()).await;
 	let serialization = serialize_delta(&delta, 1, logger.clone());
 
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 1 update rows of the first update in a new direction", 1);
@@ -530,7 +524,7 @@ async fn test_unidirectional_intermediate_update_consideration() {
 	println!("update result: {}", update_result);
 	// the update result must be a multiple of our snapshot granularity
 
-	let readonly_graph = client_graph_arc.read_only();
+	let readonly_graph = client_graph.read_only();
 	let channels = readonly_graph.channels();
 	let client_channel_count = channels.len();
 	assert_eq!(client_channel_count, 1);
@@ -549,7 +543,6 @@ async fn test_bidirectional_intermediate_update_consideration() {
 
 	let logger = Arc::new(TestLogger::new());
 	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-	let network_graph_arc = Arc::new(network_graph);
 	let (mut persister, receiver) = GossipPersister::new(logger.clone()).await;
 
 	let short_channel_id = 1;
@@ -563,11 +556,11 @@ async fn test_bidirectional_intermediate_update_consideration() {
 		let update_3 = generate_update(short_channel_id, false, timestamp + 2, 0, 0, 0, 3, 0);
 		let update_4 = generate_update(short_channel_id, true, timestamp, 0, 0, 0, 3, 0);
 
-		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
-		network_graph_arc.update_channel_unsigned(&update_1.contents).unwrap();
-		network_graph_arc.update_channel_unsigned(&update_2.contents).unwrap();
-		network_graph_arc.update_channel_unsigned(&update_3.contents).unwrap();
-		network_graph_arc.update_channel_unsigned(&update_4.contents).unwrap();
+		network_graph.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+		network_graph.update_channel_unsigned(&update_1.contents).unwrap();
+		network_graph.update_channel_unsigned(&update_2.contents).unwrap();
+		network_graph.update_channel_unsigned(&update_3.contents).unwrap();
+		network_graph.update_channel_unsigned(&update_4.contents).unwrap();
 
 		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, Some(timestamp))).await.unwrap();
 		receiver.send(GossipMessage::ChannelUpdate(update_1, None)).await.unwrap();
@@ -578,10 +571,10 @@ async fn test_bidirectional_intermediate_update_consideration() {
 		persister.persist_gossip().await;
 	}
 
-	let channel_count = network_graph_arc.read_only().channels().len();
+	let channel_count = network_graph.read_only().channels().len();
 	assert_eq!(channel_count, 1);
 
-	let delta = calculate_delta(network_graph_arc.clone(), timestamp + 1, None, logger.clone()).await;
+	let delta = calculate_delta(&network_graph, timestamp + 1, None, logger.clone()).await;
 	let serialization = serialize_delta(&delta, 1, logger.clone());
 
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 0 update rows of the first update in a new direction", 1);
@@ -607,7 +600,6 @@ async fn test_channel_reminders() {
 
 	let logger = Arc::new(TestLogger::new());
 	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-	let network_graph_arc = Arc::new(network_graph);
 	let (mut persister, receiver) = GossipPersister::new(logger.clone()).await;
 
 	let timestamp = current_time();
@@ -621,9 +613,9 @@ async fn test_channel_reminders() {
 			let update_1 = generate_update(short_channel_id, false, timestamp - channel_reminder_delta - 1, 0, 0, 0, 5, 0);
 			let update_2 = generate_update(short_channel_id, true, timestamp - channel_reminder_delta - 1, 0, 0, 0, 3, 0);
 
-			network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
-			network_graph_arc.update_channel_unsigned(&update_1.contents).unwrap();
-			network_graph_arc.update_channel_unsigned(&update_2.contents).unwrap();
+			network_graph.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+			network_graph.update_channel_unsigned(&update_1.contents).unwrap();
+			network_graph.update_channel_unsigned(&update_2.contents).unwrap();
 
 			receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, Some(timestamp - channel_reminder_delta - 1))).await.unwrap();
 			receiver.send(GossipMessage::ChannelUpdate(update_1, Some(timestamp - channel_reminder_delta - 1))).await.unwrap();
@@ -642,9 +634,9 @@ async fn test_channel_reminders() {
 			let update_7 = generate_update(short_channel_id, false, timestamp - channel_reminder_delta + 20, 0, 0, 0, 5, 0);
 			let update_8 = generate_update(short_channel_id, true, timestamp - channel_reminder_delta + 20, 0, 0, 0, 3, 0);
 
-			network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
-			network_graph_arc.update_channel_unsigned(&update_7.contents).unwrap();
-			network_graph_arc.update_channel_unsigned(&update_8.contents).unwrap();
+			network_graph.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+			network_graph.update_channel_unsigned(&update_7.contents).unwrap();
+			network_graph.update_channel_unsigned(&update_8.contents).unwrap();
 
 			receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, Some(timestamp - channel_reminder_delta - 1))).await.unwrap();
 			receiver.send(GossipMessage::ChannelUpdate(update_1, Some(timestamp - channel_reminder_delta - 10))).await.unwrap();
@@ -662,10 +654,10 @@ async fn test_channel_reminders() {
 		persister.persist_gossip().await;
 	}
 
-	let channel_count = network_graph_arc.read_only().channels().len();
+	let channel_count = network_graph.read_only().channels().len();
 	assert_eq!(channel_count, 2);
 
-	let delta = calculate_delta(network_graph_arc.clone(), timestamp - channel_reminder_delta + 15, None, logger.clone()).await;
+	let delta = calculate_delta(&network_graph, timestamp - channel_reminder_delta + 15, None, logger.clone()).await;
 	let serialization = serialize_delta(&delta, 1, logger.clone());
 
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 0 update rows of the first update in a new direction", 1);
@@ -691,7 +683,6 @@ async fn test_full_snapshot_recency() {
 	let _sanitizer = SchemaSanitizer::new();
 	let logger = Arc::new(TestLogger::new());
 	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-	let network_graph_arc = Arc::new(network_graph);
 
 	let short_channel_id = 1;
 	let timestamp = current_time();
@@ -700,25 +691,25 @@ async fn test_full_snapshot_recency() {
 	{ // seed the db
 		let (mut persister, receiver) = GossipPersister::new(logger.clone()).await;
 		let announcement = generate_channel_announcement(short_channel_id);
-		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+		network_graph.update_channel_from_announcement_no_lookup(&announcement).unwrap();
 		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
 
 		{ // direction false
 			{ // first update
 				let update = generate_update(short_channel_id, false, timestamp - 1, 0, 0, 0, 0, 38);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 			{ // second update
 				let update = generate_update(short_channel_id, false, timestamp, 0, 0, 0, 0, 39);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 		}
 		{ // direction true
 			{ // first and only update
 				let update = generate_update(short_channel_id, true, timestamp, 0, 0, 0, 0, 10);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 		}
@@ -732,27 +723,26 @@ async fn test_full_snapshot_recency() {
 	}
 
 	let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-	let client_graph_arc = Arc::new(client_graph);
 
 	{ // sync after initial seed
-		let delta = calculate_delta(network_graph_arc.clone(), 0, None, logger.clone()).await;
+		let delta = calculate_delta(&network_graph, 0, None, logger.clone()).await;
 		let serialization = serialize_delta(&delta, 1, logger.clone());
 		logger.assert_log_contains("rapid_gossip_sync_server", "announcement channel count: 1", 1);
 
-		let channel_count = network_graph_arc.read_only().channels().len();
+		let channel_count = network_graph.read_only().channels().len();
 
 		assert_eq!(channel_count, 1);
 		assert_eq!(serialization.message_count, 3);
 		assert_eq!(serialization.channel_announcement_count, 1);
 		assert_eq!(serialization.update_count, 2);
 
-		let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
+		let rgs = RapidGossipSync::new(&client_graph, logger.clone());
 		let update_result = rgs.update_network_graph(&serialization.data).unwrap();
 		// the update result must be a multiple of our snapshot granularity
 		assert_eq!(update_result % config::snapshot_generation_interval(), 0);
 		assert!(update_result < timestamp);
 
-		let readonly_graph = client_graph_arc.read_only();
+		let readonly_graph = client_graph.read_only();
 		let channels = readonly_graph.channels();
 		let client_channel_count = channels.len();
 		assert_eq!(client_channel_count, 1);
@@ -772,7 +762,6 @@ async fn test_full_snapshot_recency_with_wrong_seen_order() {
 	let _sanitizer = SchemaSanitizer::new();
 	let logger = Arc::new(TestLogger::new());
 	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-	let network_graph_arc = Arc::new(network_graph);
 
 	let short_channel_id = 1;
 	let timestamp = current_time();
@@ -781,25 +770,25 @@ async fn test_full_snapshot_recency_with_wrong_seen_order() {
 	{ // seed the db
 		let (mut persister, receiver) = GossipPersister::new(logger.clone()).await;
 		let announcement = generate_channel_announcement(short_channel_id);
-		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+		network_graph.update_channel_from_announcement_no_lookup(&announcement).unwrap();
 		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
 
 		{ // direction false
 			{ // first update, seen latest
 				let update = generate_update(short_channel_id, false, timestamp - 1, 0, 0, 0, 0, 38);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, Some(timestamp))).await.unwrap();
 			}
 			{ // second update, seen first
 				let update = generate_update(short_channel_id, false, timestamp, 0, 0, 0, 0, 39);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, Some(timestamp - 1))).await.unwrap();
 			}
 		}
 		{ // direction true
 			{ // first and only update
 				let update = generate_update(short_channel_id, true, timestamp, 0, 0, 0, 0, 10);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 		}
@@ -813,27 +802,26 @@ async fn test_full_snapshot_recency_with_wrong_seen_order() {
 	}
 
 	let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-	let client_graph_arc = Arc::new(client_graph);
 
 	{ // sync after initial seed
-		let delta = calculate_delta(network_graph_arc.clone(), 0, None, logger.clone()).await;
+		let delta = calculate_delta(&network_graph, 0, None, logger.clone()).await;
 		let serialization = serialize_delta(&delta, 1, logger.clone());
 		logger.assert_log_contains("rapid_gossip_sync_server", "announcement channel count: 1", 1);
 
-		let channel_count = network_graph_arc.read_only().channels().len();
+		let channel_count = network_graph.read_only().channels().len();
 
 		assert_eq!(channel_count, 1);
 		assert_eq!(serialization.message_count, 3);
 		assert_eq!(serialization.channel_announcement_count, 1);
 		assert_eq!(serialization.update_count, 2);
 
-		let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
+		let rgs = RapidGossipSync::new(&client_graph, logger.clone());
 		let update_result = rgs.update_network_graph(&serialization.data).unwrap();
 		// the update result must be a multiple of our snapshot granularity
 		assert_eq!(update_result % config::snapshot_generation_interval(), 0);
 		assert!(update_result < timestamp);
 
-		let readonly_graph = client_graph_arc.read_only();
+		let readonly_graph = client_graph.read_only();
 		let channels = readonly_graph.channels();
 		let client_channel_count = channels.len();
 		assert_eq!(client_channel_count, 1);
@@ -853,7 +841,6 @@ async fn test_full_snapshot_recency_with_wrong_propagation_order() {
 	let _sanitizer = SchemaSanitizer::new();
 	let logger = Arc::new(TestLogger::new());
 	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-	let network_graph_arc = Arc::new(network_graph);
 
 	let short_channel_id = 1;
 	let timestamp = current_time();
@@ -862,15 +849,15 @@ async fn test_full_snapshot_recency_with_wrong_propagation_order() {
 	{ // seed the db
 		let (mut persister, receiver) = GossipPersister::new(logger.clone()).await;
 		let announcement = generate_channel_announcement(short_channel_id);
-		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+		network_graph.update_channel_from_announcement_no_lookup(&announcement).unwrap();
 		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
 
 		{ // direction false
 			// apply updates in their timestamp order
 			let update_1 = generate_update(short_channel_id, false, timestamp - 1, 0, 0, 0, 0, 38);
 			let update_2 = generate_update(short_channel_id, false, timestamp, 0, 0, 0, 0, 39);
-			network_graph_arc.update_channel_unsigned(&update_1.contents).unwrap();
-			network_graph_arc.update_channel_unsigned(&update_2.contents).unwrap();
+			network_graph.update_channel_unsigned(&update_1.contents).unwrap();
+			network_graph.update_channel_unsigned(&update_2.contents).unwrap();
 
 			// propagate updates in their seen order
 			receiver.send(GossipMessage::ChannelUpdate(update_2, Some(timestamp - 1))).await.unwrap();
@@ -879,7 +866,7 @@ async fn test_full_snapshot_recency_with_wrong_propagation_order() {
 		{ // direction true
 			{ // first and only update
 				let update = generate_update(short_channel_id, true, timestamp, 0, 0, 0, 0, 10);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 		}
@@ -893,27 +880,26 @@ async fn test_full_snapshot_recency_with_wrong_propagation_order() {
 	}
 
 	let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-	let client_graph_arc = Arc::new(client_graph);
 
 	{ // sync after initial seed
-		let delta = calculate_delta(network_graph_arc.clone(), 0, None, logger.clone()).await;
+		let delta = calculate_delta(&network_graph, 0, None, logger.clone()).await;
 		let serialization = serialize_delta(&delta, 1, logger.clone());
 		logger.assert_log_contains("rapid_gossip_sync_server", "announcement channel count: 1", 1);
 
-		let channel_count = network_graph_arc.read_only().channels().len();
+		let channel_count = network_graph.read_only().channels().len();
 
 		assert_eq!(channel_count, 1);
 		assert_eq!(serialization.message_count, 3);
 		assert_eq!(serialization.channel_announcement_count, 1);
 		assert_eq!(serialization.update_count, 2);
 
-		let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
+		let rgs = RapidGossipSync::new(&client_graph, logger.clone());
 		let update_result = rgs.update_network_graph(&serialization.data).unwrap();
 		// the update result must be a multiple of our snapshot granularity
 		assert_eq!(update_result % config::snapshot_generation_interval(), 0);
 		assert!(update_result < timestamp);
 
-		let readonly_graph = client_graph_arc.read_only();
+		let readonly_graph = client_graph.read_only();
 		let channels = readonly_graph.channels();
 		let client_channel_count = channels.len();
 		assert_eq!(client_channel_count, 1);
@@ -933,7 +919,6 @@ async fn test_full_snapshot_mutiny_scenario() {
 	let _sanitizer = SchemaSanitizer::new();
 	let logger = Arc::new(TestLogger::new());
 	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-	let network_graph_arc = Arc::new(network_graph);
 
 	let short_channel_id = 873706024403271681;
 	let timestamp = current_time();
@@ -945,75 +930,75 @@ async fn test_full_snapshot_mutiny_scenario() {
 	{ // seed the db
 		let (mut persister, receiver) = GossipPersister::new(logger.clone()).await;
 		let announcement = generate_channel_announcement(short_channel_id);
-		network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+		network_graph.update_channel_from_announcement_no_lookup(&announcement).unwrap();
 		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
 
 		{ // direction false
 			{
 				let update = generate_update(short_channel_id, false, 1693507369 + timestamp_offset, 0, 0, 0, 0, 38);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 			{
 				let update = generate_update(short_channel_id, false, 1693680390 + timestamp_offset, 0, 0, 0, 0, 38);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 			{
 				let update = generate_update(short_channel_id, false, 1693749109 + timestamp_offset, 0, 0, 0, 0, 200);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 			{
 				let update = generate_update(short_channel_id, false, 1693925190 + timestamp_offset, 0, 0, 0, 0, 200);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 			{
 				let update = generate_update(short_channel_id, false, 1694008323 + timestamp_offset, 0, 0, 0, 0, 209);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 			{
 				let update = generate_update(short_channel_id, false, 1694219924 + timestamp_offset, 0, 0, 0, 0, 209);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 			{
 				let update = generate_update(short_channel_id, false, 1694267536 + timestamp_offset, 0, 0, 0, 0, 210);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 			{
 				let update = generate_update(short_channel_id, false, 1694458808 + timestamp_offset, 0, 0, 0, 0, 210);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 			{
 				let update = generate_update(short_channel_id, false, 1694526734 + timestamp_offset, 0, 0, 0, 0, 200);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 			{
 				let update = generate_update(short_channel_id, false, 1694794765 + timestamp_offset, 0, 0, 0, 0, 200);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, Some(1695909301 + 2 * config::SYMLINK_GRANULARITY_INTERVAL + timestamp_offset))).await.unwrap();
 			}
 			{
 				let update = generate_update(short_channel_id, false, 1695909301 + timestamp_offset, 0, 0, 0, 0, 130);
-				// network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				// network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 		}
 		{ // direction true
 			{
 				let update = generate_update(short_channel_id, true, 1693300588 + timestamp_offset, 0, 0, 0, 0, 10);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 			{
 				let update = generate_update(short_channel_id, true, 1695003621 + timestamp_offset, 0, 0, 0, 0, 10);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 		}
@@ -1027,21 +1012,20 @@ async fn test_full_snapshot_mutiny_scenario() {
 	}
 
 	let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-	let client_graph_arc = Arc::new(client_graph);
 
 	{ // sync after initial seed
-		let delta = calculate_delta(network_graph_arc.clone(), 0, None, logger.clone()).await;
+		let delta = calculate_delta(&network_graph, 0, None, logger.clone()).await;
 		let serialization = serialize_delta(&delta, 1, logger.clone());
 		logger.assert_log_contains("rapid_gossip_sync_server", "announcement channel count: 1", 1);
 
-		let channel_count = network_graph_arc.read_only().channels().len();
+		let channel_count = network_graph.read_only().channels().len();
 
 		assert_eq!(channel_count, 1);
 		assert_eq!(serialization.message_count, 3);
 		assert_eq!(serialization.channel_announcement_count, 1);
 		assert_eq!(serialization.update_count, 2);
 
-		let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
+		let rgs = RapidGossipSync::new(&client_graph, logger.clone());
 		let update_result = rgs.update_network_graph(&serialization.data).unwrap();
 		println!("update result: {}", update_result);
 		// the update result must be a multiple of our snapshot granularity
@@ -1052,7 +1036,7 @@ async fn test_full_snapshot_mutiny_scenario() {
 		println!("timestamp delta: {}", timestamp_delta);
 		assert!(timestamp_delta < config::snapshot_generation_interval());
 
-		let readonly_graph = client_graph_arc.read_only();
+		let readonly_graph = client_graph.read_only();
 		let channels = readonly_graph.channels();
 		let client_channel_count = channels.len();
 		assert_eq!(client_channel_count, 1);
@@ -1071,7 +1055,6 @@ async fn test_full_snapshot_interlaced_channel_timestamps() {
 	let _sanitizer = SchemaSanitizer::new();
 	let logger = Arc::new(TestLogger::new());
 	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-	let network_graph_arc = Arc::new(network_graph);
 
 	let main_channel_id = 1;
 	let timestamp = current_time();
@@ -1083,25 +1066,25 @@ async fn test_full_snapshot_interlaced_channel_timestamps() {
 
 		{ // main channel
 			let announcement = generate_channel_announcement(main_channel_id);
-			network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+			network_graph.update_channel_from_announcement_no_lookup(&announcement).unwrap();
 			receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
 		}
 
 		{ // secondary channel
 			let announcement = generate_channel_announcement(secondary_channel_id);
-			network_graph_arc.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+			network_graph.update_channel_from_announcement_no_lookup(&announcement).unwrap();
 			receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, None)).await.unwrap();
 		}
 
 		{ // main channel
 			{ // direction false
 				let update = generate_update(main_channel_id, false, timestamp - 2, 0, 0, 0, 0, 10);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 			{ // direction true
 				let update = generate_update(main_channel_id, true, timestamp - 2, 0, 0, 0, 0, 5);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 		}
@@ -1109,12 +1092,12 @@ async fn test_full_snapshot_interlaced_channel_timestamps() {
 		{ // in-between channel
 			{ // direction false
 				let update = generate_update(secondary_channel_id, false, timestamp - 1, 0, 0, 0, 0, 42);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 			{ // direction true
 				let update = generate_update(secondary_channel_id, true, timestamp - 1, 0, 0, 0, 0, 42);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 		}
@@ -1122,12 +1105,12 @@ async fn test_full_snapshot_interlaced_channel_timestamps() {
 		{ // main channel
 			{ // direction false
 				let update = generate_update(main_channel_id, false, timestamp, 0, 0, 0, 0, 11);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 			{ // direction true
 				let update = generate_update(main_channel_id, true, timestamp, 0, 0, 0, 0, 6);
-				network_graph_arc.update_channel_unsigned(&update.contents).unwrap();
+				network_graph.update_channel_unsigned(&update.contents).unwrap();
 				receiver.send(GossipMessage::ChannelUpdate(update, None)).await.unwrap();
 			}
 		}
@@ -1141,27 +1124,26 @@ async fn test_full_snapshot_interlaced_channel_timestamps() {
 	}
 
 	let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-	let client_graph_arc = Arc::new(client_graph);
 
 	{ // sync after initial seed
-		let delta = calculate_delta(network_graph_arc.clone(), 0, None, logger.clone()).await;
+		let delta = calculate_delta(&network_graph, 0, None, logger.clone()).await;
 		let serialization = serialize_delta(&delta, 1, logger.clone());
 		logger.assert_log_contains("rapid_gossip_sync_server", "announcement channel count: 2", 1);
 
-		let channel_count = network_graph_arc.read_only().channels().len();
+		let channel_count = network_graph.read_only().channels().len();
 
 		assert_eq!(channel_count, 2);
 		assert_eq!(serialization.message_count, 6);
 		assert_eq!(serialization.channel_announcement_count, 2);
 		assert_eq!(serialization.update_count, 4);
 
-		let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
+		let rgs = RapidGossipSync::new(&client_graph, logger.clone());
 		let update_result = rgs.update_network_graph(&serialization.data).unwrap();
 		// the update result must be a multiple of our snapshot granularity
 		assert_eq!(update_result % config::snapshot_generation_interval(), 0);
 		assert!(update_result < timestamp);
 
-		let readonly_graph = client_graph_arc.read_only();
+		let readonly_graph = client_graph.read_only();
 		let channels = readonly_graph.channels();
 		let client_channel_count = channels.len();
 		assert_eq!(client_channel_count, 2);
@@ -1225,14 +1207,13 @@ async fn test_full_snapshot_persistence() {
 
 		let symlinked_data = fs::read(&symlink_path).unwrap();
 		let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-		let client_graph_arc = Arc::new(client_graph);
 
-		let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
+		let rgs = RapidGossipSync::new(&client_graph, logger.clone());
 		let update_result = rgs.update_network_graph(&symlinked_data).unwrap();
 		// the update result must be a multiple of our snapshot granularity
 		assert_eq!(update_result % config::snapshot_generation_interval(), 0);
 
-		let readonly_graph = client_graph_arc.read_only();
+		let readonly_graph = client_graph.read_only();
 		let channels = readonly_graph.channels();
 		let client_channel_count = channels.len();
 		assert_eq!(client_channel_count, 1);
@@ -1267,14 +1248,13 @@ async fn test_full_snapshot_persistence() {
 
 		let symlinked_data = fs::read(&symlink_path).unwrap();
 		let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
-		let client_graph_arc = Arc::new(client_graph);
 
-		let rgs = RapidGossipSync::new(client_graph_arc.clone(), logger.clone());
+		let rgs = RapidGossipSync::new(&client_graph, logger.clone());
 		let update_result = rgs.update_network_graph(&symlinked_data).unwrap();
 		// the update result must be a multiple of our snapshot granularity
 		assert_eq!(update_result % config::snapshot_generation_interval(), 0);
 
-		let readonly_graph = client_graph_arc.read_only();
+		let readonly_graph = client_graph.read_only();
 		let channels = readonly_graph.channels();
 		let client_channel_count = channels.len();
 		assert_eq!(client_channel_count, 1);

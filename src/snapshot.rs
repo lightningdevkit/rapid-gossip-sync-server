@@ -116,11 +116,10 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 		let mut snapshot_filenames_by_scope: HashMap<u64, String> = HashMap::with_capacity(10);
 
 		for (current_scope, current_last_sync_timestamp) in &snapshot_sync_timestamps {
-			let network_graph_clone = self.network_graph.clone();
 			{
 				log_info!(self.logger, "Calculating {}-second snapshot", current_scope);
 				// calculate the snapshot
-				let delta = super::calculate_delta(network_graph_clone.clone(), current_last_sync_timestamp.clone() as u32, Some(reference_timestamp), self.logger.clone()).await;
+				let delta = super::calculate_delta(&*self.network_graph, current_last_sync_timestamp.clone() as u32, Some(reference_timestamp), self.logger.clone()).await;
 				let snapshot_v1 = super::serialize_delta(&delta, 1, self.logger.clone());
 				let snapshot_v2 = super::serialize_delta(&delta, 2, self.logger.clone());
 

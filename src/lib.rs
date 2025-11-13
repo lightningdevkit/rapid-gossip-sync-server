@@ -229,7 +229,7 @@ fn serialize_empty_blob(current_timestamp: u64, serialization_version: u8) -> Ve
 	blob
 }
 
-async fn calculate_delta<L: Deref + Clone>(network_graph: Arc<NetworkGraph<L>>, last_sync_timestamp: u32, snapshot_reference_timestamp: Option<u64>, logger: L) -> SerializationSet where L::Target: Logger {
+async fn calculate_delta<L: Deref + Clone>(network_graph: &NetworkGraph<L>, last_sync_timestamp: u32, snapshot_reference_timestamp: Option<u64>, logger: L) -> SerializationSet where L::Target: Logger {
 	let client = connect_to_db().await;
 
 	network_graph.remove_stale_channels_and_tracking();
@@ -239,7 +239,7 @@ async fn calculate_delta<L: Deref + Clone>(network_graph: Arc<NetworkGraph<L>>, 
 	// for announcement-free incremental-only updates, chain hash can be skipped
 
 	let mut delta_set = DeltaSet::new();
-	lookup::fetch_channel_announcements(&mut delta_set, Arc::clone(&network_graph), &client, last_sync_timestamp, snapshot_reference_timestamp, logger.clone()).await;
+	lookup::fetch_channel_announcements(&mut delta_set, network_graph, &client, last_sync_timestamp, snapshot_reference_timestamp, logger.clone()).await;
 	log_info!(logger, "announcement channel count: {}", delta_set.len());
 	lookup::fetch_channel_updates(&mut delta_set, &client, last_sync_timestamp, logger.clone()).await;
 	log_info!(logger, "update-fetched channel count: {}", delta_set.len());

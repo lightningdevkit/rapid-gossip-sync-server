@@ -11,20 +11,24 @@ extern crate core;
 
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, BufWriter, Write};
 use std::ops::Deref;
 use std::sync::Arc;
-use bitcoin::blockdata::constants::ChainHash;
-use lightning::log_info;
+use std::time::Duration;
 
+use bitcoin::blockdata::constants::ChainHash;
+
+use lightning::log_info;
 use lightning::routing::gossip::{NetworkGraph, NodeId};
 use lightning::util::logger::Logger;
 use lightning::util::ser::{ReadableArgs, Writeable};
+
+use tokio::runtime::Builder;
 use tokio::sync::mpsc;
 use tokio_postgres::{Client, NoTls};
+
 use crate::config::SYMLINK_GRANULARITY_INTERVAL;
 use crate::lookup::DeltaSet;
-
 use crate::persistence::GossipPersister;
 use crate::serialization::{MutatedNodeProperties, NodeSerializationStrategy, SerializationSet, UpdateSerialization};
 use crate::snapshot::Snapshotter;
@@ -104,9 +108,17 @@ impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Ta
 
 		if config::DOWNLOAD_NEW_GOSSIP {
 			let (mut persister, persistence_sender) =
-				GossipPersister::new(self.network_graph.clone(), self.logger.clone()).await;
+				GossipPersister::new(self.logger.clone()).await;
+
 			log_info!(self.logger, "Starting gossip db persistence listener");
-			tokio::spawn(async move { persister.persist_gossip().await; });
+			// We persist gossip to postgres in a separate runtime as we can end up blocking on it
+			// (indirectly via the async queue getting full) with sync mutexes held (esp
+			// PeerManager's peers mutex). Otherwise, blocking on it could result in blocking the
+			// tokio reactor which we're waiting on to complete postgres writes.
+			let runtime = Builder::new_multi_thread()
+				.enable_all().worker_threads(2).thread_name("postgres-writer") .build().unwrap();
+			runtime.spawn(async move { persister.persist_gossip().await; });
+			Box::leak(Box::new(runtime));
 
 			{
 				log_info!(self.logger, "Backfilling latest gossip from cached network graph…");
@@ -130,6 +142,16 @@ impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Ta
 			log_info!(self.logger, "Starting gossip download");
 			tokio::spawn(tracking::download_gossip(persistence_sender, sync_completion_sender,
 				Arc::clone(&self.network_graph), self.logger.clone()));
+
+			let graph = Arc::clone(&self.network_graph);
+			let logger = self.logger.clone();
+			tokio::spawn(async move {
+				let mut intvl = tokio::time::interval(Duration::from_secs(60 * 10));
+				loop {
+					intvl.tick().await;
+					persist_network_graph(&logger, &*graph);
+				}
+			});
 		} else {
 			sync_completion_sender.send(()).await.unwrap();
 		}
@@ -143,6 +165,22 @@ impl<L: Deref + Clone + Send + Sync + 'static> RapidSyncProcessor<L> where L::Ta
 		// start the gossip snapshotting service
 		Snapshotter::new(Arc::clone(&self.network_graph), self.logger.clone()).snapshot_gossip().await;
 	}
+}
+
+fn persist_network_graph<L: Deref>(logger: &L, graph: &NetworkGraph<L>) where L::Target: Logger {
+	log_info!(logger, "Caching network graph…");
+	let cache_path = config::network_graph_cache_path();
+	let file = std::fs::OpenOptions::new()
+		.create(true)
+		.write(true)
+		.truncate(true)
+		.open(&cache_path)
+		.unwrap();
+	graph.remove_stale_channels_and_tracking();
+	let mut writer = BufWriter::new(file);
+	graph.write(&mut writer).unwrap();
+	writer.flush().unwrap();
+	log_info!(logger, "Cached network graph!");
 }
 
 pub(crate) async fn connect_to_db() -> Client {
@@ -202,7 +240,7 @@ fn serialize_empty_blob(current_timestamp: u64, serialization_version: u8) -> Ve
 	blob
 }
 
-async fn calculate_delta<L: Deref + Clone>(network_graph: Arc<NetworkGraph<L>>, last_sync_timestamp: u32, snapshot_reference_timestamp: Option<u64>, logger: L) -> SerializationSet where L::Target: Logger {
+async fn calculate_delta<L: Deref + Clone>(network_graph: &NetworkGraph<L>, last_sync_timestamp: u32, snapshot_reference_timestamp: Option<u64>, logger: L) -> SerializationSet where L::Target: Logger {
 	let client = connect_to_db().await;
 
 	network_graph.remove_stale_channels_and_tracking();
@@ -212,7 +250,7 @@ async fn calculate_delta<L: Deref + Clone>(network_graph: Arc<NetworkGraph<L>>, 
 	// for announcement-free incremental-only updates, chain hash can be skipped
 
 	let mut delta_set = DeltaSet::new();
-	lookup::fetch_channel_announcements(&mut delta_set, Arc::clone(&network_graph), &client, last_sync_timestamp, snapshot_reference_timestamp, logger.clone()).await;
+	lookup::fetch_channel_announcements(&mut delta_set, network_graph, &client, last_sync_timestamp, snapshot_reference_timestamp, logger.clone()).await;
 	log_info!(logger, "announcement channel count: {}", delta_set.len());
 	lookup::fetch_channel_updates(&mut delta_set, &client, last_sync_timestamp, logger.clone()).await;
 	log_info!(logger, "update-fetched channel count: {}", delta_set.len());

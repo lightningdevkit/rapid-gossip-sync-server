@@ -118,7 +118,10 @@ pub(crate) async fn download_gossip<L: Deref + Clone + Send + Sync + 'static>(pe
 
 			let was_previously_caught_up_with_gossip = is_caught_up_with_gossip;
 			// TODO: make new message threshold (20) adjust based on connected peer count
-			is_caught_up_with_gossip = new_message_count < 20 && previous_announcement_count > 0 && previous_update_count > 0;
+			// There must be two channel updates (one for each end) to generate
+			// a snapshot with information about the channel.
+			is_caught_up_with_gossip = new_message_count < 20 && previous_announcement_count > 0 && previous_update_count > 0 && counter.channel_updates > 1;
+
 			if new_message_count > 0 {
 				latest_new_gossip_time = Instant::now();
 			}

@@ -49,7 +49,10 @@ pub(super) struct DirectedUpdateDelta {
 pub(super) struct ChannelDelta {
 	pub(super) announcement: Option<AnnouncementDelta>,
 	pub(super) updates: (Option<DirectedUpdateDelta>, Option<DirectedUpdateDelta>),
-	pub(super) first_bidirectional_updates_seen: Option<u32>,
+	/// The `seen` timestamp at which this channel most recently (re)gained updates in a direction
+	/// that had previously not had any for at least the prune interval (or ever), provided that
+	/// happened after the client's last sync. Such a channel needs to be (re-)announced.
+	pub(super) updates_resumed_seen: Option<u32>,
 	/// Whether this channel's reminder bucket became due within the snapshot's window, in which
 	/// case each direction without a real update to send gets a flags-only reminder update
 	pub(super) requires_reminder: bool,
@@ -77,7 +80,7 @@ impl Default for ChannelDelta {
 		Self {
 			announcement: None,
 			updates: (None, None),
-			first_bidirectional_updates_seen: None,
+			updates_resumed_seen: None,
 			requires_reminder: false,
 		}
 	}
@@ -143,8 +146,8 @@ pub(super) fn node_reminder_bucket_flag(node_id: &NodeId) -> u64 {
 
 /// Fetch all the channel announcements that are presently in the network graph, regardless of
 /// whether they had been seen before.
-/// Also include all announcements for which the first update was announced
-/// after `last_sync_timestamp`
+/// Also include all announcements for which updates in either direction (re)started after
+/// `last_sync_timestamp`, be it because the channel is new or because it had been pruned
 pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaSet, network_graph: &NetworkGraph<L>, client: &Client, last_sync_timestamp: u32, snapshot_reference_timestamp: Option<u64>, logger: L) where L::Target: Logger {
 	log_info!(logger, "Obtaining channel ids from network graph");
 	let channel_ids = {
@@ -196,55 +199,76 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 	log_info!(logger, "Fetched {} announcement rows in {:?}", announcement_count, start.elapsed());
 
 	{
-		// THIS STEP IS USED TO DETERMINE IF A CHANNEL SHOULD BE OMITTED FROM THE DELTA
-
-		log_info!(logger, "Annotating channel announcements whose oldest channel update in a given direction occurred after the last sync");
-		// Steps:
-		// — Obtain all updates, distinct by (scid, direction), ordered by seen DESC // to find the oldest update in a given direction
-		// — From those updates, select distinct by (scid), ordered by seen DESC (to obtain the newer one per direction)
-		// This will allow us to mark the first time updates in both directions were seen
-
-		// here is where the channels whose first update in either direction occurred after
-		// `last_seen_timestamp` are added to the selection
+		log_info!(logger, "Annotating channels whose updates in a direction (re)started after the last sync");
+		// Clients only receive a channel's announcement once, and prune the channel if our
+		// snapshots stop covering it, which happens when one of its peers stops announcing
+		// for two weeks. When that peer comes back we need to provide clients a fresh
+		// update.
+		//
+		// We detect this from the update history alone: for each direction, take the first update
+		// seen at or after the last sync and check whether it had a predecessor within the prune
+		// interval. If not, updates in that direction (re)started after the client's last sync, be
+		// it because the channel is brand new or because it was pruned and has come back. As we
+		// only ever drop channels after a full prune interval without updates, and block them from
+		// being re-added for another week, any such resumption implies a gap in the history.
+		let prune_interval_seconds = (config::PRUNE_INTERVAL.as_secs() - 60 * 60 * 24) as f64;
 		let start = Instant::now();
-		let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] =
-			[&channel_ids, &last_sync_timestamp_float];
-		let newer_oldest_directional_updates = client.query_raw("
+		let params: [&(dyn tokio_postgres::types::ToSql + Sync); 3] =
+			[&channel_ids, &last_sync_timestamp_float, &prune_interval_seconds];
+		let resumed_directional_updates = client.query_raw("
 			SELECT scids.short_channel_id, CAST(EXTRACT('epoch' from GREATEST(dir0.seen, dir1.seen)) AS BIGINT) AS seen
 			FROM unnest($1::bigint[]) AS scids(short_channel_id)
-			CROSS JOIN LATERAL (
-				SELECT seen
-				FROM channel_updates
-				WHERE short_channel_id = scids.short_channel_id AND direction = false
-				ORDER BY seen ASC
-				LIMIT 1
-			) dir0
-			CROSS JOIN LATERAL (
-				SELECT seen
-				FROM channel_updates
-				WHERE short_channel_id = scids.short_channel_id AND direction = true
-				ORDER BY seen ASC
-				LIMIT 1
-			) dir1
-			WHERE GREATEST(dir0.seen, dir1.seen) >= TO_TIMESTAMP($2)
+			LEFT JOIN LATERAL (
+				SELECT first_recent.seen
+				FROM (
+					SELECT seen
+					FROM channel_updates
+					WHERE short_channel_id = scids.short_channel_id AND direction = false AND seen >= TO_TIMESTAMP($2)
+					ORDER BY seen ASC
+					LIMIT 1
+				) first_recent
+				WHERE NOT EXISTS (
+					SELECT 1
+					FROM channel_updates AS predecessor
+					WHERE predecessor.short_channel_id = scids.short_channel_id AND predecessor.direction = false
+						AND predecessor.seen < first_recent.seen
+						AND predecessor.seen >= first_recent.seen - $3 * INTERVAL '1 second'
+				)
+			) dir0 ON TRUE
+			LEFT JOIN LATERAL (
+				SELECT first_recent.seen
+				FROM (
+					SELECT seen
+					FROM channel_updates
+					WHERE short_channel_id = scids.short_channel_id AND direction = true AND seen >= TO_TIMESTAMP($2)
+					ORDER BY seen ASC
+					LIMIT 1
+				) first_recent
+				WHERE NOT EXISTS (
+					SELECT 1
+					FROM channel_updates AS predecessor
+					WHERE predecessor.short_channel_id = scids.short_channel_id AND predecessor.direction = true
+						AND predecessor.seen < first_recent.seen
+						AND predecessor.seen >= first_recent.seen - $3 * INTERVAL '1 second'
+				)
+			) dir1 ON TRUE
+			WHERE dir0.seen IS NOT NULL OR dir1.seen IS NOT NULL
 			", params).await.unwrap();
-		let mut pinned_updates = Box::pin(newer_oldest_directional_updates);
+		let mut pinned_updates = Box::pin(resumed_directional_updates);
 
-		let mut newer_oldest_directional_update_count = 0;
+		let mut resumed_directional_update_count = 0;
 		while let Some(row_res) = pinned_updates.next().await {
 			let current_row = row_res.unwrap();
 
 			let scid: i64 = current_row.get("short_channel_id");
 			let current_seen_timestamp = current_row.get::<_, i64>("seen") as u32;
 
-			// the newer of the two oldest seen directional updates came after last sync timestamp
 			let current_channel_delta = delta_set.entry(scid as u64).or_insert(ChannelDelta::default());
-			// first time a channel was seen in both directions
-			(*current_channel_delta).first_bidirectional_updates_seen = Some(current_seen_timestamp);
+			(*current_channel_delta).updates_resumed_seen = Some(current_seen_timestamp);
 
-			newer_oldest_directional_update_count += 1;
+			resumed_directional_update_count += 1;
 		}
-		log_info!(logger, "Fetched {} update rows of the first update in a new direction in {:?}", newer_oldest_directional_update_count, start.elapsed());
+		log_info!(logger, "Fetched {} update rows of the first update in a (re)started direction in {:?}", resumed_directional_update_count, start.elapsed());
 	}
 
 	if due_reminder_buckets != 0 {
@@ -260,7 +284,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 					let is_new_announcement = current_channel_delta.announcement.as_ref()
 						.map(|announcement| announcement.seen >= last_sync_timestamp)
 						.unwrap_or(false);
-					if is_new_announcement || current_channel_delta.first_bidirectional_updates_seen.is_some() {
+					if is_new_announcement || current_channel_delta.updates_resumed_seen.is_some() {
 						// the client is about to receive the announcement alongside full updates
 						// for this channel, so a reminder would be pointless
 						continue;

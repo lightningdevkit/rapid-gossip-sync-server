@@ -511,7 +511,7 @@ async fn test_unidirectional_intermediate_update_consideration() {
 	let delta = calculate_delta(&network_graph, timestamp + 1, None, logger.clone()).await;
 	let serialization = serialize_delta(&delta, 1, logger.clone());
 
-	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 1 update rows of the first update in a new direction", 1);
+	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 1 update rows of the first update in a (re)started direction", 1);
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched + processed 1 reference rows", 1);
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched + processed intermediate rows (2)", 1);
 
@@ -578,7 +578,7 @@ async fn test_bidirectional_intermediate_update_consideration() {
 	let delta = calculate_delta(&network_graph, timestamp + 1, None, logger.clone()).await;
 	let serialization = serialize_delta(&delta, 1, logger.clone());
 
-	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 0 update rows of the first update in a new direction", 1);
+	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 0 update rows of the first update in a (re)started direction", 1);
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched + processed 2 reference rows", 1);
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched + processed intermediate rows (2)", 1);
 
@@ -665,7 +665,7 @@ async fn test_channel_reminders() {
 	let delta = calculate_delta(&network_graph, timestamp - channel_reminder_delta + 15, Some(reference_timestamp), logger.clone()).await;
 	let serialization = serialize_delta(&delta, 1, logger.clone());
 
-	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 0 update rows of the first update in a new direction", 1);
+	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 0 update rows of the first update in a (re)started direction", 1);
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Annotated 2 channels for reminders", 1);
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched + processed 2 reference rows", 1);
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched + processed intermediate rows (2)", 1);
@@ -918,6 +918,126 @@ async fn test_node_reminder_rotation() {
 	let mut expected_node_ids = vec![node_id(&due_key), node_id(&previously_due_key)];
 	expected_node_ids.sort();
 	assert_eq!(reminded_nodes(&delta), expected_node_ids);
+
+	tokio::task::spawn_blocking(move || {
+		drop(persister);
+	}).await.unwrap();
+
+	clean_test_db().await;
+}
+
+/// A channel one of whose peers was offline long enough for the channel to be pruned (by us and
+/// by clients) must be announced again, with full updates, once that peer is back.
+#[tokio::test]
+async fn test_channel_with_resumed_updates_is_reannounced() {
+	let _sanitizer = SchemaSanitizer::new();
+
+	let logger = Arc::new(TestLogger::new());
+	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
+	let (mut persister, receiver) = GossipPersister::new(logger.clone()).await;
+
+	let short_channel_id = 1;
+	let timestamp = current_time();
+	let day = 24 * 3600;
+
+	{ // seed the db
+		// the channel was announced a month ago, and both peers last updated it then (the gossip
+		// timestamps are kept recent so that the test graph itself doesn't prune the channel)
+		let announcement = generate_channel_announcement(short_channel_id);
+		let old_update_1 = generate_update(short_channel_id, false, timestamp - 2 * day, 0, 0, 0, 5, 0);
+		let old_update_2 = generate_update(short_channel_id, true, timestamp - 2 * day, 0, 0, 0, 10, 0);
+		network_graph.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, Some(timestamp - 30 * day))).await.unwrap();
+		receiver.send(GossipMessage::ChannelUpdate(old_update_1, Some(timestamp - 30 * day))).await.unwrap();
+		receiver.send(GossipMessage::ChannelUpdate(old_update_2, Some(timestamp - 30 * day))).await.unwrap();
+
+		// today, both peers are back and update the channel again
+		let update_1 = generate_update(short_channel_id, false, timestamp, 0, 0, 0, 6, 0);
+		let update_2 = generate_update(short_channel_id, true, timestamp, 0, 0, 0, 11, 0);
+		network_graph.update_channel_unsigned(&update_1.contents).unwrap();
+		network_graph.update_channel_unsigned(&update_2.contents).unwrap();
+		receiver.send(GossipMessage::ChannelUpdate(update_1, Some(timestamp))).await.unwrap();
+		receiver.send(GossipMessage::ChannelUpdate(update_2, Some(timestamp))).await.unwrap();
+
+		drop(receiver);
+		persister.persist_gossip().await;
+	}
+
+	// a client that last synced three hours ago has long since pruned the channel
+	let delta = calculate_delta(&network_graph, timestamp - 3 * 3600, Some(timestamp as u64), logger.clone()).await;
+	let serialization = serialize_delta(&delta, 1, logger.clone());
+	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 1 update rows of the first update in a (re)started direction", 1);
+
+	assert_eq!(serialization.channel_announcement_count, 1);
+	assert_eq!(serialization.update_count, 2);
+	assert_eq!(serialization.update_count_full, 2);
+
+	// such a client gets the channel back in full
+	let client_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
+	let rgs = RapidGossipSync::new(&client_graph, logger.clone());
+	rgs.update_network_graph(&serialization.data).unwrap();
+	{
+		let readonly_graph = client_graph.read_only();
+		let channel = readonly_graph.channels().get(&short_channel_id).unwrap();
+		assert_eq!(channel.one_to_two.as_ref().unwrap().fees.base_msat, 6);
+		assert_eq!(channel.two_to_one.as_ref().unwrap().fees.base_msat, 11);
+	}
+
+	tokio::task::spawn_blocking(move || {
+		drop(persister);
+	}).await.unwrap();
+
+	clean_test_db().await;
+}
+
+/// If the two peers of a pruned channel come back at different times, clients that synced in
+/// between have only seen the first direction resume, and still need the announcement.
+#[tokio::test]
+async fn test_channel_with_staggered_resumed_updates_is_reannounced() {
+	let _sanitizer = SchemaSanitizer::new();
+
+	let logger = Arc::new(TestLogger::new());
+	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
+	let (mut persister, receiver) = GossipPersister::new(logger.clone()).await;
+
+	let short_channel_id = 1;
+	let timestamp = current_time();
+	let day = 24 * 3600;
+
+	{ // seed the db
+		let announcement = generate_channel_announcement(short_channel_id);
+		let old_update_1 = generate_update(short_channel_id, false, timestamp - 2 * day, 0, 0, 0, 5, 0);
+		let old_update_2 = generate_update(short_channel_id, true, timestamp - 2 * day, 0, 0, 0, 10, 0);
+		network_graph.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+		receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, Some(timestamp - 30 * day))).await.unwrap();
+		receiver.send(GossipMessage::ChannelUpdate(old_update_1, Some(timestamp - 30 * day))).await.unwrap();
+		receiver.send(GossipMessage::ChannelUpdate(old_update_2, Some(timestamp - 30 * day))).await.unwrap();
+
+		// the first peer is back now, the second one only two hours later
+		let update_1 = generate_update(short_channel_id, false, timestamp, 0, 0, 0, 6, 0);
+		let update_2 = generate_update(short_channel_id, true, timestamp + 2 * 3600, 0, 0, 0, 11, 0);
+		network_graph.update_channel_unsigned(&update_1.contents).unwrap();
+		network_graph.update_channel_unsigned(&update_2.contents).unwrap();
+		receiver.send(GossipMessage::ChannelUpdate(update_1, Some(timestamp))).await.unwrap();
+		receiver.send(GossipMessage::ChannelUpdate(update_2, Some(timestamp + 2 * 3600))).await.unwrap();
+
+		drop(receiver);
+		persister.persist_gossip().await;
+	}
+
+	// a client that synced an hour from now, between the two peers returning, and fetches a
+	// snapshot generated three hours from now
+	let delta = calculate_delta(&network_graph, timestamp + 3600, Some((timestamp + 3 * 3600) as u64), logger.clone()).await;
+	let serialization = serialize_delta(&delta, 1, logger.clone());
+
+	assert_eq!(serialization.channel_announcement_count, 1);
+	assert_eq!(serialization.update_count, 2);
+	assert_eq!(serialization.update_count_full, 2);
+
+	// while a client that synced after both peers were back is not sent the channel again
+	let delta = calculate_delta(&network_graph, timestamp + 3 * 3600, Some((timestamp + 6 * 3600) as u64), logger.clone()).await;
+	assert_eq!(delta.announcements.len(), 0);
+	assert_eq!(delta.updates.len(), 0);
 
 	tokio::task::spawn_blocking(move || {
 		drop(persister);

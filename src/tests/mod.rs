@@ -16,8 +16,9 @@ use lightning::routing::gossip::{NetworkGraph, NodeAlias, NodeId};
 use lightning::types::features::{ChannelFeatures, NodeFeatures};
 use lightning::util::ser::Writeable;
 use lightning_rapid_gossip_sync::RapidGossipSync;
-use crate::{calculate_delta, config, serialize_delta, serialize_empty_blob};
+use crate::{calculate_delta, config, lookup, serialize_delta, serialize_empty_blob};
 use crate::persistence::GossipPersister;
+use crate::serialization::NodeSerializationStrategy;
 use crate::snapshot::Snapshotter;
 use crate::types::{GossipMessage, tests::TestLogger};
 
@@ -657,11 +658,15 @@ async fn test_channel_reminders() {
 	let channel_count = network_graph.read_only().channels().len();
 	assert_eq!(channel_count, 2);
 
-	let delta = calculate_delta(&network_graph, timestamp - channel_reminder_delta + 15, None, logger.clone()).await;
+	// use a reference timestamp that puts the snapshot scope past a full reminder rotation period
+	// (the reminder age),
+	// so that every bucket is due
+	let reference_timestamp = (timestamp + 15) as u64 + 3600;
+	let delta = calculate_delta(&network_graph, timestamp - channel_reminder_delta + 15, Some(reference_timestamp), logger.clone()).await;
 	let serialization = serialize_delta(&delta, 1, logger.clone());
 
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 0 update rows of the first update in a new direction", 1);
-	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 4 update rows of the latest update in the less recently updated direction", 1);
+	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Annotated 2 channels for reminders", 1);
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched + processed 2 reference rows", 1);
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched + processed intermediate rows (2)", 1);
 
@@ -670,6 +675,249 @@ async fn test_channel_reminders() {
 	assert_eq!(serialization.update_count, 4);
 	assert_eq!(serialization.update_count_full, 0);
 	assert_eq!(serialization.update_count_incremental, 4);
+
+	tokio::task::spawn_blocking(move || {
+		drop(persister);
+	}).await.unwrap();
+
+	clean_test_db().await;
+}
+
+#[test]
+fn test_reminder_bucket_rotation() {
+	let slot = config::REMINDER_SLOT_INTERVAL.as_secs();
+	let period = config::CHANNEL_REMINDER_AGE.as_secs();
+	let bucket_count = config::REMINDER_BUCKET_COUNT;
+	let all_buckets = (1u64 << bucket_count) - 1;
+
+	// a reference timestamp on the slot grid, i. e. a snapshot generated right at a slot boundary
+	let reference = (current_time() as u64 / slot) * slot;
+	let reference_bucket = (reference / slot) % bucket_count;
+
+	// a window that contains exactly one slot boundary reminds exactly that bucket
+	let due = lookup::reminder_buckets_due((reference - 3 * 3600) as u32, reference);
+	assert_eq!(due, 1u64 << reference_bucket);
+	assert_ne!(due & (1u64 << reference_bucket), 0);
+	assert_eq!(due & (1u64 << ((reference_bucket + 1) % bucket_count)), 0);
+	assert_eq!(lookup::reminder_buckets_due((reference - slot) as u32, reference), due);
+
+	// a window that contains no slot boundary reminds nothing
+	assert_eq!(lookup::reminder_buckets_due(reference as u32, reference + 3 * 3600), 0);
+	assert_eq!(lookup::reminder_buckets_due((reference - 3 * 3600) as u32, reference - 1), 0);
+
+	// consecutive windows chain: they are disjoint and their union is the combined window
+	let combined = lookup::reminder_buckets_due((reference - 24 * 3600) as u32, reference);
+	let first_half = lookup::reminder_buckets_due((reference - 24 * 3600) as u32, reference - 9 * 3600);
+	let second_half = lookup::reminder_buckets_due((reference - 9 * 3600) as u32, reference);
+	assert_eq!(combined.count_ones() as u64, 24 * 3600 / slot);
+	assert_eq!(first_half & second_half, 0);
+	assert_eq!(first_half | second_half, combined);
+
+	// a client that has been away for a full rotation period (or longer, or never synced) gets all
+	assert_eq!(lookup::reminder_buckets_due((reference - period + slot) as u32, reference).count_ones() as u64, bucket_count - 1);
+	assert_eq!(lookup::reminder_buckets_due((reference - period) as u32, reference), all_buckets);
+	assert_eq!(lookup::reminder_buckets_due((reference - 3 * period) as u32, reference), all_buckets);
+	assert_eq!(lookup::reminder_buckets_due(0, reference), all_buckets);
+
+	// realistically shaped short channel ids (block height, tx index, output index 0 or 1) are
+	// spread evenly across buckets
+	let mut bucket_sizes = vec![0u64; bucket_count as usize];
+	for block_height in 800_000u64..800_100 {
+		for tx_index in 0u64..50 {
+			for output_index in 0u64..2 {
+				let scid = (block_height << 40) | (tx_index << 16) | output_index;
+				bucket_sizes[lookup::channel_reminder_bucket_flag(scid).trailing_zeros() as usize] += 1;
+			}
+		}
+	}
+	let expected_bucket_size = 100 * 50 * 2 / bucket_count;
+	for bucket_size in bucket_sizes {
+		assert!(bucket_size > expected_bucket_size * 7 / 10, "bucket size {} too small", bucket_size);
+		assert!(bucket_size < expected_bucket_size * 13 / 10, "bucket size {} too large", bucket_size);
+	}
+}
+
+/// Channel reminders are spread across channels: a channel is reminded only in snapshots whose
+/// window contains the slot boundary at which its bucket becomes due, and consecutive windows chain.
+#[tokio::test]
+async fn test_channel_reminder_rotation() {
+	let _sanitizer = SchemaSanitizer::new();
+
+	let logger = Arc::new(TestLogger::new());
+	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
+	let (mut persister, receiver) = GossipPersister::new(logger.clone()).await;
+
+	let slot = config::REMINDER_SLOT_INTERVAL.as_secs();
+	let period = config::CHANNEL_REMINDER_AGE.as_secs();
+	let bucket_count = config::REMINDER_BUCKET_COUNT;
+
+	// the reference timestamp of a snapshot generated at the most recent slot boundary
+	let reference = (current_time() as u64 / slot) * slot;
+	let reference_bucket = (reference / slot) % bucket_count;
+	let previous_bucket = (reference / slot + bucket_count - 1) % bucket_count;
+	let idle_bucket = (reference / slot + bucket_count - 2) % bucket_count;
+
+	let scid_in_bucket = |bucket: u64| (1u64..).find(|scid| lookup::channel_reminder_bucket_flag(*scid) == 1u64 << bucket).unwrap();
+	let due_scid = scid_in_bucket(reference_bucket);
+	let previously_due_scid = scid_in_bucket(previous_bucket);
+	let idle_scid = scid_in_bucket(idle_bucket);
+
+	// all channels were last updated ten days ago, so no snapshot below contains a real update
+	let seen = (reference - 10 * 24 * 3600) as u32;
+	{ // seed the db
+		for scid in [due_scid, previously_due_scid, idle_scid] {
+			let announcement = generate_channel_announcement(scid);
+			let update_1 = generate_update(scid, false, seen, 0, 0, 0, 5, 0);
+			let update_2 = generate_update(scid, true, seen, 0, 0, 0, 3, 0);
+
+			network_graph.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+			network_graph.update_channel_unsigned(&update_1.contents).unwrap();
+			network_graph.update_channel_unsigned(&update_2.contents).unwrap();
+
+			receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, Some(seen))).await.unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update_1, Some(seen))).await.unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update_2, Some(seen))).await.unwrap();
+		}
+		drop(receiver);
+		persister.persist_gossip().await;
+	}
+	assert_eq!(network_graph.read_only().channels().len(), 3);
+
+	let reminded_scids = |delta: &crate::serialization::SerializationSet| {
+		let mut scids: Vec<u64> = delta.updates.iter().map(|update| update.scid()).collect();
+		scids.sort();
+		scids
+	};
+
+	// a three-hour window ending on the slot boundary reminds exactly the bucket that became due
+	let delta = calculate_delta(&network_graph, (reference - 3 * 3600) as u32, Some(reference), logger.clone()).await;
+	let serialization = serialize_delta(&delta, 1, logger.clone());
+	assert_eq!(serialization.channel_announcement_count, 0);
+	assert_eq!(serialization.update_count, 2);
+	assert_eq!(serialization.update_count_full, 0);
+	assert_eq!(serialization.update_count_incremental, 2);
+	assert_eq!(reminded_scids(&delta), vec![due_scid, due_scid]);
+
+	// the following three-hour window contains no slot boundary: nothing is reminded
+	let delta = calculate_delta(&network_graph, reference as u32, Some(reference + 3 * 3600), logger.clone()).await;
+	assert_eq!(delta.updates.len(), 0);
+
+	// the window ending on the previous slot boundary reminded the previous bucket
+	let delta = calculate_delta(&network_graph, (reference - 9 * 3600) as u32, Some(reference - 6 * 3600), logger.clone()).await;
+	assert_eq!(reminded_scids(&delta), vec![previously_due_scid, previously_due_scid]);
+
+	// a client that skipped a snapshot receives both buckets at once
+	let delta = calculate_delta(&network_graph, (reference - 12 * 3600) as u32, Some(reference), logger.clone()).await;
+	let mut expected_scids = vec![due_scid, due_scid, previously_due_scid, previously_due_scid];
+	expected_scids.sort();
+	assert_eq!(reminded_scids(&delta), expected_scids);
+
+	// a client that has been away for a whole rotation period is reminded of everything
+	let delta = calculate_delta(&network_graph, (reference - period) as u32, Some(reference), logger.clone()).await;
+	let serialization = serialize_delta(&delta, 1, logger.clone());
+	assert_eq!(serialization.channel_announcement_count, 0);
+	assert_eq!(serialization.update_count, 6);
+	assert_eq!(serialization.update_count_incremental, 6);
+
+	tokio::task::spawn_blocking(move || {
+		drop(persister);
+	}).await.unwrap();
+
+	clean_test_db().await;
+}
+
+/// Node reminders follow the same rotation as channel reminders.
+#[tokio::test]
+async fn test_node_reminder_rotation() {
+	let _sanitizer = SchemaSanitizer::new();
+
+	let logger = Arc::new(TestLogger::new());
+	let network_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
+	let (mut persister, receiver) = GossipPersister::new(logger.clone()).await;
+
+	let slot = config::REMINDER_SLOT_INTERVAL.as_secs();
+	let bucket_count = config::REMINDER_BUCKET_COUNT;
+	let day = 24 * 3600;
+
+	let reference = (current_time() as u64 / slot) * slot;
+	let reference_bucket = (reference / slot) % bucket_count;
+	let previous_bucket = (reference / slot + bucket_count - 1) % bucket_count;
+	let idle_bucket = (reference / slot + bucket_count - 2) % bucket_count;
+
+	let secp_context = Secp256k1::new();
+	let node_id = |key: &SecretKey| NodeId::from_pubkey(&key.public_key(&secp_context));
+	let key_in_bucket = |bucket: u64| (1u8..=255)
+		.map(|byte| SecretKey::from_slice(&[byte; 32]).unwrap())
+		.find(|key| lookup::node_reminder_bucket_flag(&node_id(key)) == 1u64 << bucket)
+		.unwrap();
+	let due_key = key_in_bucket(reference_bucket);
+	let previously_due_key = key_in_bucket(previous_bucket);
+	// the counterparty never announces itself, so it is not part of any node delta
+	let counterparty_key = key_in_bucket(idle_bucket);
+
+	{ // seed the db
+		let channel_seen = (reference - 10 * day) as u32;
+		for (scid, key) in [(1u64, &due_key), (2u64, &previously_due_key)] {
+			let announcement = generate_channel_announcement_between_nodes(scid, key, &counterparty_key);
+			let update_1 = generate_update(scid, false, channel_seen, 0, 0, 0, 5, 0);
+			let update_2 = generate_update(scid, true, channel_seen, 0, 0, 0, 3, 0);
+
+			network_graph.update_channel_from_announcement_no_lookup(&announcement).unwrap();
+			network_graph.update_channel_unsigned(&update_1.contents).unwrap();
+			network_graph.update_channel_unsigned(&update_2.contents).unwrap();
+
+			receiver.send(GossipMessage::ChannelAnnouncement(announcement, 100, Some(channel_seen))).await.unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update_1, Some(channel_seen))).await.unwrap();
+			receiver.send(GossipMessage::ChannelUpdate(update_2, Some(channel_seen))).await.unwrap();
+
+			// both nodes changed their addresses four days ago and have been stable since, which
+			// is what makes them eligible for a reminder (rather than a full re-serialization)
+			let mut old_announcement = generate_node_announcement(Some(key.clone()));
+			old_announcement.contents.timestamp = (reference - 10 * day) as u32;
+			network_graph.update_node_from_unsigned_announcement(&old_announcement.contents).unwrap();
+			receiver.send(GossipMessage::NodeAnnouncement(old_announcement.clone(), Some(old_announcement.contents.timestamp))).await.unwrap();
+
+			let mut current_announcement = generate_node_announcement(Some(key.clone()));
+			current_announcement.contents.timestamp = (reference - 4 * day) as u32;
+			current_announcement.contents.addresses.push(SocketAddress::TcpIpV4 { addr: [127, 0, 0, 1], port: 9735 });
+			network_graph.update_node_from_unsigned_announcement(&current_announcement.contents).unwrap();
+			receiver.send(GossipMessage::NodeAnnouncement(current_announcement.clone(), Some(current_announcement.contents.timestamp))).await.unwrap();
+		}
+		drop(receiver);
+		persister.persist_gossip().await;
+	}
+
+	let reminded_nodes = |delta: &crate::serialization::SerializationSet| {
+		let mut node_ids: Vec<NodeId> = delta.node_mutations.iter()
+			.filter(|(_, node_delta)| matches!(node_delta.strategy, Some(NodeSerializationStrategy::Reminder)))
+			.map(|(node_id, _)| node_id.clone())
+			.collect();
+		node_ids.sort();
+		node_ids
+	};
+
+	// a three-hour window ending on the slot boundary reminds exactly the node whose bucket became due
+	let delta = calculate_delta(&network_graph, (reference - 3 * 3600) as u32, Some(reference), logger.clone()).await;
+	let serialization = serialize_delta(&delta, 2, logger.clone());
+	assert_eq!(serialization.message_count, 0);
+	assert_eq!(serialization.node_announcement_count, 1);
+	assert_eq!(serialization.node_update_count, 0);
+	assert_eq!(delta.node_mutations.len(), 1);
+	assert_eq!(reminded_nodes(&delta), vec![node_id(&due_key)]);
+
+	// the following three-hour window contains no slot boundary: nothing is reminded
+	let delta = calculate_delta(&network_graph, reference as u32, Some(reference + 3 * 3600), logger.clone()).await;
+	assert_eq!(delta.node_mutations.len(), 0);
+
+	// the window ending on the previous slot boundary reminded the other node
+	let delta = calculate_delta(&network_graph, (reference - 9 * 3600) as u32, Some(reference - 6 * 3600), logger.clone()).await;
+	assert_eq!(reminded_nodes(&delta), vec![node_id(&previously_due_key)]);
+
+	// a client that skipped a snapshot is reminded of both at once
+	let delta = calculate_delta(&network_graph, (reference - 12 * 3600) as u32, Some(reference), logger.clone()).await;
+	let mut expected_node_ids = vec![node_id(&due_key), node_id(&previously_due_key)];
+	expected_node_ids.sort();
+	assert_eq!(reminded_nodes(&delta), expected_node_ids);
 
 	tokio::task::spawn_blocking(move || {
 		drop(persister);

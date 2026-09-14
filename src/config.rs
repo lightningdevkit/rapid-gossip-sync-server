@@ -25,10 +25,21 @@ pub(crate) const SCHEMA_VERSION: i32 = 17;
 pub(crate) const SYMLINK_GRANULARITY_INTERVAL: u32 = 3600 * 3; // three hours
 pub(crate) const MAX_SNAPSHOT_SCOPE: u32 = 3600 * 24 * 21; // three weeks
 // generate symlinks based on a 3-hour-granularity
-/// If the last update in either direction was more than six days ago, we send a reminder
-/// That reminder may be either in the form of a channel announcement, or in the form of empty
-/// updates in both directions.
+
+/// Clients backdate everything we send them by a week and prune anything they haven't heard about
+/// in two weeks, so from the client's perspective each channel direction lives for a bit under 7
+/// days past the last snapshot that wrote it. If the reference update a client would use to apply
+/// an incremental update is older than this, it may have been pruned, and we send a full update
+/// instead. The same age is used to decide whether a node announcement warrants a reminder.
 pub(crate) const CHANNEL_REMINDER_AGE: Duration = Duration::from_secs(6 * 24 * 60 * 60);
+
+/// The reminders are sent in rolling fashion, with each channel and node assigned one of
+/// [`REMINDER_BUCKET_COUNT`] buckets. One bucket becomes due every [`REMINDER_SLOT_INTERVAL`], so
+/// every channel and node is reminded once per [`CHANNEL_REMINDER_AGE`].
+pub(crate) const REMINDER_SLOT_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+pub(crate) const REMINDER_BUCKET_COUNT: u64 = CHANNEL_REMINDER_AGE.as_secs() / REMINDER_SLOT_INTERVAL.as_secs();
+const _: () = assert!(CHANNEL_REMINDER_AGE.as_secs() % REMINDER_SLOT_INTERVAL.as_secs() == 0);
+const _: () = assert!(REMINDER_BUCKET_COUNT < 64, "reminder buckets are tracked in a u64 bitmask");
 
 /// The interval after which graph data gets pruned after it was first seen
 /// This should match the LDK default pruning interval, which is 14 days

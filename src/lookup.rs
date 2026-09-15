@@ -147,6 +147,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 	let include_reminders = should_snapshot_include_reminders(last_sync_timestamp, current_timestamp, &logger);
 
 	log_info!(logger, "Obtaining corresponding database entries");
+	let start = Instant::now();
 	// get all the channel announcements that are currently in the network graph
 	let announcement_rows = client.query_raw("SELECT announcement_signed, funding_amount_sats, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen FROM channel_announcements WHERE short_channel_id = any($1) ORDER BY short_channel_id ASC", [&channel_ids]).await.unwrap();
 	let mut pinned_rows = Box::pin(announcement_rows);
@@ -171,7 +172,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 
 		announcement_count += 1;
 	}
-	log_info!(logger, "Fetched {} announcement rows", announcement_count);
+	log_info!(logger, "Fetched {} announcement rows in {:?}", announcement_count, start.elapsed());
 
 	{
 		// THIS STEP IS USED TO DETERMINE IF A CHANNEL SHOULD BE OMITTED FROM THE DELTA
@@ -184,20 +185,27 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 
 		// here is where the channels whose first update in either direction occurred after
 		// `last_seen_timestamp` are added to the selection
+		let start = Instant::now();
 		let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] =
 			[&channel_ids, &last_sync_timestamp_float];
 		let newer_oldest_directional_updates = client.query_raw("
-			SELECT short_channel_id, CAST(EXTRACT('epoch' from distinct_chans.seen) AS BIGINT) AS seen FROM (
-				SELECT DISTINCT ON (short_channel_id) *
-				FROM (
-					SELECT DISTINCT ON (short_channel_id, direction) short_channel_id, seen
-					FROM channel_updates
-					WHERE short_channel_id = any($1)
-					ORDER BY short_channel_id ASC, direction ASC, seen ASC
-				) AS directional_last_seens
-				ORDER BY short_channel_id ASC, seen DESC
-			) AS distinct_chans
-			WHERE distinct_chans.seen >= TO_TIMESTAMP($2)
+			SELECT scids.short_channel_id, CAST(EXTRACT('epoch' from GREATEST(dir0.seen, dir1.seen)) AS BIGINT) AS seen
+			FROM unnest($1::bigint[]) AS scids(short_channel_id)
+			CROSS JOIN LATERAL (
+				SELECT seen
+				FROM channel_updates
+				WHERE short_channel_id = scids.short_channel_id AND direction = false
+				ORDER BY seen ASC
+				LIMIT 1
+			) dir0
+			CROSS JOIN LATERAL (
+				SELECT seen
+				FROM channel_updates
+				WHERE short_channel_id = scids.short_channel_id AND direction = true
+				ORDER BY seen ASC
+				LIMIT 1
+			) dir1
+			WHERE GREATEST(dir0.seen, dir1.seen) >= TO_TIMESTAMP($2)
 			", params).await.unwrap();
 		let mut pinned_updates = Box::pin(newer_oldest_directional_updates);
 
@@ -215,7 +223,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 
 			newer_oldest_directional_update_count += 1;
 		}
-		log_info!(logger, "Fetched {} update rows of the first update in a new direction", newer_oldest_directional_update_count);
+		log_info!(logger, "Fetched {} update rows of the first update in a new direction in {:?}", newer_oldest_directional_update_count, start.elapsed());
 	}
 
 	if include_reminders {
@@ -252,6 +260,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 		3x the timeframe that we consider necessitates reminders.
 		*/
 
+		let start = Instant::now();
 		let mutated_updates = client.query_raw("
 		SELECT DISTINCT ON (short_channel_id, direction) short_channel_id, direction, blob_signed, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen FROM (
 			SELECT short_channel_id, direction, timestamp, seen, blob_signed, COALESCE (
@@ -321,7 +330,8 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 				log_gossip!(logger, "Reminder requirement triggered by update for channel {} in direction {}", scid, direction);
 			}
 		}
-		log_info!(logger, "Fetched {} update rows of the latest update in the less recently updated direction", older_latest_directional_update_count);
+		log_info!(logger, "Fetched {} update rows of the latest update in the less recently updated direction in {:?}",
+			older_latest_directional_update_count, start.elapsed());
 	}
 }
 
@@ -333,17 +343,22 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 	// there was an update in either direction that happened after the last sync (to avoid
 	// collecting too many reference updates)
 	let reference_rows = client.query_raw("
-		SELECT id, direction, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen, blob_signed FROM channel_updates
-		WHERE id IN (
-			SELECT DISTINCT ON (short_channel_id, direction) id
+		SELECT cu.id, d.direction, CAST(EXTRACT('epoch' from cu.seen) AS BIGINT) AS seen, cu.blob_signed
+		FROM (
+			SELECT DISTINCT short_channel_id
 			FROM channel_updates
-			WHERE seen < TO_TIMESTAMP($1) AND short_channel_id IN (
-				SELECT DISTINCT ON (short_channel_id) short_channel_id
-				FROM channel_updates
-				WHERE seen >= TO_TIMESTAMP($1)
-			)
-			ORDER BY short_channel_id ASC, direction ASC, seen DESC
-		)
+			WHERE seen >= TO_TIMESTAMP($1)
+		) AS recent_scids
+		CROSS JOIN (VALUES (false), (true)) AS d(direction)
+		JOIN LATERAL (
+			SELECT id, seen, blob_signed
+			FROM channel_updates
+			WHERE short_channel_id = recent_scids.short_channel_id
+				AND direction = d.direction
+				AND seen < TO_TIMESTAMP($1)
+			ORDER BY seen DESC
+			LIMIT 1
+		) cu ON true
 		", [last_sync_timestamp_float]).await.unwrap();
 	let mut pinned_rows = Box::pin(reference_rows);
 
@@ -381,13 +396,14 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 		reference_row_count += 1;
 	}
 
-	log_info!(logger, "Processed {} reference rows (delta size: {}) in {:?}",
+	log_info!(logger, "Fetched + processed {} reference rows (delta size: {}) in {:?}",
 		reference_row_count, delta_set.len(), start.elapsed());
 
 	// get all the intermediate channel updates
 	// (to calculate the set of mutated fields for snapshotting, where intermediate updates may
 	// have been omitted)
 
+	let start = Instant::now();
 	let intermediate_updates = client.query_raw("
 		SELECT id, direction, blob_signed, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen
 		FROM channel_updates
@@ -468,7 +484,7 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 			}
 		}
 	}
-	log_info!(logger, "Processed intermediate rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
+	log_info!(logger, "Fetched + processed intermediate rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
 }
 
 pub(super) async fn fetch_node_updates<L: Deref + Clone>(network_graph: &NetworkGraph<L>, client: &Client, last_sync_timestamp: u32, snapshot_reference_timestamp: Option<u64>, logger: L) -> NodeDeltaSet where L::Target: Logger {
@@ -502,12 +518,16 @@ pub(super) async fn fetch_node_updates<L: Deref + Clone>(network_graph: &Network
 	// get the latest node updates prior to last_sync_timestamp
 	let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] = [&node_ids, &last_sync_timestamp_float];
 	let reference_rows = client.query_raw("
-		SELECT DISTINCT ON (public_key) public_key, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen, announcement_signed
-		FROM node_announcements
-		WHERE
-			public_key = ANY($1) AND
-			seen < TO_TIMESTAMP($2)
-		ORDER BY public_key ASC, seen DESC
+		SELECT pk.public_key, CAST(EXTRACT('epoch' from na.seen) AS BIGINT) AS seen, na.announcement_signed
+		FROM unnest($1::varchar[]) AS pk(public_key)
+		CROSS JOIN LATERAL (
+			SELECT seen, announcement_signed
+			FROM node_announcements
+			WHERE public_key = pk.public_key
+				AND seen < TO_TIMESTAMP($2)
+			ORDER BY seen DESC
+			LIMIT 1
+		) na
 		", params).await.unwrap();
 	let mut pinned_rows = Box::pin(reference_rows);
 
@@ -539,7 +559,7 @@ pub(super) async fn fetch_node_updates<L: Deref + Clone>(network_graph: &Network
 	}
 
 
-	log_info!(logger, "Processed {} node announcement reference rows (delta size: {}) in {:?}",
+	log_info!(logger, "Fetched + processed {} node announcement reference rows (delta size: {}) in {:?}",
 		reference_row_count, delta_set.len(), start.elapsed());
 
 	let current_timestamp = snapshot_reference_timestamp.unwrap_or(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
@@ -564,6 +584,7 @@ pub(super) async fn fetch_node_updates<L: Deref + Clone>(network_graph: &Network
 	// get all the intermediate node updates
 	// (to calculate the set of mutated fields for snapshotting, where intermediate updates may
 	// have been omitted)
+	let start = Instant::now();
 	let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] = [&node_ids, &effective_threshold_timestamp];
 	let intermediate_updates = client.query_raw("
 		SELECT announcement_signed, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen
@@ -646,7 +667,7 @@ pub(super) async fn fetch_node_updates<L: Deref + Clone>(network_graph: &Network
 
 		previous_node_id = Some(node_id);
 	}
-	log_info!(logger, "Processed intermediate node announcement rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
+	log_info!(logger, "Fetched + processed intermediate node announcement rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
 
 	delta_set
 }

@@ -63,7 +63,7 @@ jobs:
           profile: minimal
       - name: Run tests
         run: |
-          cargo test --verbose --color always -- --show-output
+          RUST_BACKTRACE=1 cargo test --verbose --color always -- --show-output
         env:
           RAPID_GOSSIP_TEST_DB_HOST: localhost
           RAPID_GOSSIP_TEST_DB_NAME: postgres

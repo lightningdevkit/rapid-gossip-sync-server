@@ -21,7 +21,7 @@ use tokio_postgres::Config;
 
 use tokio::sync::Semaphore;
 
-pub(crate) const SCHEMA_VERSION: i32 = 15;
+pub(crate) const SCHEMA_VERSION: i32 = 17;
 pub(crate) const SYMLINK_GRANULARITY_INTERVAL: u32 = 3600 * 3; // three hours
 pub(crate) const MAX_SNAPSHOT_SCOPE: u32 = 3600 * 24 * 21; // three weeks
 // generate symlinks based on a 3-hour-granularity
@@ -167,11 +167,8 @@ pub(crate) fn db_index_creation_query() -> &'static str {
 	"
 	CREATE INDEX IF NOT EXISTS channel_updates_seen_scid ON channel_updates(seen, short_channel_id);
 	CREATE INDEX IF NOT EXISTS channel_updates_scid_dir_seen_asc ON channel_updates(short_channel_id, direction, seen);
-	CREATE INDEX IF NOT EXISTS channel_updates_scid_dir_seen_desc_with_id ON channel_updates(short_channel_id ASC, direction ASC, seen DESC) INCLUDE (id);
 	CREATE UNIQUE INDEX IF NOT EXISTS channel_updates_key ON channel_updates (short_channel_id, direction, timestamp);
-	CREATE INDEX IF NOT EXISTS channel_updates_seen ON channel_updates(seen);
-	CREATE INDEX IF NOT EXISTS channel_updates_scid_asc_timestamp_desc ON channel_updates(short_channel_id ASC, timestamp DESC);
-	CREATE INDEX IF NOT EXISTS node_announcements_seen_pubkey ON node_announcements(seen, public_key);
+	CREATE INDEX IF NOT EXISTS node_announcements_pubkey_seen_desc ON node_announcements(public_key, seen DESC);
 	"
 }
 
@@ -328,27 +325,39 @@ pub(crate) async fn upgrade_db<L: Deref + Clone + Send + Sync + 'static>(
 		// Note that we don't bother doing this one in a transaction, and as such need to support
 		// resuming on a crash.
 		let _ = client.execute("ALTER TABLE channel_announcements ADD COLUMN funding_amount_sats bigint DEFAULT null", &[]).await;
-		tokio::spawn(async move {
-			let client = crate::connect_to_db().await;
-			let mut scids = Box::pin(client.query_raw("SELECT DISTINCT ON (short_channel_id) short_channel_id FROM channel_announcements WHERE funding_amount_sats IS NULL;", &[0i64][1..]).await.unwrap());
-			let sem = Arc::new(Semaphore::new(16));
-			while let Some(scid_res) = scids.next().await {
-				let scid: i64 = scid_res.unwrap().get(0);
-				let permit = Arc::clone(&sem).acquire_owned().await.unwrap();
-				let logger = logger.clone();
-				tokio::spawn(async move {
-					let rest_client = Arc::new(RestClient::new(bitcoin_rest_endpoint()));
-					let txo = ChainVerifier::retrieve_txo(rest_client, scid as u64, logger).await
-						.expect("We shouldn't have accepted a channel announce with a bad TXO");
-					let client = crate::connect_to_db().await;
-					client.execute("UPDATE channel_announcements SET funding_amount_sats = $1 WHERE short_channel_id = $2", &[&(txo.value.to_sat() as i64), &scid]).await.unwrap();
-					std::mem::drop(permit);
-				});
-			}
-			let _all_updates_complete = sem.acquire_many(16).await.unwrap();
-			client.execute("ALTER TABLE channel_announcements ALTER funding_amount_sats SET NOT NULL", &[]).await.unwrap();
-			client.execute("UPDATE config SET db_schema = 15 WHERE id = 1", &[]).await.unwrap();
-		});
+		let mut scids = Box::pin(client.query_raw("SELECT DISTINCT ON (short_channel_id) short_channel_id FROM channel_announcements WHERE funding_amount_sats IS NULL;", &[0i64][1..]).await.unwrap());
+		let sem = Arc::new(Semaphore::new(16));
+		while let Some(scid_res) = scids.next().await {
+			let scid: i64 = scid_res.unwrap().get(0);
+			let permit = Arc::clone(&sem).acquire_owned().await.unwrap();
+			let logger = logger.clone();
+			tokio::spawn(async move {
+				let rest_client = Arc::new(RestClient::new(bitcoin_rest_endpoint()));
+				let txo = ChainVerifier::retrieve_txo(rest_client, scid as u64, logger).await
+					.expect("We shouldn't have accepted a channel announce with a bad TXO");
+				let client = crate::connect_to_db().await;
+				client.execute("UPDATE channel_announcements SET funding_amount_sats = $1 WHERE short_channel_id = $2", &[&(txo.value.to_sat() as i64), &scid]).await.unwrap();
+				std::mem::drop(permit);
+			});
+		}
+		let _all_updates_complete = sem.acquire_many(16).await.unwrap();
+		client.execute("ALTER TABLE channel_announcements ALTER funding_amount_sats SET NOT NULL", &[]).await.unwrap();
+		client.execute("UPDATE config SET db_schema = 15 WHERE id = 1", &[]).await.unwrap();
+	}
+	if schema >= 1 && schema <= 15 {
+		let tx = client.transaction().await.unwrap();
+		tx.execute("DROP INDEX IF EXISTS node_announcements_seen_pubkey", &[]).await.unwrap();
+		tx.execute("UPDATE config SET db_schema = 16 WHERE id = 1", &[]).await.unwrap();
+		tx.commit().await.unwrap();
+	}
+	if schema >= 1 && schema <= 16 {
+		let tx = client.transaction().await.unwrap();
+		tx.execute("DROP INDEX IF EXISTS channel_updates_scid_dir_seen_desc_with_id", &[]).await.unwrap();
+		tx.execute("DROP INDEX IF EXISTS channel_updates_scid_asc_timestamp_desc", &[]).await.unwrap();
+		tx.execute("DROP INDEX IF EXISTS channel_updates_seen", &[]).await.unwrap();
+		tx.execute("DROP INDEX IF EXISTS node_announcements_pubkey_timestamp_desc", &[]).await.unwrap();
+		tx.execute("UPDATE config SET db_schema = 17 WHERE id = 1", &[]).await.unwrap();
+		tx.commit().await.unwrap();
 	}
 	if schema <= 1 || schema > SCHEMA_VERSION {
 		panic!("Unknown schema in db: {}, we support up to {}", schema, SCHEMA_VERSION);

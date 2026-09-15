@@ -511,8 +511,8 @@ async fn test_unidirectional_intermediate_update_consideration() {
 	let serialization = serialize_delta(&delta, 1, logger.clone());
 
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 1 update rows of the first update in a new direction", 1);
-	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Processed 1 reference rows", 1);
-	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Processed intermediate rows (2)", 1);
+	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched + processed 1 reference rows", 1);
+	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched + processed intermediate rows (2)", 1);
 
 	assert_eq!(serialization.message_count, 3);
 	assert_eq!(serialization.channel_announcement_count, 1);
@@ -578,8 +578,8 @@ async fn test_bidirectional_intermediate_update_consideration() {
 	let serialization = serialize_delta(&delta, 1, logger.clone());
 
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 0 update rows of the first update in a new direction", 1);
-	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Processed 2 reference rows", 1);
-	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Processed intermediate rows (2)", 1);
+	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched + processed 2 reference rows", 1);
+	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched + processed intermediate rows (2)", 1);
 
 	assert_eq!(serialization.message_count, 1);
 	assert_eq!(serialization.channel_announcement_count, 0);
@@ -662,8 +662,8 @@ async fn test_channel_reminders() {
 
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 0 update rows of the first update in a new direction", 1);
 	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched 4 update rows of the latest update in the less recently updated direction", 1);
-	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Processed 2 reference rows", 1);
-	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Processed intermediate rows (2)", 1);
+	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched + processed 2 reference rows", 1);
+	logger.assert_log_contains("rapid_gossip_sync_server::lookup", "Fetched + processed intermediate rows (2)", 1);
 
 	assert_eq!(serialization.message_count, 4);
 	assert_eq!(serialization.channel_announcement_count, 0);

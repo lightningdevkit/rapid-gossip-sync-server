@@ -72,8 +72,12 @@ seen prior to the given timestamp, the latest known updates, and, if necessary, 
 updates are collected.
 
 Then, any channel that has only had an announcement but never an update is dropped. Additionally,
-every channel whose first update was seen after the given timestamp is collected alongside its
+every channel whose updates in either direction (re)started after the given timestamp, having never
+been seen before or having been absent for at least the prune interval, is collected alongside its
 announcement.
+
+To avoid unchanging data being eventually pruned by clients, "reminder" updates are added in a
+rolling fashion.
 
 Finally, all channel update transitions are evaluated and collected into either a full or an
 incremental update.

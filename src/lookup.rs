@@ -11,7 +11,7 @@ use tokio_postgres::Client;
 
 use futures::StreamExt;
 use hex_conservative::DisplayHex;
-use lightning::{log_debug, log_gossip, log_info};
+use lightning::{log_gossip, log_info};
 use lightning::types::features::NodeFeatures;
 use lightning::util::logger::Logger;
 
@@ -49,8 +49,12 @@ pub(super) struct DirectedUpdateDelta {
 pub(super) struct ChannelDelta {
 	pub(super) announcement: Option<AnnouncementDelta>,
 	pub(super) updates: (Option<DirectedUpdateDelta>, Option<DirectedUpdateDelta>),
-	pub(super) first_bidirectional_updates_seen: Option<u32>,
-	/// The seen timestamp of the older of the two latest directional updates
+	/// The `seen` timestamp at which this channel most recently (re)gained updates in a direction
+	/// that had previously not had any for at least the prune interval (or ever), provided that
+	/// happened after the client's last sync. Such a channel needs to be (re-)announced.
+	pub(super) updates_resumed_seen: Option<u32>,
+	/// Whether this channel's reminder bucket became due within the snapshot's window, in which
+	/// case each direction without a real update to send gets a flags-only reminder update
 	pub(super) requires_reminder: bool,
 }
 
@@ -76,7 +80,7 @@ impl Default for ChannelDelta {
 		Self {
 			announcement: None,
 			updates: (None, None),
-			first_bidirectional_updates_seen: None,
+			updates_resumed_seen: None,
 			requires_reminder: false,
 		}
 	}
@@ -103,28 +107,47 @@ impl Default for DirectedUpdateDelta {
 	}
 }
 
-fn should_snapshot_include_reminders<L: Deref>(last_sync_timestamp: u32, current_timestamp: u64, logger: &L) -> bool where L::Target: Logger {
-	let current_hour = current_timestamp / 3600;
-	let current_day = current_timestamp / (24 * 3600);
+/// The reminder buckets that became due within the window `(last_sync_timestamp, current_timestamp]`,
+/// as a bitmask.
+pub(super) fn reminder_buckets_due(last_sync_timestamp: u32, current_timestamp: u64) -> u64 {
+	assert!(config::REMINDER_BUCKET_COUNT < 64);
 
-	log_debug!(logger, "Current day index: {}", current_day);
-	log_debug!(logger, "Current hour: {}", current_hour);
+	// the first slot boundary strictly after the last sync, and the last one at or before now
+	let first_due_slot = (last_sync_timestamp as u64) / config::REMINDER_SLOT_INTERVAL.as_secs() + 1;
+	let last_due_slot = current_timestamp / config::REMINDER_SLOT_INTERVAL.as_secs();
+	if last_due_slot < first_due_slot {
+		return 0;
+	}
+	if last_due_slot - first_due_slot + 1 >= config::REMINDER_BUCKET_COUNT {
+		return (1u64 << config::REMINDER_BUCKET_COUNT) - 1;
+	}
 
-	// every 5th day at midnight
-	let is_reminder_hour = (current_hour % 24) == 0;
-	let is_reminder_day = (current_day % 5) == 0;
+	let mut due_buckets = 0u64;
+	for slot in first_due_slot..=last_due_slot {
+		due_buckets |= 1u64 << (slot % config::REMINDER_BUCKET_COUNT);
+	}
+	due_buckets
+}
 
-	let snapshot_scope = current_timestamp.saturating_sub(last_sync_timestamp as u64);
-	let is_reminder_scope = snapshot_scope > (50 * 3600);
-	log_debug!(logger, "Snapshot scope: {}s", snapshot_scope);
+pub(super) fn channel_reminder_bucket_flag(short_channel_id: u64) -> u64 {
+	// splitmix64 finalizer
+	let mut mixed = short_channel_id;
+	mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+	mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94d049bb133111eb);
+	mixed ^= mixed >> 31;
+	1u64 << (mixed % config::REMINDER_BUCKET_COUNT)
+}
 
-	(is_reminder_hour && is_reminder_day) || is_reminder_scope
+/// Node ids are compressed public keys, whose x coordinate is already uniformly distributed.
+pub(super) fn node_reminder_bucket_flag(node_id: &NodeId) -> u64 {
+	let x_coordinate_prefix: [u8; 8] = node_id.as_slice()[1..9].try_into().unwrap();
+	1u64 << (u64::from_be_bytes(x_coordinate_prefix) % config::REMINDER_BUCKET_COUNT)
 }
 
 /// Fetch all the channel announcements that are presently in the network graph, regardless of
 /// whether they had been seen before.
-/// Also include all announcements for which the first update was announced
-/// after `last_sync_timestamp`
+/// Also include all announcements for which updates in either direction (re)started after
+/// `last_sync_timestamp`, be it because the channel is new or because it had been pruned
 pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaSet, network_graph: &NetworkGraph<L>, client: &Client, last_sync_timestamp: u32, snapshot_reference_timestamp: Option<u64>, logger: L) where L::Target: Logger {
 	log_info!(logger, "Obtaining channel ids from network graph");
 	let channel_ids = {
@@ -144,7 +167,8 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 	let current_timestamp = snapshot_reference_timestamp.unwrap_or(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
 	log_info!(logger, "Current timestamp: {}", current_timestamp);
 
-	let include_reminders = should_snapshot_include_reminders(last_sync_timestamp, current_timestamp, &logger);
+	let due_reminder_buckets = reminder_buckets_due(last_sync_timestamp, current_timestamp);
+	log_info!(logger, "Reminder buckets due in this snapshot: {:#b}", due_reminder_buckets);
 
 	log_info!(logger, "Obtaining corresponding database entries");
 	let start = Instant::now();
@@ -175,163 +199,129 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 	log_info!(logger, "Fetched {} announcement rows in {:?}", announcement_count, start.elapsed());
 
 	{
-		// THIS STEP IS USED TO DETERMINE IF A CHANNEL SHOULD BE OMITTED FROM THE DELTA
-
-		log_info!(logger, "Annotating channel announcements whose oldest channel update in a given direction occurred after the last sync");
-		// Steps:
-		// — Obtain all updates, distinct by (scid, direction), ordered by seen DESC // to find the oldest update in a given direction
-		// — From those updates, select distinct by (scid), ordered by seen DESC (to obtain the newer one per direction)
-		// This will allow us to mark the first time updates in both directions were seen
-
-		// here is where the channels whose first update in either direction occurred after
-		// `last_seen_timestamp` are added to the selection
+		log_info!(logger, "Annotating channels whose updates in a direction (re)started after the last sync");
+		// Clients only receive a channel's announcement once, and prune the channel if our
+		// snapshots stop covering it, which happens when one of its peers stops announcing
+		// for two weeks. When that peer comes back we need to provide clients a fresh
+		// update.
+		//
+		// We detect this from the update history alone: for each direction, take the first update
+		// seen at or after the last sync and check whether it had a predecessor within the prune
+		// interval. If not, updates in that direction (re)started after the client's last sync, be
+		// it because the channel is brand new or because it was pruned and has come back. As we
+		// only ever drop channels after a full prune interval without updates, and block them from
+		// being re-added for another week, any such resumption implies a gap in the history.
+		let prune_interval_seconds = (config::PRUNE_INTERVAL.as_secs() - 60 * 60 * 24) as f64;
 		let start = Instant::now();
-		let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] =
-			[&channel_ids, &last_sync_timestamp_float];
-		let newer_oldest_directional_updates = client.query_raw("
+		let params: [&(dyn tokio_postgres::types::ToSql + Sync); 3] =
+			[&channel_ids, &last_sync_timestamp_float, &prune_interval_seconds];
+		let resumed_directional_updates = client.query_raw("
 			SELECT scids.short_channel_id, CAST(EXTRACT('epoch' from GREATEST(dir0.seen, dir1.seen)) AS BIGINT) AS seen
 			FROM unnest($1::bigint[]) AS scids(short_channel_id)
-			CROSS JOIN LATERAL (
-				SELECT seen
-				FROM channel_updates
-				WHERE short_channel_id = scids.short_channel_id AND direction = false
-				ORDER BY seen ASC
-				LIMIT 1
-			) dir0
-			CROSS JOIN LATERAL (
-				SELECT seen
-				FROM channel_updates
-				WHERE short_channel_id = scids.short_channel_id AND direction = true
-				ORDER BY seen ASC
-				LIMIT 1
-			) dir1
-			WHERE GREATEST(dir0.seen, dir1.seen) >= TO_TIMESTAMP($2)
+			LEFT JOIN LATERAL (
+				SELECT first_recent.seen
+				FROM (
+					SELECT seen
+					FROM channel_updates
+					WHERE short_channel_id = scids.short_channel_id AND direction = false AND seen >= TO_TIMESTAMP($2)
+					ORDER BY seen ASC
+					LIMIT 1
+				) first_recent
+				WHERE NOT EXISTS (
+					SELECT 1
+					FROM channel_updates AS predecessor
+					WHERE predecessor.short_channel_id = scids.short_channel_id AND predecessor.direction = false
+						AND predecessor.seen < first_recent.seen
+						AND predecessor.seen >= first_recent.seen - $3 * INTERVAL '1 second'
+				)
+			) dir0 ON TRUE
+			LEFT JOIN LATERAL (
+				SELECT first_recent.seen
+				FROM (
+					SELECT seen
+					FROM channel_updates
+					WHERE short_channel_id = scids.short_channel_id AND direction = true AND seen >= TO_TIMESTAMP($2)
+					ORDER BY seen ASC
+					LIMIT 1
+				) first_recent
+				WHERE NOT EXISTS (
+					SELECT 1
+					FROM channel_updates AS predecessor
+					WHERE predecessor.short_channel_id = scids.short_channel_id AND predecessor.direction = true
+						AND predecessor.seen < first_recent.seen
+						AND predecessor.seen >= first_recent.seen - $3 * INTERVAL '1 second'
+				)
+			) dir1 ON TRUE
+			WHERE dir0.seen IS NOT NULL OR dir1.seen IS NOT NULL
 			", params).await.unwrap();
-		let mut pinned_updates = Box::pin(newer_oldest_directional_updates);
+		let mut pinned_updates = Box::pin(resumed_directional_updates);
 
-		let mut newer_oldest_directional_update_count = 0;
+		let mut resumed_directional_update_count = 0;
 		while let Some(row_res) = pinned_updates.next().await {
 			let current_row = row_res.unwrap();
 
 			let scid: i64 = current_row.get("short_channel_id");
 			let current_seen_timestamp = current_row.get::<_, i64>("seen") as u32;
 
-			// the newer of the two oldest seen directional updates came after last sync timestamp
 			let current_channel_delta = delta_set.entry(scid as u64).or_insert(ChannelDelta::default());
-			// first time a channel was seen in both directions
-			(*current_channel_delta).first_bidirectional_updates_seen = Some(current_seen_timestamp);
+			(*current_channel_delta).updates_resumed_seen = Some(current_seen_timestamp);
 
-			newer_oldest_directional_update_count += 1;
+			resumed_directional_update_count += 1;
 		}
-		log_info!(logger, "Fetched {} update rows of the first update in a new direction in {:?}", newer_oldest_directional_update_count, start.elapsed());
+		log_info!(logger, "Fetched {} update rows of the first update in a (re)started direction in {:?}", resumed_directional_update_count, start.elapsed());
 	}
 
-	if include_reminders {
-		// THIS STEP IS USED TO DETERMINE IF A REMINDER UPDATE SHOULD BE SENT
+	if due_reminder_buckets != 0 {
+		let read_only_graph = network_graph.read_only();
+		let mut reminder_channel_count = 0;
+		for scid in channel_ids.iter().map(|scid| *scid as u64) {
+			if due_reminder_buckets & channel_reminder_bucket_flag(scid) == 0 {
+				continue;
+			}
 
-		log_info!(logger, "Annotating channel announcements whose latest channel update in a given direction occurred more than six days ago");
-		// Steps:
-		// — Obtain all updates, distinct by (scid, direction), ordered by seen DESC
-		// — From those updates, select distinct by (scid), ordered by seen ASC (to obtain the older one per direction)
-		let reminder_threshold_timestamp = current_timestamp.checked_sub(config::CHANNEL_REMINDER_AGE.as_secs()).unwrap() as f64;
-
-		log_info!(logger, "Fetch first time we saw the current value combination for each direction (prior mutations excepted)");
-		let reminder_lookup_threshold_timestamp = current_timestamp.checked_sub(config::PRUNE_INTERVAL.as_secs()).unwrap() as f64;
-		let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] = [&channel_ids, &reminder_lookup_threshold_timestamp];
-
-		/*
-		What exactly is the below query doing?
-
-		First, the inner query groups all channel updates by their scid/direction combination,
-		and then sorts those in reverse chronological order by the "seen" column.
-
-		Then, each row is annotated based on whether its subsequent row for the same scid/direction
-		combination has a different value for any one of these six fields:
-		disable, cltv_expiry_delta, htlc_minimum_msat, fee_base_msat, fee_proportional_millionths, htlc_maximum_msat
-		Those are simply the properties we use to keep track of channel mutations.
-
-		The outer query takes all of those results and selects the first value that has a distinct
-		successor for each scid/direction combination. That yields the first instance at which
-		a given channel configuration was received after any prior mutations.
-
-		Knowing that, we can check whether or not there have been any mutations within the
-		reminder requirement window. Because we only care about that window (and potentially the
-		2-week-window), we pre-filter the scanned updates by only those that were received within
-		3x the timeframe that we consider necessitates reminders.
-		*/
-
-		let start = Instant::now();
-		let mutated_updates = client.query_raw("
-		SELECT DISTINCT ON (short_channel_id, direction) short_channel_id, direction, blob_signed, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen FROM (
-			SELECT short_channel_id, direction, timestamp, seen, blob_signed, COALESCE (
-				disable<>lead(disable) OVER w1
-					OR
-				cltv_expiry_delta<>lead(cltv_expiry_delta) OVER w1
-					OR
-				htlc_minimum_msat<>lead(htlc_minimum_msat) OVER w1
-					OR
-				fee_base_msat<>lead(fee_base_msat) OVER w1
-					OR
-				fee_proportional_millionths<>lead(fee_proportional_millionths) OVER w1
-					OR
-				htlc_maximum_msat<>lead(htlc_maximum_msat) OVER w1,
-				TRUE
-			) has_distinct_successor
-			FROM channel_updates
-			WHERE short_channel_id = any($1) AND seen >= TO_TIMESTAMP($2)
-			WINDOW w1 AS (PARTITION BY short_channel_id, direction ORDER BY seen DESC)
-		) _
-		WHERE has_distinct_successor
-		ORDER BY short_channel_id ASC, direction ASC, timestamp DESC
-		", params).await.unwrap();
-
-		let mut pinned_updates = Box::pin(mutated_updates);
-		let mut older_latest_directional_update_count = 0;
-		while let Some(row_res) = pinned_updates.next().await {
-			let current_row = row_res.unwrap();
-			let seen = current_row.get::<_, i64>("seen") as u32;
-
-			if seen < reminder_threshold_timestamp as u32 {
-				let blob: Vec<u8> = current_row.get("blob_signed");
-				let mut readable = Cursor::new(&blob);
-				let unsigned_channel_update = ChannelUpdate::read(&mut readable).unwrap().contents;
-
-				let scid = unsigned_channel_update.short_channel_id;
-				let direction: bool = current_row.get("direction");
-
-				let current_channel_delta = delta_set.entry(scid).or_insert(ChannelDelta::default());
-
-				// We might be able to get away with not using this
-				(*current_channel_delta).requires_reminder = true;
-				older_latest_directional_update_count += 1;
-
-				if let Some(current_channel_info) = network_graph.read_only().channel(scid) {
-					if current_channel_info.one_to_two.is_none() || current_channel_info.two_to_one.is_none() {
-						// we don't send reminders if we don't have bidirectional update data
+			match delta_set.get(&scid) {
+				Some(current_channel_delta) => {
+					let is_new_announcement = current_channel_delta.announcement.as_ref()
+						.map(|announcement| announcement.seen >= last_sync_timestamp)
+						.unwrap_or(false);
+					if is_new_announcement || current_channel_delta.updates_resumed_seen.is_some() {
+						// the client is about to receive the announcement alongside full updates
+						// for this channel, so a reminder would be pointless
 						continue;
 					}
-
-					if let Some(info) = current_channel_info.one_to_two.as_ref() {
-						let flags: u8 = if info.enabled { 0 } else { 2 };
-						let current_update = (*current_channel_delta).updates.0.get_or_insert(DirectedUpdateDelta::default());
-						current_update.serialization_update_flags = Some(flags);
-					}
-
-					if let Some(info) = current_channel_info.two_to_one.as_ref() {
-						let flags: u8 = if info.enabled { 1 } else { 3 };
-						let current_update = (*current_channel_delta).updates.1.get_or_insert(DirectedUpdateDelta::default());
-						current_update.serialization_update_flags = Some(flags);
-					}
-				} else {
-					// we don't send reminders if we don't have the channel
+				},
+				None => {
+					// we don't have the announcement in the database (yet), so this channel is
+					// going to be dropped from the delta anyway
 					continue;
 				}
-
-				log_gossip!(logger, "Reminder requirement triggered by update for channel {} in direction {}", scid, direction);
 			}
+
+			// the graph may have changed since the channel ids were collected; we don't send
+			// reminders if we don't have bidirectional update data
+			let (one_to_two, two_to_one) = match read_only_graph.channel(scid) {
+				Some(channel_info) => match (channel_info.one_to_two.as_ref(), channel_info.two_to_one.as_ref()) {
+					(Some(one_to_two), Some(two_to_one)) => (one_to_two, two_to_one),
+					_ => continue,
+				},
+				None => continue,
+			};
+
+			let current_channel_delta = delta_set.get_mut(&scid).unwrap();
+			(*current_channel_delta).requires_reminder = true;
+
+			let flags: u8 = if one_to_two.enabled { 0 } else { 2 };
+			let current_update = (*current_channel_delta).updates.0.get_or_insert(DirectedUpdateDelta::default());
+			current_update.serialization_update_flags = Some(flags);
+
+			let flags: u8 = if two_to_one.enabled { 1 } else { 3 };
+			let current_update = (*current_channel_delta).updates.1.get_or_insert(DirectedUpdateDelta::default());
+			current_update.serialization_update_flags = Some(flags);
+
+			log_gossip!(logger, "Reminder due for channel {}", scid);
+			reminder_channel_count += 1;
 		}
-		log_info!(logger, "Fetched {} update rows of the latest update in the less recently updated direction in {:?}",
-			older_latest_directional_update_count, start.elapsed());
+		log_info!(logger, "Annotated {} channels for reminders", reminder_channel_count);
 	}
 }
 
@@ -566,32 +556,44 @@ pub(super) async fn fetch_node_updates<L: Deref + Clone>(network_graph: &Network
 	let reminder_inclusion_threshold_timestamp = current_timestamp.checked_sub(config::CHANNEL_REMINDER_AGE.as_secs()).unwrap() as u32;
 	let reminder_lookup_threshold_timestamp = current_timestamp.checked_sub(config::PRUNE_INTERVAL.as_secs()).unwrap() as u32;
 
-	// this is the timestamp we need to fetch all relevant updates
-	let include_reminders = should_snapshot_include_reminders(last_sync_timestamp, current_timestamp, &logger);
-	let effective_threshold_timestamp = if include_reminders {
-		std::cmp::min(last_sync_timestamp, reminder_lookup_threshold_timestamp) as f64
-	} else {
-		// If we include reminders, the decision logic is as follows:
-		// If the pre-sync update was more than 6 days ago, serialize in full.
-		// Otherwise:
-		// If the last mutation occurred  after the last sync, serialize the mutated properties.
-		// Otherwise:
-		// If the last mutation occurred more than 6 days ago, serialize as a reminder.
-		// Otherwise, don't serialize at all.
-		last_sync_timestamp as f64
-	};
+	// Nodes whose reminder bucket became due within this snapshot's window are candidates for a
+	// reminder. For those, the decision logic is as follows:
+	// If the pre-sync update was more than 6 days ago, serialize in full.
+	// Otherwise:
+	// If the last mutation occurred after the last sync, serialize the mutated properties.
+	// Otherwise:
+	// If the last mutation occurred more than 6 days ago, serialize as a reminder.
+	// Otherwise, don't serialize at all.
+	// Determining when the last mutation occurred requires looking at the announcements from the
+	// whole prune interval, rather than just since the last sync, for those nodes only.
+	let due_reminder_buckets = reminder_buckets_due(last_sync_timestamp, current_timestamp);
+	log_info!(logger, "Reminder buckets due in this snapshot: {:#b}", due_reminder_buckets);
+	let reminder_node_ids: Vec<String> = delta_set.keys()
+		.filter(|node_id| due_reminder_buckets & node_reminder_bucket_flag(node_id) != 0)
+		.map(|node_id| node_id.as_slice().to_lower_hex_string())
+		.collect();
+	let reminder_lookup_threshold_timestamp_float = std::cmp::min(last_sync_timestamp, reminder_lookup_threshold_timestamp) as f64;
 
 	// get all the intermediate node updates
 	// (to calculate the set of mutated fields for snapshotting, where intermediate updates may
 	// have been omitted)
 	let start = Instant::now();
-	let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] = [&node_ids, &effective_threshold_timestamp];
+	let params: [&(dyn tokio_postgres::types::ToSql + Sync); 4] = [&node_ids, &last_sync_timestamp_float, &reminder_node_ids, &reminder_lookup_threshold_timestamp_float];
 	let intermediate_updates = client.query_raw("
-		SELECT announcement_signed, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen
-		FROM node_announcements
-		WHERE
-			public_key = ANY($1) AND
-			seen >= TO_TIMESTAMP($2)
+		SELECT announcement_signed, seen FROM (
+			SELECT public_key, timestamp, announcement_signed, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen
+			FROM node_announcements
+			WHERE
+				public_key = ANY($1) AND
+				seen >= TO_TIMESTAMP($2)
+			UNION ALL
+			SELECT public_key, timestamp, announcement_signed, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen
+			FROM node_announcements
+			WHERE
+				public_key = ANY($3) AND
+				seen >= TO_TIMESTAMP($4) AND
+				seen < TO_TIMESTAMP($2)
+		) _
 		ORDER BY public_key ASC, timestamp DESC
 		", params).await.unwrap();
 	let mut pinned_updates = Box::pin(intermediate_updates);
@@ -603,6 +605,7 @@ pub(super) async fn fetch_node_updates<L: Deref + Clone>(network_graph: &Network
 	let mut has_address_set_changed = false;
 	let mut has_feature_set_changed = false;
 	let mut latest_mutation_timestamp = None;
+	let mut is_reminder_due = false;
 	while let Some(row_res) = pinned_updates.next().await {
 		let intermediate_update = row_res.unwrap();
 		intermediate_update_count += 1;
@@ -623,6 +626,7 @@ pub(super) async fn fetch_node_updates<L: Deref + Clone>(network_graph: &Network
 			has_address_set_changed = false;
 			has_feature_set_changed = false;
 			latest_mutation_timestamp = None;
+			is_reminder_due = node_reminder_bucket_flag(&node_id) & due_reminder_buckets != 0;
 
 			// this is the highest timestamp value, so set the seen timestamp accordingly
 			current_node_delta.latest_details.as_mut().map(|d| d.seen.replace(current_seen_timestamp));
@@ -652,7 +656,7 @@ pub(super) async fn fetch_node_updates<L: Deref + Clone>(network_graph: &Network
 						features: has_feature_set_changed,
 					}));
 				}
-			} else if include_reminders && latest_mutation_timestamp.unwrap_or(u32::MAX) <= reminder_inclusion_threshold_timestamp {
+			} else if is_reminder_due && latest_mutation_timestamp.unwrap_or(u32::MAX) <= reminder_inclusion_threshold_timestamp {
 				// only send a reminder if the latest mutation occurred at least 6 days ago
 				current_node_delta.strategy = Some(NodeSerializationStrategy::Reminder);
 			}

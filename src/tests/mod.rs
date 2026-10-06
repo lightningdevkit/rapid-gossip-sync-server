@@ -1213,6 +1213,26 @@ async fn test_full_snapshot_persistence() {
 		// the update result must be a multiple of our snapshot granularity
 		assert_eq!(update_result % config::snapshot_generation_interval(), 0);
 
+		// v2 clients request this generation's reference timestamp next.
+		// That symlink used to be v1-only, so the follow-up sync was HTTP 404.
+		let v2_dir = std::env::current_dir().unwrap().join(&cache_path).join("symlinks/v2");
+		let reference_symlink = fs::read_dir(&v2_dir)
+			.unwrap()
+			.flatten()
+			.filter_map(|e| {
+				let ts = e.path().file_stem().and_then(|s| s.to_str()).and_then(|s| s.parse::<u32>().ok())?;
+				(ts != 0).then_some((ts, e.path()))
+			})
+			.max_by_key(|(ts, _)| *ts)
+			.unwrap()
+			.1;
+		let v2_empty = fs::read(&reference_symlink).unwrap();
+		let v2_graph = NetworkGraph::new(Network::Bitcoin, logger.clone());
+		let v2_rgs = RapidGossipSync::new(&v2_graph, logger.clone());
+		let applied = v2_rgs.update_network_graph(&v2_empty).unwrap();
+		assert_eq!(applied % config::snapshot_generation_interval(), 0);
+		assert!(v2_graph.read_only().channels().is_empty());
+
 		let readonly_graph = client_graph.read_only();
 		let channels = readonly_graph.channels();
 		let client_channel_count = channels.len();

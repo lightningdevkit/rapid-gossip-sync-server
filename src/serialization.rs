@@ -158,8 +158,10 @@ pub(super) fn serialize_delta_set(channel_delta_set: DeltaSet, node_delta_set: N
 
 		let current_announcement_seen = channel_announcement_delta.seen;
 		let is_new_announcement = current_announcement_seen >= last_sync_timestamp;
-		let is_newly_included_announcement = if let Some(first_update_seen) = channel_delta.first_bidirectional_updates_seen {
-			first_update_seen >= last_sync_timestamp
+		// the channel's updates (re)started after the last sync, so the client is either unaware
+		// of the channel or has pruned it in the meantime
+		let is_newly_included_announcement = if let Some(updates_resumed_seen) = channel_delta.updates_resumed_seen {
+			updates_resumed_seen >= last_sync_timestamp
 		} else {
 			false
 		};

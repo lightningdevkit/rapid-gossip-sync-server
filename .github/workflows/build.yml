@@ -40,18 +40,6 @@ jobs:
           - stable
           - 1.63.0
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres
-        env:
-          POSTGRES_PASSWORD: postgres
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
     steps:
       - name: Checkout source code
         uses: actions/checkout@v3
@@ -63,10 +51,6 @@ jobs:
           profile: minimal
       - name: Run tests
         run: |
-          RUST_BACKTRACE=1 cargo test --verbose --color always -- --show-output
+          RUST_BACKTRACE=1 ./ci/ci-tests.sh --verbose --color always -- --show-output
         env:
-          RAPID_GOSSIP_TEST_DB_HOST: localhost
-          RAPID_GOSSIP_TEST_DB_NAME: postgres
-          RAPID_GOSSIP_TEST_DB_USER: postgres
-          RAPID_GOSSIP_TEST_DB_PASSWORD: postgres
           RAPID_GOSSIP_SYNC_SERVER_LOG_LEVEL: gossip

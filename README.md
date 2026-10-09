@@ -82,6 +82,13 @@ rolling fashion.
 Finally, all channel update transitions are evaluated and collected into either a full or an
 incremental update.
 
+## Testing
+
+The tests require a Postgres database. `ci/ci-tests.sh` starts a throwaway Postgres instance in a
+temporary directory, runs `cargo test` against it (passing along any arguments), and deletes the
+instance afterwards. It needs the Postgres server binaries (`initdb`, `pg_ctl` and `postgres`),
+which it looks for in `$POSTGRES_BIN_DIR`, then `$PATH`, then `/usr/lib/postgresql/*/bin`.
+
 ## License
 
 [Apache 2.0](LICENSE-APACHE.md) or [MIT](LICENSE-MIT.md), [at your option](LICENSE.md).

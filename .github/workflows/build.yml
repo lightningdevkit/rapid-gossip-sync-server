@@ -20,16 +20,12 @@ jobs:
           - stable
           - 1.63.0
           - beta
-    runs-on: ubuntu-latest
+    runs-on: debian-trixie
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v3
+        uses: https://data.forgejo.org/actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - name: Install Rust ${{ matrix.toolchain }} toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: ${{ matrix.toolchain }}
-          override: true
-          profile: minimal
+        run: rustup default ${{ matrix.toolchain }}
       - name: Build on Rust ${{ matrix.toolchain }}
         run: |
           cargo build --verbose --color always
@@ -39,34 +35,14 @@ jobs:
         toolchain:
           - stable
           - 1.63.0
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres
-        env:
-          POSTGRES_PASSWORD: postgres
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
+    runs-on: debian-trixie
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v3
+        uses: https://data.forgejo.org/actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - name: Install Rust ${{ matrix.toolchain }} toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: ${{ matrix.toolchain }}
-          override: true
-          profile: minimal
+        run: rustup default ${{ matrix.toolchain }}
       - name: Run tests
         run: |
-          RUST_BACKTRACE=1 cargo test --verbose --color always -- --show-output
+          RUST_BACKTRACE=1 ./ci/ci-tests.sh --verbose --color always -- --show-output
         env:
-          RAPID_GOSSIP_TEST_DB_HOST: localhost
-          RAPID_GOSSIP_TEST_DB_NAME: postgres
-          RAPID_GOSSIP_TEST_DB_USER: postgres
-          RAPID_GOSSIP_TEST_DB_PASSWORD: postgres
           RAPID_GOSSIP_SYNC_SERVER_LOG_LEVEL: gossip

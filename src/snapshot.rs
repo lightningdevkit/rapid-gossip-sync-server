@@ -144,10 +144,16 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 			fs::write(&dummy_snapshot_path_v1, dummy_snapshot_v1).unwrap();
 			fs::write(&dummy_snapshot_path_v2, dummy_snapshot_v2).unwrap();
 
-			let dummy_symlink_path = format!("{}/{}.bin", pending_symlink_directory, reference_timestamp);
-			let relative_dummy_snapshot_path = format!("{}/{}", relative_symlink_to_snapshot_path, dummy_filename);
-			log_info!(self.logger, "Symlinking dummy: {} -> {}", dummy_symlink_path, relative_dummy_snapshot_path);
-			symlink(&relative_dummy_snapshot_path, &dummy_symlink_path).unwrap();
+			// The timestamp written into every snapshot header must exist for
+			// both protocol versions. Real deltas already do this in the loop
+			// below. This symlink used to be v1-only, so a v2 client that
+			// stored `reference_timestamp` got HTTP 404.
+			for (suffix, path_to_root) in suffixes {
+				let dummy_symlink_path = format!("{}{}/{}.bin", pending_symlink_directory, suffix, reference_timestamp);
+				let relative_dummy_snapshot_path = format!("{}{}{}/{}", path_to_root, relative_symlink_to_snapshot_path, suffix, dummy_filename);
+				log_info!(self.logger, "Symlinking dummy: {} -> {}", dummy_symlink_path, relative_dummy_snapshot_path);
+				symlink(&relative_dummy_snapshot_path, &dummy_symlink_path).unwrap();
+			}
 		}
 
 		// Number of intervals since Jan 1, 2022, a few months before RGS server was released.
